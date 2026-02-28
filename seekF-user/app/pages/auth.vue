@@ -163,7 +163,6 @@ const goBack = () => window.history.back();
     </div>
   </div>
 </template>
-
 <style scoped>
 .remember-checkbox {
   appearance: none;

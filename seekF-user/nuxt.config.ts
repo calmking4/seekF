@@ -1,8 +1,9 @@
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: true },
-    modules: [
+  modules: [
     '@nuxtjs/tailwindcss',
-    'motion-v/nuxt'
-  ]
+    'motion-v/nuxt',
+    '@element-plus/nuxt',
+  ],
 })

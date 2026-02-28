@@ -1,7 +1,7 @@
 <template>
-    <div>
-        首页
-    </div>
+  <el-button @click="ElMessage('hello')">button</el-button>
+  <ElButton :icon="ElIconEditPen" type="success">button</ElButton>
+  <LazyElButton type="warning">lazy button</LazyElButton>
 </template>
 
 <script setup>
