@@ -1,5 +1,6 @@
-<script setup lang="ts">
+<script setup>
 import { ref } from "vue";
+import { ElMessage } from "element-plus";
 
 const loginType = ref('password');
 const loginForm = ref({
@@ -16,7 +17,7 @@ const inputClass = "w-full h-12 px-4 border border-gray-300 rounded-lg transitio
 
 const getVerifyCode = () => {
   if (!/^1[3-9]\d{9}$/.test(loginForm.value.phone)) {
-    alert('请输入正确的手机号');
+    ElMessage('请输入正确的手机号');
     return;
   }
   codeCountdown.value = 60;
@@ -30,17 +31,17 @@ const getVerifyCode = () => {
 const handleLogin = () => {
   if (loginType.value === 'password') {
     if (!loginForm.value.username || !loginForm.value.password) {
-      alert('请输入账号和密码');
+      ElMessage('请输入账号和密码');
       return;
     }
   } else {
     if (!loginForm.value.phone || !loginForm.value.code) {
-      alert('请输入手机号和验证码');
+      ElMessage('请输入手机号和验证码');
       return;
     }
   }
   console.log('登录参数：', loginForm.value);
-  alert('登录成功（仅演示）');
+  ElMessage('登录成功（仅演示）');
 };
 
 const goBack = () => window.history.back();
