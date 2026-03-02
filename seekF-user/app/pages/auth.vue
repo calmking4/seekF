@@ -1,59 +1,10 @@
-<script setup>
-import { ref } from "vue";
-import { ElMessage } from "element-plus";
-
-const loginType = ref('password');
-const loginForm = ref({
-  username: '',
-  password: '',
-  phone: '',
-  code: '',
-  remember: true
-});
-const codeCountdown = ref(0);
-
-// 公共输入框样式
-const inputClass = "w-full h-12 px-4 border border-gray-300 rounded-lg transition-all duration-200 focus:border-[#60a5fa] focus:ring-2 focus:ring-[#60a5fa]/20 outline-none text-sm bg-white text-gray-900 placeholder:text-gray-400";
-
-const getVerifyCode = () => {
-  if (!/^1[3-9]\d{9}$/.test(loginForm.value.phone)) {
-    ElMessage('请输入正确的手机号');
-    return;
-  }
-  codeCountdown.value = 60;
-  const timer = setInterval(() => {
-    codeCountdown.value--;
-    if (codeCountdown.value <= 0) clearInterval(timer);
-  }, 1000);
-  console.log('发送验证码到：', loginForm.value.phone);
-};
-
-const handleLogin = () => {
-  if (loginType.value === 'password') {
-    if (!loginForm.value.username || !loginForm.value.password) {
-      ElMessage('请输入账号和密码');
-      return;
-    }
-  } else {
-    if (!loginForm.value.phone || !loginForm.value.code) {
-      ElMessage('请输入手机号和验证码');
-      return;
-    }
-  }
-  console.log('登录参数：', loginForm.value);
-  ElMessage('登录成功（仅演示）');
-};
-
-const goBack = () => window.history.back();
-</script>
-
 <template>
   <div class="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-background p-4">
     <InspirauiParticlesBg
       class="absolute inset-0 z-0"
-      :quantity="100"
+      :quantity="1000"
       :ease="100"
-      color="#000"
+      color="60a5fa"
       :staticity="10"
       refresh
     />
@@ -164,6 +115,61 @@ const goBack = () => window.history.back();
     </div>
   </div>
 </template>
+
+<script setup>
+import { ref } from "vue";
+import { ElMessage } from "element-plus";
+
+definePageMeta({
+  layout: 'auth'
+})
+
+const loginType = ref('password');
+const loginForm = ref({
+  username: '',
+  password: '',
+  phone: '',
+  code: '',
+  remember: true
+});
+const codeCountdown = ref(0);
+
+// 公共输入框样式
+const inputClass = "w-full h-12 px-4 border border-gray-300 rounded-lg transition-all duration-200 focus:border-[#60a5fa] focus:ring-2 focus:ring-[#60a5fa]/20 outline-none text-sm bg-white text-gray-900 placeholder:text-gray-400";
+
+const getVerifyCode = () => {
+  if (!/^1[3-9]\d{9}$/.test(loginForm.value.phone)) {
+    ElMessage('请输入正确的手机号');
+    return;
+  }
+  codeCountdown.value = 60;
+  const timer = setInterval(() => {
+    codeCountdown.value--;
+    if (codeCountdown.value <= 0) clearInterval(timer);
+  }, 1000);
+  console.log('发送验证码到：', loginForm.value.phone);
+};
+
+const handleLogin = () => {
+  if (loginType.value === 'password') {
+    if (!loginForm.value.username || !loginForm.value.password) {
+      ElMessage('请输入账号和密码');
+      return;
+    }
+  } else {
+    if (!loginForm.value.phone || !loginForm.value.code) {
+      ElMessage('请输入手机号和验证码');
+      return;
+    }
+  }
+  console.log('登录参数：', loginForm.value);
+  ElMessage('登录成功（仅演示）');
+};
+
+const goBack = () => window.history.back();
+</script>
+
+
 <style scoped>
 .remember-checkbox {
   appearance: none;
