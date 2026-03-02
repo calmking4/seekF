@@ -1,1 +1,8 @@
 主题色：浅蓝色 #60a5fa
+
+使用到的：
+1.inspira ui
+2.element ui
+3.tailwindcss
+4.ant design
+5.nuxt/icon
