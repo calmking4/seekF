@@ -5,5 +5,6 @@ export default defineNuxtConfig({
     '@nuxtjs/tailwindcss',
     'motion-v/nuxt',
     '@element-plus/nuxt',
+    '@nuxt/icon',
   ],
 })
