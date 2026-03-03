@@ -44,7 +44,7 @@
     </aside>
 
     <!-- 右侧：聊天窗口 -->
-    <main class="flex-1 flex flex-col bg-[#f7fbff] overflow-hidden">
+    <main class="flex-1 flex flex-col bg-[#f3f4f6] overflow-hidden">
       <!-- 未选择会话时的占位 -->
       <div v-if="activeIndex === -1" class="flex-1 flex flex-col items-center justify-center text-gray-400">
         <Icon name="uil:comment-alt" class="text-6xl mb-4" />
