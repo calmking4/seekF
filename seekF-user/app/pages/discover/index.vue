@@ -28,19 +28,21 @@
         >
           <div
             v-for="item in column.items"
-            :key="item.id"
+            :key="item.uid"
             class="waterfall-item bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow"
             @click="handleItemClick(item)"
-            :data-id="item.id"
+            :data-id="item.uid"
           >
             <!-- 图片显示区域 -->
             <div class="w-full relative">
               <img
-                :src="item.src"
+                :src="getOptimizedSrc(item.src)"
                 :alt="item.title"
                 class="w-full h-full object-cover"
                 :style="{ height: `${item.height}px` }"
                 loading="lazy"
+                decoding="async"
+                :fetchpriority="item.order <= 4 ? 'high' : 'low'"
               />
             </div>
 
@@ -59,7 +61,7 @@
                 </div>
                 <div class="flex items-center gap-1">
                   <Icon name="uil:heart" />
-                  <span>{{ Math.floor(Math.random() * 10000) }}</span>
+                  <span>{{ item.likeCount }}</span>
                 </div>
               </div>
             </div>
@@ -80,7 +82,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, onUpdated } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 
 // 响应式数据
 const items = ref([])
@@ -91,6 +93,7 @@ const page = ref(1)
 const pageSize = 12
 const waterfallContainer = ref(null)
 let sr = null // ScrollReveal 实例
+let orderCounter = 0
 
 // 原始模拟数据（你提供的数组）
 const originalItems = [
@@ -160,8 +163,37 @@ const avatarColors = [
 
 // 根据ID生成固定的头像颜色（避免每次刷新颜色变化）
 const getAvatarColor = (id) => {
-  const index = (Number(id) - 1) % avatarColors.length
-  return avatarColors[index]
+  const str = String(id ?? '')
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) >>> 0
+  }
+  return avatarColors[hash % avatarColors.length]
+}
+
+const getOptimizedSrc = (src) => {
+  if (!src) return src
+  try {
+    const url = new URL(src)
+    // Unsplash: reduce bytes to improve scroll smoothness
+    if (url.hostname.includes('images.unsplash.com')) {
+      url.searchParams.set('w', url.searchParams.get('w') || '800')
+      url.searchParams.set('auto', url.searchParams.get('auto') || 'format')
+      url.searchParams.set('fit', url.searchParams.get('fit') || 'crop')
+      url.searchParams.set('q', url.searchParams.get('q') || '60')
+      return url.toString()
+    }
+    // Pexels: compress + width
+    if (url.hostname.includes('images.pexels.com')) {
+      url.searchParams.set('auto', url.searchParams.get('auto') || 'compress')
+      url.searchParams.set('cs', url.searchParams.get('cs') || 'tinysrgb')
+      url.searchParams.set('w', url.searchParams.get('w') || '800')
+      return url.toString()
+    }
+    return src
+  } catch {
+    return src
+  }
 }
 
 // 计算当前应使用的列数（与 Tailwind 断点保持一致）
@@ -232,7 +264,15 @@ const loadMore = async () => {
   // 分页截取原始数据
   const start = (page.value - 1) * pageSize
   const end = start + pageSize
-  const newData = originalItems.slice(start, end)
+  const newData = originalItems.slice(start, end).map((item, idx) => {
+    orderCounter++
+    return {
+      ...item,
+      uid: `${page.value}-${start + idx}-${item.id}-${orderCounter}`,
+      likeCount: Math.floor(Math.random() * 10000),
+      order: orderCounter
+    }
+  })
 
   items.value.push(...newData)
   distributeToColumns(newData)
@@ -246,7 +286,8 @@ const loadMore = async () => {
 
   // 数据加载后重新初始化动画
   if (process.client) {
-    initScrollReveal()
+    await nextTick()
+    await initScrollReveal()
   }
 }
 
@@ -277,18 +318,21 @@ const initScrollReveal = async () => {
     sr = ScrollReveal({
       origin: 'bottom',
       distance: '20px',
-      duration: 1000,
-      delay: 100,
-      interval: 100,
+      duration: 600,
+      delay: 80,
+      interval: 60,
       opacity: 0,
       scale: 0.95,
       reset: false,
       disable: !process.client
     })
+
+    // 只注册一次 reveal；后续新增节点用 sync()，避免旧节点重复动画
+    sr.reveal('.waterfall-item')
+    return
   }
 
-  // 对当前所有 .waterfall-item 应用动画（包括新追加的）
-  sr.reveal('.waterfall-item')
+  sr.sync?.()
 }
 
 // 卡片点击
@@ -311,6 +355,8 @@ onUnmounted(() => {
   if (process.client) {
     window.removeEventListener('scroll', handleScroll)
     window.removeEventListener('resize', handleResize)
+    sr?.destroy?.()
+    sr = null
   }
 })
 </script>
