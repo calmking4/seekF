@@ -1,0 +1,27 @@
+seekF-backend/
+├── .gitignore
+├── config/
+│   └── config.toml
+├── docs/
+│   └── 说明.txt
+├── go.mod
+├── go.sum
+├── internal/
+│   ├── controller/
+│   │   ├── admin/
+│   │   └── user/
+│   ├── dao/ 
+│   ├── dto/
+│   │   ├── request/ 
+│   │   └── respond/ 
+│   ├── middleware/ 
+│   ├── model/ 
+│   ├── pkg/ 
+│   ├── router/ 
+│   └── service/
+│       ├── admin/ 
+│       └── user/ 
+├── main.go
+├── pkg/ 
+└── tmp/
+    └── main.exe
