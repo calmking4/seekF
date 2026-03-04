@@ -16,7 +16,6 @@ seekF-backend/
 │   │   └── respond/ 
 │   ├── middleware/ 
 │   ├── model/ 
-│   ├── pkg/ 
 │   ├── router/ 
 │   └── service/
 │       ├── admin/ 
