@@ -7,7 +7,7 @@ export const useApi = (url, options = {}) => {
         onRequest:({request,options})=>{
             const token = state.getToken();
             if(token){
-                options.headers.set('Authorization', `${token}`)
+                options.headers.set('Authorization', `Bearer ${token}`)
             }
         },
         onRequestError: (error) => {
@@ -28,7 +28,7 @@ export const useApi$ = (url, options = {}) => {
         onRequest:({request,options})=>{
             const token = state.getToken();
             if(token){
-                options.headers.set('Authorization', `${token}`)
+                options.headers.set('Authorization', `Bearer ${token}`)
             }
         },
         onRequestError: (error) => {

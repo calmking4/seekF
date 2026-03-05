@@ -1,4 +1,4 @@
-package config
+package configs
 
 import (
 	"log"
@@ -54,6 +54,12 @@ type StaticSrcConfig struct {
 	StaticFilePath   string `toml:"staticFilePath"`
 }
 
+type JWTConfig struct {
+	Secret        string `toml:"secret"`
+	ExpireMinutes int64  `toml:"expireMinutes"`
+	Issuer        string `toml:"issuer"`
+}
+
 type Config struct {
 	MainConfig      `toml:"mainConfig"`
 	MysqlConfig     `toml:"mysqlConfig"`
@@ -62,6 +68,7 @@ type Config struct {
 	LogConfig       `toml:"logConfig"`
 	KafkaConfig     `toml:"kafkaConfig"`
 	StaticSrcConfig `toml:"staticSrcConfig"`
+	JWTConfig       `toml:"jwtConfig"`
 }
 
 var config *Config
