@@ -1,8 +1,9 @@
-package model
+package models
 
 import (
-	"gorm.io/gorm"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type ContactApply struct {

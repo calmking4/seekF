@@ -1,9 +1,10 @@
-package model
+package models
 
 import (
 	"encoding/json"
-	"gorm.io/gorm"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type GroupInfo struct {
