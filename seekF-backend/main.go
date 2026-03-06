@@ -1,13 +1,22 @@
 package main
 
-// 导入 Gin 包
-import "github.com/gin-gonic/gin"
+import (
+	"seekF-backend/internal/controllers/user"
+
+	"github.com/gin-gonic/gin"
+)
 
 func main() {
 	// 1. 创建 Gin 引擎实例（默认模式，包含日志和恢复中间件）
 	// 如果是生产环境，可使用 gin.ReleaseMode：
 	// gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
+
+	// 用户认证相关路由
+	userGroup := r.Group("/api/user")
+	{
+		userGroup.POST("/register", user.Register)
+	}
 
 	// 2. 定义路由：GET 请求，路径为 /hello
 	r.GET("/hello", func(c *gin.Context) {
