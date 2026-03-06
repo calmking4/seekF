@@ -34,7 +34,7 @@ func JWTAuth() gin.HandlerFunc {
 			return
 		}
 
-		// 把解析出的用户信息存到 Context，后面的 controller 可以用
+		// 在 Gin 框架中，控制器（controller）可以通过上下文（context）获取中间件中存储的数据。通过c.Get("key")获取
 		c.Set("userID", claims.UserID)
 		c.Set("userPhone", claims.Phone)
 		c.Set("userNickname", claims.Nickname)
