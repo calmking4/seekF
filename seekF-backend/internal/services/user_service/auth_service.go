@@ -4,6 +4,7 @@ import (
 	"fmt"
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
+	"seekF-backend/internal/pkg/util"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -31,7 +32,11 @@ func Register(req *RegisterRequest) error {
 		return err
 	}
 
+	// 生成UUID
+	userUUID := "U" + util.GetNowAndLenRandomString(11)
+
 	user := &models.UserInfo{
+		Uuid:      userUUID,
 		Nickname:  req.Nickname,
 		Telephone: req.Telephone,
 		Password:  password,

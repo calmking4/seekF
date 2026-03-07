@@ -80,7 +80,13 @@ func LoadConfig() error {
 	// 	return err
 	// }
 	// Ubuntu22.04云服务器部署
-	if _, err := toml.DecodeFile("/root/project/KamaChat/configs/config_local.toml", config); err != nil {
+	// if _, err := toml.DecodeFile("/root/project/KamaChat/configs/config_local.toml", config); err != nil {
+	// 	log.Fatal(err.Error())
+	// 	return err
+	// }
+	// return nil
+
+	if _, err := toml.DecodeFile("./config/config.toml", config); err != nil {
 		log.Fatal(err.Error())
 		return err
 	}
