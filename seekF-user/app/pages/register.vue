@@ -38,7 +38,7 @@
             <!-- 用户名 -->
             <input 
               type="text" 
-              v-model="registerForm.username" 
+              v-model="registerForm.nickname" 
               placeholder="请设置用户名"
               :class="inputClass"
             />
@@ -46,7 +46,7 @@
             <!-- 手机号 -->
             <input 
               type="tel" 
-              v-model="registerForm.phone" 
+              v-model="registerForm.telephone" 
               placeholder="请输入手机号"
               :class="inputClass"
             />
@@ -62,7 +62,7 @@
               <button 
                 type="button"
                 class="w-32 h-12 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium transition-all duration-200 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                :disabled="!registerForm.phone || codeCountdown > 0"
+                :disabled="!registerForm.telephone || codeCountdown > 0"
                 @click="getVerifyCode"
               >
                 {{ codeCountdown > 0 ? `${codeCountdown}s` : '获取验证码' }}
@@ -104,16 +104,17 @@
             <button 
               type="submit"
               class="w-full h-12 bg-gradient-to-r from-[#60a5fa] to-[#3b82f6] text-white rounded-lg text-base font-semibold shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
-              :disabled="!registerForm.agree"
+              :disabled="!registerForm.agree || loading"
             >
-              注册账号
+              <span v-if="!loading">注册账号</span>
+              <span v-else>注册中...</span>
             </button>
           </form>
 
           <!-- 登录入口 -->
           <div class="mt-6 text-center text-sm text-gray-600">
             已有账号？
-            <a href="/login" class="text-[#60a5fa] hover:underline font-medium ml-1">去登录</a>
+            <NuxtLink to="/login" class="text-[#60a5fa] hover:underline font-medium ml-1">去登录</NuxtLink>
           </div>
         </div>
       </div>
@@ -122,8 +123,6 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
-import { ElMessage } from "element-plus";
 
 definePageMeta({
   layout: 'auth'
@@ -131,9 +130,9 @@ definePageMeta({
 
 // 注册表单数据
 const registerForm = ref({
-  username: '',
-  phone: '',
-  code: '',
+  nickname: '',
+  telephone: '',
+  code: '', // 验证码字段保留
   password: '',
   confirmPassword: '',
   agree: false
@@ -142,16 +141,22 @@ const registerForm = ref({
 // 验证码倒计时
 const codeCountdown = ref(0);
 
+// 加载状态
+const loading = ref(false);
+
 // 公共输入框样式（和登录页保持一致）
 const inputClass = "w-full h-12 px-4 border border-gray-300 rounded-lg transition-all duration-200 focus:border-[#60a5fa] focus:ring-2 focus:ring-[#60a5fa]/20 outline-none text-sm bg-white text-gray-900 placeholder:text-gray-400";
 
 // 获取验证码
 const getVerifyCode = () => {
   // 手机号验证
-  if (!/^1[3-9]\d{9}$/.test(registerForm.value.phone)) {
-    ElMessage('请输入正确的手机号');
+  if (!/^1[3-9]\d{9}$/.test(registerForm.value.telephone)) {
+    ElMessage.error('请输入正确的手机号');
     return;
   }
+  
+  // 暂时模拟验证码发送
+  ElMessage.success('验证码已发送（暂为模拟）');
   
   // 启动倒计时
   codeCountdown.value = 60;
@@ -160,51 +165,88 @@ const getVerifyCode = () => {
     if (codeCountdown.value <= 0) clearInterval(timer);
   }, 1000);
   
-  ElMessage('验证码已发送（仅演示）');
-  console.log('发送注册验证码到：', registerForm.value.phone);
+  console.log('发送注册验证码到：', registerForm.value.telephone);
 };
 
 // 处理注册
-const handleRegister = () => {
+const handleRegister = async () => {
   // 表单验证
-  if (!registerForm.value.username) {
-    ElMessage('请设置用户名');
+  if (!registerForm.value.nickname) {
+    ElMessage.error('请设置用户名');
     return;
   }
   
-  if (!/^1[3-9]\d{9}$/.test(registerForm.value.phone)) {
-    ElMessage('请输入正确的手机号');
+  if (!/^1[3-9]\d{9}$/.test(registerForm.value.telephone)) {
+    ElMessage.error('请输入正确的手机号');
     return;
   }
   
-  if (!registerForm.value.code) {
-    ElMessage('请输入验证码');
-    return;
-  }
+  // 暂时忽略验证码验证，因为后端还未实现
   
   if (registerForm.value.password.length < 6 || registerForm.value.password.length > 16) {
-    ElMessage('密码长度必须在6-16位之间');
+    ElMessage.error('密码长度必须在6-16位之间');
     return;
   }
   
   if (registerForm.value.password !== registerForm.value.confirmPassword) {
-    ElMessage('两次输入的密码不一致');
+    ElMessage.error('两次输入的密码不一致');
     return;
   }
   
   if (!registerForm.value.agree) {
-    ElMessage('请阅读并同意用户协议和隐私政策');
+    ElMessage.error('请阅读并同意用户协议和隐私政策');
     return;
   }
   
-  // 注册逻辑（演示）
-  console.log('注册参数：', registerForm.value);
-  ElMessage('注册成功！即将跳转到登录页');
+  // 设置加载状态
+  loading.value = true;
   
-  // 模拟跳转登录页
-  setTimeout(() => {
-    window.location.href = '/login';
-  }, 1500);
+  try {
+    // 使用 useApi 发送注册请求到后端
+    const { data, pending, error } = await useApi('/user/register', {
+      method: 'POST',
+      body: {
+        nickname: registerForm.value.nickname,
+        telephone: registerForm.value.telephone,
+        password: registerForm.value.password
+      }
+    });
+
+    if (error.value) {
+      ElMessage.error(error.value.data?.message || '注册失败');
+      return;
+    }
+
+    // 注册成功
+    ElMessage.success(data?.message || '注册成功！');
+    
+    // 清空表单
+    registerForm.value = {
+      nickname: '',
+      telephone: '',
+      code: '',
+      password: '',
+      confirmPassword: '',
+      agree: false
+    };
+    
+    // 跳转到登录页面
+    setTimeout(() => {
+      navigateTo('/login');
+    }, 1500);
+
+  } catch (err) {
+    console.error('注册错误:', err);
+    let errorMessage = '注册失败';
+    if (err.data && err.data.message) {
+      errorMessage = err.data.message;
+    } else if (typeof err === 'string') {
+      errorMessage = err;
+    }
+    ElMessage.error(errorMessage);
+  } finally {
+    loading.value = false;
+  }
 };
 
 // 返回上一页
