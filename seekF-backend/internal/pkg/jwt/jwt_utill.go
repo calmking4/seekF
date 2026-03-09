@@ -41,7 +41,7 @@ func GenerateToken(userID uint64, phone, nickname string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(cfg.JWTConfig.Secret)
+	return token.SignedString([]byte(cfg.JWTConfig.Secret)) // 将字符串转换为[]byte
 }
 
 // ParseToken 解析并校验 Token
@@ -54,7 +54,7 @@ func ParseToken(tokenString string) (*CustomClaims, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("unexpected signing method")
 		}
-		return cfg.JWTConfig.Secret, nil
+		return []byte(cfg.JWTConfig.Secret), nil // 将字符串转换为[]byte
 	})
 
 	if err != nil {

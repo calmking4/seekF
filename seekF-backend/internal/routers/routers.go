@@ -13,6 +13,7 @@ func SetupRouter() *gin.Engine {
 	userGroup := r.Group("/user")
 	{
 		userGroup.POST("/register", user.Register)
+		userGroup.POST("/login", user.Login)
 	}
 
 	return r

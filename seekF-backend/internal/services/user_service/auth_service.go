@@ -4,6 +4,7 @@ import (
 	"fmt"
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
+	"seekF-backend/internal/pkg/jwt"
 	"seekF-backend/internal/pkg/util"
 
 	"golang.org/x/crypto/bcrypt"
@@ -11,6 +12,11 @@ import (
 
 type RegisterRequest struct {
 	Nickname  string `json:"nickname" binding:"required"`
+	Telephone string `json:"telephone" binding:"required"`
+	Password  string `json:"password" binding:"required"`
+}
+
+type LoginRequest struct {
 	Telephone string `json:"telephone" binding:"required"`
 	Password  string `json:"password" binding:"required"`
 }
@@ -50,6 +56,33 @@ func Register(req *RegisterRequest) error {
 	return nil
 }
 
+// Login 用户登录
+func Login(req *LoginRequest) (string, error) {
+	// 根据手机号查找用户
+	user, err := userdao.FindUserByTelephone(req.Telephone)
+	if err != nil {
+		return "", fmt.Errorf("登录失败：%v", err)
+	}
+
+	if user == nil {
+		return "", fmt.Errorf("该用户不存在")
+	}
+
+	// 验证密码
+	err = verifyPassword(user.Password, req.Password)
+	if err != nil {
+		return "", fmt.Errorf("密码错误")
+	}
+
+	// 生成 JWT Token
+	token, err := jwt.SetToken(uint64(user.Id), user.Telephone, user.Nickname)
+	if err != nil {
+		return "", fmt.Errorf("生成令牌失败：%v", err)
+	}
+
+	return token, nil
+}
+
 // 加密密码
 func encryptPassword(password string) (string, error) {
 	// 使用bcrypt加密
@@ -58,4 +91,9 @@ func encryptPassword(password string) (string, error) {
 		return "", err
 	}
 	return string(hashedPassword), nil
+}
+
+// 验证密码
+func verifyPassword(hashedPassword, password string) error {
+	return bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
 }
