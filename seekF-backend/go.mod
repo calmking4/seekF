@@ -4,6 +4,7 @@ go 1.25.5
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.4.0
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -51,6 +52,7 @@ require (
 	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/time v0.4.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect

@@ -35,6 +35,14 @@ type AuthCodeConfig struct {
 	TemplateCode    string `toml:"templateCode"`
 }
 
+type OSSConfig struct {
+	AccessKeyID     string `toml:"accessKeyID"`
+	AccessKeySecret string `toml:"accessKeySecret"`
+	Region          string `toml:"region"`
+	Bucket          string `toml:"bucket"`
+	BaseURL         string `toml:"baseURL"`
+}
+
 type LogConfig struct {
 	LogPath string `toml:"logPath"`
 }
@@ -65,6 +73,7 @@ type Config struct {
 	MysqlConfig     `toml:"mysqlConfig"`
 	RedisConfig     `toml:"redisConfig"`
 	AuthCodeConfig  `toml:"authCodeConfig"`
+	OSSConfig       `toml:"ossConfig"`
 	LogConfig       `toml:"logConfig"`
 	KafkaConfig     `toml:"kafkaConfig"`
 	StaticSrcConfig `toml:"staticSrcConfig"`
