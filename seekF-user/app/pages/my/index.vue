@@ -2,23 +2,30 @@
   <div class="min-h-screen bg-white">
     <!-- 顶部用户信息区 -->
     <div class="max-w-3xl mx-auto pt-8 pb-6 px-6">
-      <div class="flex items-center gap-6">
-        <!-- 头像 -->
-        <div class="w-24 h-24 rounded-full border border-gray-100 flex items-center justify-center overflow-hidden bg-gray-50">
-          <Icon name="uil:book-alt" class="text-4xl text-blue-500" />
-        </div>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-6">
+          <!-- 头像 -->
+          <div class="w-24 h-24 rounded-full border border-gray-100 flex items-center justify-center overflow-hidden bg-gray-50">
+            <Icon name="uil:book-alt" class="text-4xl text-blue-500" />
+          </div>
 
-        <!-- 用户信息 -->
-        <div class="flex flex-col gap-2">
-          <h1 class="text-xl font-semibold text-gray-900">小红薯665AE357</h1>
-          <p class="text-gray-500 text-sm">小红书号: 11678956516</p>
-          <p class="text-gray-600 text-sm">还没有简介</p>
-          <div class="flex gap-6 text-sm text-gray-600 mt-1">
-            <span><span class="font-medium">0</span> 关注</span>
-            <span><span class="font-medium">0</span> 粉丝</span>
-            <span><span class="font-medium">0</span> 获赞与收藏</span>
+          <!-- 用户信息 -->
+          <div class="flex flex-col gap-2">
+            <h1 class="text-xl font-semibold text-gray-900">小红薯665AE357</h1>
+            <p class="text-gray-500 text-sm">小红书号: 11678956516</p>
+            <p class="text-gray-600 text-sm">还没有简介</p>
+            <div class="flex gap-6 text-sm text-gray-600 mt-1">
+              <span><span class="font-medium">0</span> 关注</span>
+              <span><span class="font-medium">0</span> 粉丝</span>
+              <span><span class="font-medium">0</span> 获赞与收藏</span>
+            </div>
           </div>
         </div>
+
+        <!-- 编辑信息按钮 -->
+        <button class="px-5 py-2 border border-red-500 text-red-500 rounded-md text-sm font-medium hover:bg-red-50 transition-colors">
+          编辑信息
+        </button>
       </div>
     </div>
 
@@ -100,11 +107,11 @@ const activeTab = ref('notes')
   content: '';
   position: absolute;
   bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 24px;
+  left: 0;
+  width: 100%;
   height: 2px;
   background-color: #111827;
+  transform: none;
 }
 
 :deep(.el-tabs__active-bar) {

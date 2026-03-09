@@ -60,7 +60,6 @@ func initOSSClient() {
 	region := cfg.OSSConfig.Region
 	bucketName := cfg.OSSConfig.Bucket
 	baseURL := cfg.OSSConfig.BaseURL
-	// OSS 使用自己单独的 AccessKey，而不是复用短信的 AccessKey
 	accessKeyID := cfg.OSSConfig.AccessKeyID
 	accessKeySecret := cfg.OSSConfig.AccessKeySecret
 
