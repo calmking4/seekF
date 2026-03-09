@@ -37,14 +37,12 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	token, err := userservice.Login(&req)
+	result, err := userservice.Login(&req)
 	if err != nil {
 		zlog.Info("Login service err: " + err.Error())
 		resp.Error(c, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(c, "登录成功", gin.H{
-		"token": token,
-	})
+	resp.Success(c, "登录成功", result)
 }

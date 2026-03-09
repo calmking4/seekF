@@ -21,6 +21,24 @@ type LoginRequest struct {
 	Password  string `json:"password" binding:"required"`
 }
 
+type LoginRespond struct {
+	User  UserInfoResponse `json:"user"`
+	Token string           `json:"token"`
+}
+
+type UserInfoResponse struct {
+	Uuid      string `json:"uuid"`
+	Telephone string `json:"telephone"`
+	Nickname  string `json:"nickname"`
+	Email     string `json:"email"`
+	Avatar    string `json:"avatar"`
+	Gender    int    `json:"gender"`
+	Birthday  string `json:"birthday"`
+	Signature string `json:"signature"`
+	IsAdmin   int    `json:"isAdmin"`
+	Status    int    `json:"status"`
+}
+
 // Register 用户注册
 func Register(req *RegisterRequest) error {
 	// 检查手机号是否已存在
@@ -57,30 +75,47 @@ func Register(req *RegisterRequest) error {
 }
 
 // Login 用户登录
-func Login(req *LoginRequest) (string, error) {
+func Login(req *LoginRequest) (*LoginRespond, error) {
 	// 根据手机号查找用户
 	user, err := userdao.FindUserByTelephone(req.Telephone)
 	if err != nil {
-		return "", fmt.Errorf("登录失败：%v", err)
+		return nil, fmt.Errorf("登录失败：%v", err)
 	}
 
 	if user == nil {
-		return "", fmt.Errorf("该用户不存在")
+		return nil, fmt.Errorf("该用户不存在")
 	}
 
 	// 验证密码
 	err = verifyPassword(user.Password, req.Password)
 	if err != nil {
-		return "", fmt.Errorf("密码错误")
+		return nil, fmt.Errorf("密码错误")
 	}
 
 	// 生成 JWT Token
 	token, err := jwt.SetToken(uint64(user.Id), user.Telephone, user.Nickname)
 	if err != nil {
-		return "", fmt.Errorf("生成令牌失败：%v", err)
+		return nil, fmt.Errorf("生成令牌失败：%v", err)
 	}
 
-	return token, nil
+	// 构造登录响应
+	loginRsp := &LoginRespond{
+		User: UserInfoResponse{
+			Uuid:      user.Uuid,
+			Telephone: user.Telephone,
+			Nickname:  user.Nickname,
+			Email:     user.Email,
+			Avatar:    user.Avatar,
+			Gender:    int(user.Gender),
+			Birthday:  user.Birthday,
+			Signature: user.Signature,
+			IsAdmin:   int(user.IsAdmin),
+			Status:    int(user.Status),
+		},
+		Token: token,
+	}
+
+	return loginRsp, nil
 }
 
 // 加密密码
