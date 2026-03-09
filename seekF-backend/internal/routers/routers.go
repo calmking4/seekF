@@ -13,11 +13,19 @@ func SetupRouter() *gin.Engine {
 	// 添加CORS中间件
 	r.Use(middlewares.CORSMiddleware())
 
-	// 用户认证相关路由
-	userGroup := r.Group("/user")
+	// 不需要认证的公共接口
+	publicGroup := r.Group("/user")
 	{
-		userGroup.POST("/register", user.Register)
-		userGroup.POST("/login", user.Login)
+		publicGroup.POST("/register", user.Register)
+		publicGroup.POST("/login", user.Login)
+	}
+
+	// 需要认证的接口
+	protectedGroup := r.Group("/user")
+	protectedGroup.Use(middlewares.JWTAuth())
+	{
+		protectedGroup.POST("/logout", user.Logout)
+
 	}
 
 	return r

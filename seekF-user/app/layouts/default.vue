@@ -23,9 +23,12 @@
 
       <!-- 侧边栏底部 -->
       <div class="px-2 pb-4">
-        <button class="flex items-center gap-3 w-full px-3 py-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
-          <Icon name="uil:bars" class="text-lg" />
-          <span class="font-medium">更多</span>
+        <button
+          @click="logout"
+          class="flex items-center gap-3 w-full px-3 py-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
+        >
+          <Icon name="uil:signout" class="text-lg" />
+          <span class="font-medium">退出登录</span>
         </button>
       </div>
     </aside>
@@ -38,6 +41,7 @@
 </template>
 
 <script setup>
+
 // 引入路由对象，用于判断当前激活的导航项
 const route = useRoute()
 
@@ -49,4 +53,30 @@ const navItems = [
   { path: '/aichat', label: 'AIChat', icon: 'uil:robot' },
   { path: '/my', label: '我', icon: 'uil:user' }
 ]
+
+const logout = async () => {
+  try {
+    // 向后端发送退出登录请求
+    const { data, error } = await useApi('/user/logout', {
+      method: 'POST'
+    });
+
+    if (error.value) {
+      console.error('登出请求失败:', error.value);
+      // 即使后端请求失败，也要清除本地信息
+    } else if (data.value && data.value.code === 200) {
+      ElMessage.success(data.value.message || '退出登录成功');
+    }
+  } catch (err) {
+    console.error('登出请求异常:', err);
+    // 即使后端请求失败，也要清除本地信息
+  } finally {
+    // 清除用户信息和token
+    const authState = useAuthState();
+    authState.clear();
+    
+    // 跳转到登录页
+    navigateTo('/login');
+  }
+}
 </script>

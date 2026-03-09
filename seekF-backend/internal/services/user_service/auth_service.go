@@ -118,6 +118,17 @@ func Login(req *LoginRequest) (*LoginRespond, error) {
 	return loginRsp, nil
 }
 
+// Logout 用户登出
+func Logout(tokenString string) error {
+	// 从 Redis 中删除 token
+	err := jwt.DelToken(tokenString)
+	if err != nil {
+		return fmt.Errorf("删除token失败: %v", err)
+	}
+
+	return nil
+}
+
 // 加密密码
 func encryptPassword(password string) (string, error) {
 	// 使用bcrypt加密

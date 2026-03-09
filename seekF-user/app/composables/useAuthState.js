@@ -29,7 +29,7 @@ export const useAuthState = () => {
         return token.value
     }
 
-    const clearUser = ()=>{
+    const clear = ()=>{
         setUser(null)
         setToken(null)
     }
@@ -37,6 +37,6 @@ export const useAuthState = () => {
         // user,
         setUser,getUser,
         setToken,getToken,
-        clearUser
+        clear
     }
 }

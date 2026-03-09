@@ -68,8 +68,10 @@
             <button 
               type="submit"
               class="w-full h-12 bg-gradient-to-r from-[#60a5fa] to-[#3b82f6] text-white rounded-lg text-base font-semibold shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+              :disabled="loading"
             >
-              登录
+              <span v-if="loading">登录中...</span>
+              <span v-else>登录</span>
             </button>
           </form>
 
@@ -117,8 +119,6 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
-import { ElMessage } from "element-plus";
 
 definePageMeta({
   layout: 'auth'
@@ -133,6 +133,7 @@ const loginForm = ref({
   remember: true
 });
 const codeCountdown = ref(0);
+const loading = ref(false);
 
 // 公共输入框样式
 const inputClass = "w-full h-12 px-4 border border-gray-300 rounded-lg transition-all duration-200 focus:border-[#60a5fa] focus:ring-2 focus:ring-[#60a5fa]/20 outline-none text-sm bg-white text-gray-900 placeholder:text-gray-400";
@@ -150,20 +151,62 @@ const getVerifyCode = () => {
   console.log('发送验证码到：', loginForm.value.phone);
 };
 
-const handleLogin = () => {
+const handleLogin = async () => {
   if (loginType.value === 'password') {
     if (!loginForm.value.username || !loginForm.value.password) {
       ElMessage('请输入账号和密码');
       return;
+    }
+    
+    loading.value = true;
+    
+    try {
+      // 使用 useApi 发送登录请求
+      const { data, error } = await useApi('/user/login', {
+        method: 'POST',
+        body: {
+          telephone: loginForm.value.username,
+          password: loginForm.value.password
+        }
+      });
+      
+      if (error.value) {
+        ElMessage.error(error.value.data?.message || '登录失败');
+        return;
+      }
+      
+      if (data.value && data.value.code === 200) {
+        // 处理成功响应，获取用户信息和token
+        const { user, token } = data.value.data;
+        
+        // 存储用户信息和token
+        const authState = useAuthState();
+        authState.setUser(user);
+        authState.setToken(token);
+        
+        ElMessage.success('登录成功');
+        
+        // 跳转到首页或其他页面
+        navigateTo('/');
+      } else {
+        ElMessage.error(data.value?.message || '登录失败');
+      }
+    } catch (err) {
+      console.error('登录错误:', err);
+      ElMessage.error('登录请求失败');
+    } finally {
+      loading.value = false;
     }
   } else {
     if (!loginForm.value.phone || !loginForm.value.code) {
       ElMessage('请输入手机号和验证码');
       return;
     }
+    
+    // 验证码登录逻辑待实现
+    console.log('登录参数：', loginForm.value);
+    ElMessage('验证码登录功能待完善');
   }
-  console.log('登录参数：', loginForm.value);
-  ElMessage('登录成功（仅演示）');
 };
 
 const goBack = () => window.history.back();

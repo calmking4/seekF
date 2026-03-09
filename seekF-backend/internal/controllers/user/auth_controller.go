@@ -46,3 +46,29 @@ func Login(c *gin.Context) {
 
 	resp.Success(c, "登录成功", result)
 }
+
+// Logout 用户登出
+func Logout(c *gin.Context) {
+	// 从上下文获取token（由JWTAuth中间件验证后设置）
+	token, exists := c.Get("token")
+	if !exists {
+		resp.Error(c, "未登录或 token 无效", 401)
+		return
+	}
+
+	tokenString, ok := token.(string)
+	if !ok {
+		resp.Error(c, "token 格式错误", 401)
+		return
+	}
+
+	// 调用service层执行登出操作
+	err := userservice.Logout(tokenString)
+	if err != nil {
+		zlog.Info("Logout service err: " + err.Error())
+		resp.Error(c, "退出登录失败", http.StatusInternalServerError)
+		return
+	}
+
+	resp.Success(c, "退出登录成功", nil)
+}
