@@ -161,23 +161,18 @@ const handleLogin = async () => {
     loading.value = true;
     
     try {
-      // 使用 useApi 发送登录请求
-      const { data, error } = await useApi('/user/login', {
+      // 使用 useApi$ 发送登录请求（$fetch：返回响应对象，失败会 throw）
+      const res = await useApi$('/user/login', {
         method: 'POST',
         body: {
           telephone: loginForm.value.username,
           password: loginForm.value.password
         }
       });
-      
-      if (error.value) {
-        ElMessage.error(error.value.data?.message || '登录失败');
-        return;
-      }
-      
-      if (data.value && data.value.code === 200) {
+
+      if (res && res.code === 200) {
         // 处理成功响应，获取用户信息和token
-        const { user, token } = data.value.data;
+        const { user, token } = res.data;
         
         // 存储用户信息和token
         const authState = useAuthState();
@@ -189,11 +184,11 @@ const handleLogin = async () => {
         // 跳转到首页或其他页面
         navigateTo('/');
       } else {
-        ElMessage.error(data.value?.message || '登录失败');
+        ElMessage.error(res?.message || '登录失败');
       }
     } catch (err) {
       console.error('登录错误:', err);
-      ElMessage.error('登录请求失败');
+      ElMessage.error(err?.data?.message || err?.message || '登录请求失败');
     } finally {
       loading.value = false;
     }

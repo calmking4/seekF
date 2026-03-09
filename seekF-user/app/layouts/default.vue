@@ -57,18 +57,18 @@ const navItems = [
 const logout = async () => {
   try {
     // 向后端发送退出登录请求
-    const { data, error } = await useApi('/user/logout', {
+    const res = await useApi$('/user/logout', {
       method: 'POST'
     });
-
-    if (error.value) {
-      console.error('登出请求失败:', error.value);
-      // 即使后端请求失败，也要清除本地信息
-    } else if (data.value && data.value.code === 200) {
-      ElMessage.success(data.value.message || '退出登录成功');
+    
+    if (res && res.code === 200) {
+      ElMessage.success(res.message || '退出登录成功');
+    } else {
+      console.error('登出请求失败:', res);
     }
   } catch (err) {
     console.error('登出请求异常:', err);
+    ElMessage.error(err?.data?.message || err?.message || '退出登录失败');
     // 即使后端请求失败，也要清除本地信息
   } finally {
     // 清除用户信息和token

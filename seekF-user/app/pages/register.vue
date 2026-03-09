@@ -202,8 +202,8 @@ const handleRegister = async () => {
   loading.value = true;
   
   try {
-    // 使用 useApi 发送注册请求到后端
-    const { data, pending, error } = await useApi('/user/register', {
+    // 使用 useApi$ 发送注册请求到后端（$fetch：返回响应对象，失败会 throw）
+    const res = await useApi$('/user/register', {
       method: 'POST',
       body: {
         nickname: registerForm.value.nickname,
@@ -212,13 +212,13 @@ const handleRegister = async () => {
       }
     });
 
-    if (error.value) {
-      ElMessage.error(error.value.data?.message || '注册失败');
+    if (res && res.code === 200) {
+      // 注册成功
+      ElMessage.success(res?.message || '注册成功！');
+    } else {
+      ElMessage.error(res?.message || '注册失败');
       return;
     }
-
-    // 注册成功
-    ElMessage.success(data?.message || '注册成功！');
     
     // 清空表单
     registerForm.value = {
@@ -242,6 +242,8 @@ const handleRegister = async () => {
       errorMessage = err.data.message;
     } else if (typeof err === 'string') {
       errorMessage = err;
+    } else if (err?.message) {
+      errorMessage = err.message;
     }
     ElMessage.error(errorMessage);
   } finally {

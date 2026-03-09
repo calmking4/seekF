@@ -1,0 +1,11 @@
+主题色：浅蓝色 #60a5fa
+
+使用到的：
+1.inspira ui
+2.element ui
+3.tailwindcss
+4.nuxt/icon
+
+
+遇到的问题
+1.useApi 用的是 useFetch，它会按“请求 key”做缓存/去重；你两次登录/登出调用同一个 URL 时，第二次会直接复用第一次的结果，看起来就像根本没触发接口。使用$fetch不会出现这种问题
