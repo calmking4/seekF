@@ -6,24 +6,25 @@
         <div class="flex items-center gap-6">
           <!-- 头像 -->
           <div class="w-24 h-24 rounded-full border border-gray-100 flex items-center justify-center overflow-hidden bg-gray-50">
-            <Icon name="uil:book-alt" class="text-4xl text-blue-500" />
+            <img v-if="userInfo.avatar" :src="userInfo.avatar" alt="头像" class="w-full h-full object-cover" />
+            <Icon v-else name="uil:user" class="text-4xl text-gray-400" />
           </div>
 
           <!-- 用户信息 -->
           <div class="flex flex-col gap-2">
-            <h1 class="text-xl font-semibold text-gray-900">小红薯665AE357</h1>
-            <p class="text-gray-500 text-sm">小红书号: 11678956516</p>
-            <p class="text-gray-600 text-sm">还没有简介</p>
+            <h1 class="text-xl font-semibold text-gray-900">{{ userInfo.nickname || '加载中...' }}</h1>
+            <p class="text-gray-500 text-sm">小红书号: {{ userInfo.telephone || '加载中...' }}</p>
+            <p class="text-gray-600 text-sm">{{ userInfo.signature || '还没有简介' }}</p>
             <div class="flex gap-6 text-sm text-gray-600 mt-1">
-              <span><span class="font-medium">0</span> 关注</span>
-              <span><span class="font-medium">0</span> 粉丝</span>
-              <span><span class="font-medium">0</span> 获赞与收藏</span>
+              <span><span class="font-medium">{{ userInfo.followCount || 0 }}</span> 关注</span>
+              <span><span class="font-medium">{{ userInfo.followerCount || 0 }}</span> 粉丝</span>
+              <span><span class="font-medium">{{ userInfo.likeCount || 0 }}</span> 获赞与收藏</span>
             </div>
           </div>
         </div>
 
         <!-- 编辑信息按钮 -->
-        <button class="px-5 py-2 border border-red-500 text-red-500 rounded-md text-sm font-medium hover:bg-red-50 transition-colors">
+        <button class="px-5 py-2 border border-red-500 text-red-500 rounded-md text-sm font-medium hover:bg-red-50 hover:text-red-600 transition-colors" @click="editInfo">
           编辑信息
         </button>
       </div>
@@ -67,9 +68,67 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
+import { useApi$ } from '~/composables/useApi'
+import { useAuthState } from '~/composables/useAuthState'
 
 const activeTab = ref('notes')
+const userInfo = reactive({
+  uuid: '',
+  nickname: '',
+  telephone: '',
+  avatar: '',
+  signature: '',
+  followCount: 0,
+  followerCount: 0,
+  likeCount: 0
+})
+
+// 获取用户信息
+const loadUserInfo = async () => {
+  try {
+    // 获取当前用户的UUID，通常从前端状态或JWT token中获得
+    const authState = useAuthState()
+    const user = authState.getUser()
+
+
+    // 使用useApi$发送请求
+    const data = await useApi$('/user/getUserinfo', {
+      method: 'POST',
+      body: {
+        uuid: user.uuid
+      }
+    })
+
+    if (data && data.code === 200) {
+      // 将获取到的用户信息填充到响应式对象中
+      Object.assign(userInfo, {
+        uuid: data.data.uuid,
+        nickname: data.data.nickname,
+        telephone: data.data.telephone,
+        avatar: data.data.avatar,
+        signature: data.data.signature,
+        // 这些计数可能需要单独的API获取，暂时设为默认值
+        followCount: data.data.followCount || 0,
+        followerCount: data.data.followerCount || 0,
+        likeCount: data.data.likeCount || 0
+      })
+    } else {
+      console.error('获取用户信息失败:', data?.message || '未知错误')
+    }
+  } catch (err) {
+    console.error('获取用户信息时发生错误:', err)
+  }
+}
+
+const editInfo = () => {
+  // 编辑用户信息的逻辑
+  console.log('编辑用户信息')
+}
+
+onMounted(() => {
+  loadUserInfo()
+})
 </script>
 
 <style scoped>
