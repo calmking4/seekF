@@ -122,6 +122,8 @@ const userInfo = reactive({
   nickname: '',
   telephone: '',
   avatar: '',
+  email: '',  // 添加邮箱字段
+  birthday: '',  // 添加生日字段
   signature: '',
   followCount: 0,
   followerCount: 0,
@@ -161,6 +163,8 @@ const loadUserInfo = async () => {
         nickname: data.data.nickname,
         telephone: data.data.telephone,
         avatar: data.data.avatar,
+        email: data.data.email,  // 添加邮箱
+        birthday: data.data.birthday,  // 添加生日
         signature: data.data.signature,
         // 这些计数可能需要单独的API获取，暂时设为默认值
         followCount: data.data.followCount || 0,
