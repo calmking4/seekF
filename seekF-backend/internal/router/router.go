@@ -1,4 +1,4 @@
-package routers
+package router
 
 import (
 	"seekF-backend/internal/controllers/user"
@@ -25,6 +25,7 @@ func SetupRouter() *gin.Engine {
 	protectedGroup.Use(middlewares.JWTAuth())
 	{
 		protectedGroup.POST("/logout", user.Logout)
+		protectedGroup.POST("/getUserinfo", user.GetUserInfo)
 
 	}
 
