@@ -17,3 +17,9 @@ func FindUserByUuid(uuid string) (*models.UserInfo, error) {
 	}
 	return &user, result.Error
 }
+
+// UpdateUserInfo 更新用户信息
+func UpdateUserInfo(user *models.UserInfo) error {
+	result := db.GormDB.Save(user)
+	return result.Error
+}

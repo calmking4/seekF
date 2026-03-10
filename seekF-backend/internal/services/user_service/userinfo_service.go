@@ -34,3 +34,41 @@ func GetUserInfo(req *userreq.GetUserInfoRequest) (*userresp.GetUserInfoRespond,
 
 	return userInfoRsp, nil
 }
+
+// UpdateUserInfo 更新用户信息
+func UpdateUserInfo(req *userreq.UpdateUserInfoRequest) error {
+	// 根据UUID查找用户
+	user, err := userdao.FindUserByUuid(req.Uuid)
+	if err != nil {
+		return fmt.Errorf("查找用户失败：%v", err)
+	}
+
+	if user == nil {
+		return fmt.Errorf("用户不存在")
+	}
+
+	// 更新用户信息
+	if req.Email != "" {
+		user.Email = req.Email
+	}
+	if req.Nickname != "" {
+		user.Nickname = req.Nickname
+	}
+	if req.Birthday != "" {
+		user.Birthday = req.Birthday
+	}
+	if req.Signature != "" {
+		user.Signature = req.Signature
+	}
+	if req.Avatar != "" {
+		user.Avatar = req.Avatar
+	}
+
+	// 保存更新
+	err = userdao.UpdateUserInfo(user)
+	if err != nil {
+		return fmt.Errorf("更新用户信息失败：%v", err)
+	}
+
+	return nil
+}

@@ -26,7 +26,7 @@ func SetupRouter() *gin.Engine {
 	{
 		protectedGroup.POST("/logout", user.Logout)
 		protectedGroup.POST("/getUserinfo", user.GetUserInfo)
-
+		protectedGroup.POST("/updateUserInfo", user.UpdateUserInfo)
 	}
 
 	return r
