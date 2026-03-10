@@ -9,3 +9,11 @@
 
 遇到的问题
 1.useApi 用的是 useFetch，它会按“请求 key”做缓存/去重；你两次登录/登出调用同一个 URL 时，第二次会直接复用第一次的结果，看起来就像根本没触发接口。使用$fetch不会出现这种问题
+2.在my/index.vue中，使用useApi会报错而useApi$不会。原因可能如下：
+*. useFetch 的执行时机问题（最关键）
+useFetch 是 Nuxt 的「跨端请求函数」，默认会在服务端（SSR）和客户端各执行一次：
+点击菜单进入页面：仅在客户端执行 useFetch → useAuthState() 能读取客户端 Cookie 中的 user/uuid → 请求携带有效参数 /token → 后端返回正确数据 → data.value 有值；
+刷新页面：useFetch 先在服务端执行 → 服务端无客户端 Cookie → useAuthState().getUser() 返回 null → 请求参数 uuid: user?.uuid 为 undefined，且请求头无 token → 后端可能返回 401/403 或空数据 → data.value 变为 undefined；
+即使后续客户端再执行一次，也可能因服务端的错误状态导致数据未正确更新。
+*. await useFetch 的用法错误
+useFetch 返回的是「响应式对象」（{ data, error, pending }），而非 Promise，你用 await useApi(...) 本质是 await useFetch(...)，这是错误的用法 ——await 无法等待 useFetch 的响应完成，会导致提前读取 data.value 为 undefined。

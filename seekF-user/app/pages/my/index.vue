@@ -64,15 +64,59 @@
         </el-tab-pane>
       </el-tabs>
     </div>
+
+    <!-- 编辑用户信息弹窗 -->
+    <el-dialog v-model="editDialogVisible" title="编辑个人信息" width="400px" center>
+      <el-form :model="editForm" label-width="80px" @submit.prevent>
+        <el-form-item label="昵称">
+          <el-input v-model="editForm.nickname" placeholder="请输入昵称"></el-input>
+        </el-form-item>
+        <el-form-item label="头像">
+          <el-input v-model="editForm.avatar" placeholder="请输入头像链接"></el-input>
+        </el-form-item>
+        <el-form-item label="邮箱">
+          <el-input v-model="editForm.email" placeholder="请输入邮箱"></el-input>
+        </el-form-item>
+        <el-form-item label="生日">
+          <el-date-picker
+            v-model="editForm.birthday"
+            type="date"
+            placeholder="选择日期"
+            format="YYYY-MM-DD"
+            value-format="YYYY-MM-DD">
+          </el-date-picker>
+        </el-form-item>
+        <el-form-item label="个性签名">
+          <el-input 
+            v-model="editForm.signature" 
+            type="textarea" 
+            :rows="3"
+            placeholder="请输入个性签名"
+            maxlength="100"
+            show-word-limit
+          ></el-input>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="cancelEdit">取消</el-button>
+          <el-button type="primary" @click="confirmEdit" :loading="updating">确认</el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { useApi$ } from '~/composables/useApi'
+import { ElMessage } from 'element-plus'
 import { useAuthState } from '~/composables/useAuthState'
 
 const activeTab = ref('notes')
+const editDialogVisible = ref(false)
+const updating = ref(false)
+
 const userInfo = reactive({
   uuid: '',
   nickname: '',
@@ -82,6 +126,16 @@ const userInfo = reactive({
   followCount: 0,
   followerCount: 0,
   likeCount: 0
+})
+
+// 编辑表单
+const editForm = reactive({
+  uuid: '',
+  nickname: '',
+  avatar: '',
+  email: '',
+  birthday: '',
+  signature: ''
 })
 
 // 获取用户信息
@@ -122,8 +176,59 @@ const loadUserInfo = async () => {
 }
 
 const editInfo = () => {
-  // 编辑用户信息的逻辑
-  console.log('编辑用户信息')
+  // 将当前用户信息复制到编辑表单
+  Object.assign(editForm, {
+    uuid: userInfo.uuid,
+    nickname: userInfo.nickname,
+    avatar: userInfo.avatar,
+    email: userInfo.email || '',
+    birthday: userInfo.birthday || '',
+    signature: userInfo.signature
+  })
+  
+  editDialogVisible.value = true
+}
+
+// 取消编辑
+const cancelEdit = () => {
+  editDialogVisible.value = false
+}
+
+// 确认编辑
+const confirmEdit = async () => {
+  updating.value = true
+  
+  try {
+    const updateData = { ...editForm }
+    
+    // 发送更新请求
+    const data = await useApi$('/user/updateUserInfo', {
+      method: 'POST',
+      body: updateData
+    })
+
+    if (data && data.code === 200) {
+      // 更新成功，刷新用户信息
+      Object.assign(userInfo, {
+        nickname: updateData.nickname,
+        avatar: updateData.avatar,
+        email: updateData.email,
+        birthday: updateData.birthday,
+        signature: updateData.signature
+      })
+      
+      ElMessage.success('更新用户信息成功')
+      editDialogVisible.value = false
+    } else {
+      console.error('更新用户信息失败:', data?.message || '未知错误')
+      ElMessage.error(data?.message || '更新用户信息失败')
+    }
+  } catch (err) {
+    console.error('更新用户信息时发生错误:', err)
+    ElMessage.error('网络错误，请稍后重试')
+  } finally {
+    updating.value = false
+  }
 }
 
 onMounted(() => {
@@ -175,5 +280,11 @@ onMounted(() => {
 
 :deep(.el-tabs__active-bar) {
   display: none;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 </style>
