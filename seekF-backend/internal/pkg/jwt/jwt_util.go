@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"seekF-backend/internal/configs"
 	"seekF-backend/internal/pkg/redis"
-	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -13,7 +12,8 @@ import (
 
 // CustomClaims 自定义载荷，看你系统需要存什么
 type CustomClaims struct {
-	UserID   uint64 `json:"user_id"`
+	Id       uint64 `json:"id"`
+	UUID     string `json:"uuid"`
 	Phone    string `json:"phone,omitempty"`
 	Nickname string `json:"nickname,omitempty"`
 	jwt.RegisteredClaims
@@ -22,13 +22,14 @@ type CustomClaims struct {
 const TokenPrefix = "auth:token:"
 
 // GenerateToken 生成 JWT
-func GenerateToken(userID uint64, phone, nickname string) (string, error) {
+func GenerateToken(id uint64, uuid, phone, nickname string) (string, error) {
 	// 获取jwt配置实例
 	cfg := configs.GetConfig()
 
 	now := time.Now()
 	claims := CustomClaims{
-		UserID:   userID,
+		Id:       id,
+		UUID:     uuid,
 		Phone:    phone,
 		Nickname: nickname,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -68,23 +69,41 @@ func ParseToken(tokenString string) (*CustomClaims, error) {
 	return nil, errors.New("invalid token")
 }
 
+// CheckTokenExistsInRedis 检查 token 是否存在于 Redis 中
+func CheckTokenExistsInRedis(tokenString string) (bool, error) {
+	tokenKey := TokenPrefix + tokenString
+
+	// 尝试从 Redis 获取 token
+	value, err := redis.GetKey(tokenKey)
+	if err != nil {
+		return false, err
+	}
+
+	if value == "" {
+		return false, nil
+	}
+
+	// 键存在
+	return true, nil
+}
+
 // SetToken 生成 JWT 并将其存储到 Redis 中
-func SetToken(userID uint64, phone, nickname string) (string, error) {
+func SetToken(id uint64, uuid, phone, nickname string) (string, error) {
 	// 生成 JWT token
-	tokenString, err := GenerateToken(userID, phone, nickname)
+	tokenString, err := GenerateToken(id, uuid, phone, nickname)
 	if err != nil {
 		return "", fmt.Errorf("generate token failed: %v", err)
 	}
 
 	// 将 token 存储到 Redis 中
 	tokenKey := TokenPrefix + tokenString
-	userIDStr := strconv.FormatUint(userID, 10) // 将 uint64 转换为10进制字符串
+	uuidStr := uuid // UUID 字符串
 
 	// 获取配置的过期时间
 	cfg := configs.GetConfig()
 	expireTime := time.Duration(cfg.JWTConfig.ExpireMinutes) * time.Minute
 
-	err = redis.SetKeyEx(tokenKey, userIDStr, expireTime)
+	err = redis.SetKeyEx(tokenKey, uuidStr, expireTime)
 	if err != nil {
 		return "", fmt.Errorf("store token to redis failed: %v", err)
 	}

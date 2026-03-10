@@ -92,8 +92,8 @@ func Login(req *LoginRequest) (*LoginRespond, error) {
 		return nil, fmt.Errorf("密码错误")
 	}
 
-	// 生成 JWT Token
-	token, err := jwt.SetToken(uint64(user.Id), user.Telephone, user.Nickname)
+	// 生成 JWT Token，现在需要传入 UUID
+	token, err := jwt.SetToken(uint64(user.Id), user.Uuid, user.Telephone, user.Nickname)
 	if err != nil {
 		return nil, fmt.Errorf("生成令牌失败：%v", err)
 	}

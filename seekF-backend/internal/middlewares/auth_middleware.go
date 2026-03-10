@@ -1,10 +1,9 @@
 package middlewares
 
 import (
-	"strings"
-
 	"seekF-backend/internal/pkg/jwt"
 	"seekF-backend/internal/pkg/resp"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -27,18 +26,30 @@ func JWTAuth() gin.HandlerFunc {
 			return
 		}
 
-		claims, err := jwt.ParseToken(parts[1])
+		tokenString := parts[1]
+
+		// 首先验证 JWT token 本身的有效性
+		claims, err := jwt.ParseToken(tokenString)
 		if err != nil {
 			resp.Error(c, "token 无效或已过期", 401)
 			c.Abort()
 			return
 		}
 
+		// 检查 token 是否存在于 Redis 中（防止用户登出后仍能使用 token）
+		exists, err := jwt.CheckTokenExistsInRedis(tokenString)
+		if err != nil || !exists {
+			resp.Error(c, "token 已失效或用户已登出", 401)
+			c.Abort()
+			return
+		}
+
 		// 在 Gin 框架中，控制器（controller）可以通过上下文（context）获取中间件中存储的数据。通过c.Get("key")获取
-		c.Set("userID", claims.UserID)
-		c.Set("userPhone", claims.Phone)
-		c.Set("userNickname", claims.Nickname)
-		c.Set("token", parts[1])
+		c.Set("ID", claims.Id)
+		c.Set("Phone", claims.Phone)
+		c.Set("Nickname", claims.Nickname)
+		c.Set("Uuid", claims.UUID) // 直接从 JWT 中获取用户UUID
+		c.Set("token", tokenString)
 
 		c.Next()
 	}
