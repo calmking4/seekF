@@ -28,6 +28,7 @@ func SetupRouter() *gin.Engine {
 		protectedGroup.POST("/userinfo/getUserinfo", user.GetUserInfo)
 		protectedGroup.POST("/userinfo/updateUserInfo", user.UpdateUserInfo)
 		protectedGroup.POST("/group/createGroup", user.CreateGroup)
+		protectedGroup.POST("/group/loadMyGroup", user.LoadMyGroup)
 	}
 
 	return r

@@ -36,3 +36,22 @@ func CreateGroup(c *gin.Context) {
 
 	resp.Success(c, "创建群聊成功", nil)
 }
+
+// LoadMyGroup 获取我创建的群聊
+func LoadMyGroup(c *gin.Context) {
+	// 从上下文获取当前用户UUID
+	userUuid, exists := c.Get("Uuid")
+	if !exists {
+		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	groupList, err := userservice.LoadMyGroup(userUuid.(string))
+	if err != nil {
+		zlog.Info("LoadMyGroup service err: " + err.Error())
+		resp.Error(c, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(c, "获取群聊成功", groupList)
+}
