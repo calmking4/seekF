@@ -48,7 +48,7 @@ func JWTAuth() gin.HandlerFunc {
 		c.Set("ID", claims.Id)
 		c.Set("Phone", claims.Phone)
 		c.Set("Nickname", claims.Nickname)
-		c.Set("Uuid", claims.UUID) // 直接从 JWT 中获取用户UUID
+		c.Set("Uuid", claims.UUID) //用户UUID
 		c.Set("token", tokenString)
 
 		c.Next()
