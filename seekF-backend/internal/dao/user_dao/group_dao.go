@@ -21,6 +21,6 @@ func GetGroupInfoByOwnerId(ownerId string) ([]models.GroupInfo, error) {
 // GetGroupInfoByUuid 根据群组uuid获取群组信息
 func GetGroupInfoByUuid(uuid string) (models.GroupInfo, error) {
 	var group models.GroupInfo
-	result := db.GormDB.Where("uuid = ?", uuid).First(&group)
+	result := db.GormDB.Unscoped().Where("uuid = ?", uuid).First(&group)
 	return group, result.Error
 }

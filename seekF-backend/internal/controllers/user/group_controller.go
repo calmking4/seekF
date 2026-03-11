@@ -74,3 +74,22 @@ func CheckGroupAddMode(c *gin.Context) {
 
 	resp.Success(c, "加群方式获取成功", addMode)
 }
+
+// GetGroupInfo 获取群聊详情
+func GetGroupInfo(c *gin.Context) {
+	var req userreq.GetGroupInfoRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		return
+	}
+
+	groupInfo, err := userservice.GetGroupInfo(req.GroupId)
+	if err != nil {
+		zlog.Info("GetGroupInfo service err: " + err.Error())
+		resp.Error(c, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(c, "获取群聊详情成功", groupInfo)
+}

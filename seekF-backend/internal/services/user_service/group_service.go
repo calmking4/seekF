@@ -97,7 +97,7 @@ func LoadMyGroup(ownerId string) ([]userresp.LoadMyGroupRespond, error) {
 				zlog.Error(err.Error())
 				return nil, err
 			}
-			// 缓存群组列表
+			// 缓存我创建的群组列表
 			if err := myredis.SetKeyEx("contact_mygroup_list_"+ownerId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
 				zlog.Error(err.Error())
 				return nil, err
@@ -124,4 +124,27 @@ func CheckGroupAddMode(groupId string) (int8, error) {
 		return -1, err
 	}
 	return group.AddMode, nil
+}
+
+// GetGroupInfo 获取群聊详情
+func GetGroupInfo(groupId string) (userresp.GetGroupInfoRespond, error) {
+	group, err := userdao.GetGroupInfoByUuid(groupId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return userresp.GetGroupInfoRespond{}, err
+	}
+
+	rsp := userresp.GetGroupInfoRespond{
+		Uuid:      group.Uuid,
+		Name:      group.Name,
+		Notice:    group.Notice,
+		Avatar:    group.Avatar,
+		MemberCnt: group.MemberCnt,
+		OwnerId:   group.OwnerId,
+		AddMode:   group.AddMode,
+		Status:    group.Status,
+		IsDeleted: group.DeletedAt.Valid,
+	}
+
+	return rsp, nil
 }
