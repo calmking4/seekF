@@ -78,7 +78,7 @@ func LoadMyGroup(ownerId string) ([]userresp.LoadMyGroupRespond, error) {
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			// 使用 DAO 层方法获取群组列表
-			groupList, err := userdao.LoadMyGroup(ownerId)
+			groupList, err := userdao.GetGroupInfoByOwnerId(ownerId)
 			if err != nil {
 				zlog.Error(err.Error())
 				return nil, err
@@ -114,4 +114,14 @@ func LoadMyGroup(ownerId string) ([]userresp.LoadMyGroupRespond, error) {
 		return nil, err
 	}
 	return groupListRsp, nil
+}
+
+// CheckGroupAddMode 检查群聊加群方式
+func CheckGroupAddMode(groupId string) (int8, error) {
+	group, err := userdao.GetGroupInfoByUuid(groupId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return -1, err
+	}
+	return group.AddMode, nil
 }

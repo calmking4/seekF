@@ -55,3 +55,22 @@ func LoadMyGroup(c *gin.Context) {
 
 	resp.Success(c, "获取群聊成功", groupList)
 }
+
+// CheckGroupAddMode 检查群聊加群方式
+func CheckGroupAddMode(c *gin.Context) {
+	var req userreq.CheckGroupAddModeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		return
+	}
+
+	addMode, err := userservice.CheckGroupAddMode(req.GroupId)
+	if err != nil {
+		zlog.Info("CheckGroupAddMode service err: " + err.Error())
+		resp.Error(c, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(c, "加群方式获取成功", addMode)
+}
