@@ -93,3 +93,29 @@ func GetGroupInfo(c *gin.Context) {
 
 	resp.Success(c, "获取群聊详情成功", groupInfo)
 }
+
+// UpdateGroupInfo 更新群组详情
+func UpdateGroupInfo(c *gin.Context) {
+	var req userreq.UpdateGroupInfoRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		return
+	}
+
+	// 从上下文获取当前用户UUID
+	userId, exists := c.Get("Uuid")
+	if !exists {
+		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	err := userservice.UpdateGroupInfo(req, userId.(string))
+	if err != nil {
+		zlog.Info("UpdateGroupInfo service err: " + err.Error())
+		resp.Error(c, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(c, "更新群聊信息成功", nil)
+}

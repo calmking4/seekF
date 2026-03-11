@@ -18,9 +18,15 @@ func GetGroupInfoByOwnerId(ownerId string) ([]models.GroupInfo, error) {
 	return groupList, result.Error
 }
 
-// GetGroupInfoByUuid 根据群组uuid获取群组信息
+// GetGroupInfoByUuid 根据群组uuid获取群组详情
 func GetGroupInfoByUuid(uuid string) (models.GroupInfo, error) {
 	var group models.GroupInfo
 	result := db.GormDB.Unscoped().Where("uuid = ?", uuid).First(&group)
 	return group, result.Error
+}
+
+// UpdateGroupInfo 更新群组详情
+func UpdateGroupInfo(group *models.GroupInfo) error {
+	result := db.GormDB.Save(group)
+	return result.Error
 }

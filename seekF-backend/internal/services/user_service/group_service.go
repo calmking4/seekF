@@ -148,3 +148,48 @@ func GetGroupInfo(groupId string) (userresp.GetGroupInfoRespond, error) {
 
 	return rsp, nil
 }
+
+// UpdateGroupInfo 更新群组详情
+func UpdateGroupInfo(req userreq.UpdateGroupInfoRequest, userId string) error {
+	group, err := userdao.GetGroupInfoByUuid(req.Uuid)
+	if err != nil {
+		zlog.Error(err.Error())
+		return err
+	}
+
+	// 检查用户是否为群主
+	if group.OwnerId != userId {
+		return errors.New("只有群主才能更新群组信息")
+	}
+
+	if req.Name != "" {
+		group.Name = req.Name
+	}
+	if req.AddMode != -1 {
+		group.AddMode = req.AddMode
+	}
+	if req.Notice != "" {
+		group.Notice = req.Notice
+	}
+	if req.Avatar != "" {
+		group.Avatar = req.Avatar
+	}
+
+	if err := userdao.UpdateGroupInfo(&group); err != nil {
+		zlog.Error(err.Error())
+		return err
+	}
+
+	// 更新会话
+	if err := userdao.UpdateSessionByReceiveId(req.Uuid, group.Name, group.Avatar); err != nil {
+		zlog.Error(err.Error())
+		return err
+	}
+
+	// 清除我的群组列表缓存
+	if err := myredis.DelKeyIfExists("contact_mygroup_list_" + group.OwnerId); err != nil {
+		zlog.Error(err.Error())
+	}
+
+	return nil
+}
