@@ -24,7 +24,7 @@ func CreateGroup(c *gin.Context) {
 		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
 		return
 	}
-	// 设置群主ID为当前用户ID
+	// 设置群主ID为当前用户UUID
 	createGroupReq.OwnerId = userUuid.(string)
 
 	err := userservice.CreateGroup(&createGroupReq)

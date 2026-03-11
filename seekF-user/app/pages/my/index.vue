@@ -149,7 +149,7 @@ const loadUserInfo = async () => {
 
 
     // 使用useApi$发送请求
-    const data = await useApi$('/user/getUserinfo', {
+    const data = await useApi$('/user/userinfo/getUserinfo', {
       method: 'POST',
       body: {
         uuid: user.uuid
@@ -206,7 +206,7 @@ const confirmEdit = async () => {
     const updateData = { ...editForm }
     
     // 发送更新请求
-    const data = await useApi$('/user/updateUserInfo', {
+    const data = await useApi$('/user/userinfo/updateUserInfo', {
       method: 'POST',
       body: updateData
     })

@@ -25,9 +25,9 @@ func SetupRouter() *gin.Engine {
 	protectedGroup.Use(middlewares.JWTAuth())
 	{
 		protectedGroup.POST("/logout", user.Logout)
-		protectedGroup.POST("/getUserinfo", user.GetUserInfo)
-		protectedGroup.POST("/updateUserInfo", user.UpdateUserInfo)
-		protectedGroup.POST("/createGroup", user.CreateGroup)
+		protectedGroup.POST("/userinfo/getUserinfo", user.GetUserInfo)
+		protectedGroup.POST("/userinfo/updateUserInfo", user.UpdateUserInfo)
+		protectedGroup.POST("/group/createGroup", user.CreateGroup)
 	}
 
 	return r
