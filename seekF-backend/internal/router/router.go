@@ -35,6 +35,7 @@ func SetupRouter() *gin.Engine {
 		protectedGroup.POST("/group/getGroupMemberList", user.GetGroupMemberList)
 		protectedGroup.POST("/group/removeGroupMembers", user.RemoveGroupMembers)
 		protectedGroup.POST("/group/enterGroupDirectly", user.EnterGroupDirectly)
+		protectedGroup.POST("/group/leaveGroup", user.LeaveGroup)
 	}
 
 	return r

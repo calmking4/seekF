@@ -375,3 +375,77 @@ func EnterGroupDirectly(groupId string, userId string) error {
 
 	return nil
 }
+
+// LeaveGroup 退群
+func LeaveGroup(groupId string, userId string) error {
+	// 获取群组信息
+	group, err := userdao.GetGroupInfoByUuid(groupId)
+	if err != nil {
+		zlog.Error("获取群组信息失败: " + err.Error())
+		return fmt.Errorf("获取群组信息失败")
+	}
+
+	// 检查用户是否在群中
+	var members []string
+	if err := json.Unmarshal(group.Members, &members); err != nil {
+		zlog.Error("解析群组成员失败: " + err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	userInGroup := false
+	for i, member := range members {
+		if member == userId {
+			members = append(members[:i], members[i+1:]...) // 从成员列表中移除用户
+			userInGroup = true
+			break
+		}
+	}
+
+	if !userInGroup {
+		return fmt.Errorf("用户不在群中")
+	}
+
+	// 如果用户是群主，则不能退群（群主只能解散群）
+	if group.OwnerId == userId {
+		return fmt.Errorf("群主不能退群，请先转让群主或解散群")
+	}
+
+	// 更新群组成员列表
+	memberBytes, err := json.Marshal(members)
+	if err != nil {
+		zlog.Error("序列化群组成员失败: " + err.Error())
+		return fmt.Errorf("系统错误")
+	}
+	group.Members = memberBytes
+
+	// 更新群成员数量
+	if group.MemberCnt > 0 {
+		group.MemberCnt -= 1
+	}
+
+	// 保存群组信息
+	if err := userdao.UpdateGroupInfo(&group); err != nil {
+		zlog.Error("更新群组信息失败: " + err.Error())
+		return fmt.Errorf("更新群组信息失败")
+	}
+
+	// 删除会话记录
+	if err := userdao.RemoveSessionBySendAndReceiveId(userId, groupId); err != nil {
+		zlog.Error("删除会话记录失败: " + err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 更新用户联系记录状态并软删除
+	if err := userdao.UpdateUserContactStatusAndDelete(userId, groupId, contactstatusenum.QUIT_GROUP); err != nil {
+		zlog.Error("更新用户联系记录失败: " + err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 删除对应的申请记录
+	if err := userdao.RemoveContactApply(userId, groupId); err != nil {
+		zlog.Error("删除申请记录失败: " + err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	return nil
+}
