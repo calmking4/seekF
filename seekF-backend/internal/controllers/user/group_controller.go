@@ -138,3 +138,29 @@ func GetGroupMemberList(c *gin.Context) {
 
 	resp.Success(c, "获取群聊成员列表成功", groupMemberList)
 }
+
+// RemoveGroupMembers 移除群聊成员
+func RemoveGroupMembers(c *gin.Context) {
+	var req userreq.RemoveGroupMembersRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		return
+	}
+
+	// 从上下文获取当前用户UUID
+	userId, exists := c.Get("Uuid")
+	if !exists {
+		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	err := userservice.RemoveGroupMembers(req, userId.(string))
+	if err != nil {
+		zlog.Info("RemoveGroupMembers service err: " + err.Error())
+		resp.Error(c, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(c, "移除群聊成员成功", nil)
+}

@@ -230,3 +230,79 @@ func GetGroupMemberList(groupId string) ([]userresp.GetGroupMemberListRespond, e
 
 	return rspList, nil
 }
+
+// RemoveGroupMembers 移除群聊成员
+func RemoveGroupMembers(req userreq.RemoveGroupMembersRequest, userId string) error {
+	// 获取群组信息
+	group, err := userdao.GetGroupInfoByUuid(req.GroupId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return fmt.Errorf("获取群组信息失败")
+	}
+
+	// 检查用户是否为群主
+	if group.OwnerId != userId {
+		return fmt.Errorf("只有群主才能移除群成员")
+	}
+
+	// 解析群组成员列表
+	var members []string
+	if err := json.Unmarshal(group.Members, &members); err != nil {
+		zlog.Error("解析群组成员失败: " + err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 遍历要移除的成员
+	for _, uuid := range req.UuidList {
+		// 不能移除群主
+		if group.OwnerId == uuid {
+			return fmt.Errorf("不能移除群主")
+		}
+
+		// 从成员列表中移除指定用户
+		for i, member := range members {
+			if member == uuid {
+				members = append(members[:i], members[i+1:]...)
+				break
+			}
+		}
+
+		// 更新群成员数量
+		if group.MemberCnt > 0 {
+			group.MemberCnt -= 1
+		}
+
+		// 删除对应的会话记录
+		if err := userdao.RemoveSessionBySendAndReceiveId(uuid, req.GroupId); err != nil {
+			zlog.Error("删除会话记录失败: " + err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 删除对应的联系人
+		if err := userdao.RemoveContact(uuid, req.GroupId); err != nil {
+			zlog.Error("删除联系人记录失败: " + err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 删除对应的申请记录
+		if err := userdao.RemoveContactApply(uuid, req.GroupId); err != nil {
+			zlog.Error("删除申请记录失败: " + err.Error())
+			return fmt.Errorf("系统错误")
+		}
+	}
+
+	// 更新群组成员列表
+	group.Members, err = json.Marshal(members)
+	if err != nil {
+		zlog.Error("序列化群组成员失败: " + err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 保存群组信息
+	if err := userdao.UpdateGroupInfo(&group); err != nil {
+		zlog.Error(err.Error())
+		return fmt.Errorf("更新群组信息失败")
+	}
+
+	return nil
+}
