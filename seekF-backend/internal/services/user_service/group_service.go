@@ -306,3 +306,72 @@ func RemoveGroupMembers(req userreq.RemoveGroupMembersRequest, userId string) er
 
 	return nil
 }
+
+// EnterGroupDirectly 直接加入群聊
+func EnterGroupDirectly(groupId string, userId string) error {
+	// 获取群组信息
+	group, err := userdao.GetGroupInfoByUuid(groupId)
+	if err != nil {
+		zlog.Error("获取群组信息失败: " + err.Error())
+		return fmt.Errorf("获取群组信息失败")
+	}
+
+	// 检查群组状态是否允许直接加入
+	if group.Status != groupstatusenum.NORMAL {
+		return fmt.Errorf("群组不可用")
+	}
+
+	// 检查加群方式
+	if group.AddMode != 0 { // 0 表示直接加入
+		return fmt.Errorf("该群不允许直接加入")
+	}
+
+	// 解析群组成员列表
+	var members []string
+	if err := json.Unmarshal(group.Members, &members); err != nil {
+		zlog.Error("解析群组成员失败: " + err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 检查用户是否已经在群中
+	for _, member := range members {
+		if member == userId {
+			return fmt.Errorf("已在群中")
+		}
+	}
+
+	// 将用户添加到成员列表
+	members = append(members, userId)
+	memberBytes, err := json.Marshal(members)
+	if err != nil {
+		zlog.Error("序列化群组成员失败: " + err.Error())
+		return fmt.Errorf("系统错误")
+	}
+	group.Members = memberBytes
+
+	// 更新群成员数量
+	group.MemberCnt += 1
+
+	// 保存群组信息
+	if err := userdao.UpdateGroupInfo(&group); err != nil {
+		zlog.Error("更新群组信息失败: " + err.Error())
+		return fmt.Errorf("更新群组信息失败")
+	}
+
+	// 创建用户联系记录
+	contact := &models.UserContact{
+		UserId:      userId,
+		ContactId:   groupId,
+		ContactType: contacttypeenum.GROUP,
+		Status:      contactstatusenum.NORMAL,
+		CreatedAt:   time.Now(),
+		UpdateAt:    time.Now(),
+	}
+
+	if err := userdao.CreateUserContact(contact); err != nil {
+		zlog.Error("创建用户联系记录失败: " + err.Error())
+		return fmt.Errorf("添加联系人失败")
+	}
+
+	return nil
+}
