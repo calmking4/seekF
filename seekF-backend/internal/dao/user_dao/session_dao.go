@@ -19,3 +19,9 @@ func RemoveSessionBySendAndReceiveId(sendId string, receiveId string) error {
 	result := db.GormDB.Where("send_id = ? AND receive_id = ?", sendId, receiveId).Delete(&models.Session{})
 	return result.Error
 }
+
+// RemoveSessionsByReceiveId 批量删除指定接收ID的会话
+func RemoveSessionsByReceiveId(receiveId string) error {
+	result := db.GormDB.Where("receive_id = ?", receiveId).Delete(&models.Session{})
+	return result.Error
+}

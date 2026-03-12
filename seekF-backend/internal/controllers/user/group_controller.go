@@ -216,3 +216,29 @@ func LeaveGroup(c *gin.Context) {
 
 	resp.Success(c, "退群成功", nil)
 }
+
+// DismissGroup 解散群聊
+func DismissGroup(c *gin.Context) {
+	var req userreq.DismissGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		return
+	}
+
+	// 从上下文获取当前用户UUID
+	userId, exists := c.Get("Uuid")
+	if !exists {
+		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	err := userservice.DismissGroup(req.GroupId, userId.(string))
+	if err != nil {
+		zlog.Info("DismissGroup service err: " + err.Error())
+		resp.Error(c, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(c, "解散群聊成功", nil)
+}

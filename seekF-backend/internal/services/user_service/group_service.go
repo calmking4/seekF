@@ -449,3 +449,49 @@ func LeaveGroup(groupId string, userId string) error {
 
 	return nil
 }
+
+// DismissGroup 解散群聊
+func DismissGroup(groupId string, userId string) error {
+	// 获取群组信息
+	group, err := userdao.GetGroupInfoByUuid(groupId)
+	if err != nil {
+		zlog.Error("获取群组信息失败: " + err.Error())
+		return fmt.Errorf("获取群组信息失败")
+	}
+
+	// 检查用户是否为群主
+	if group.OwnerId != userId {
+		return fmt.Errorf("只有群主才能解散群聊")
+	}
+
+	// 删除群组信息
+	if err := userdao.DeleteGroupByUUid(groupId); err != nil {
+		zlog.Error("删除群组失败: " + err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 删除所有与群组相关的会话
+	if err := userdao.RemoveSessionsByReceiveId(groupId); err != nil {
+		zlog.Error("删除群组会话失败: " + err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 删除所有与群组相关的用户联系
+	if err := userdao.RemoveContactsByContactId(groupId); err != nil {
+		zlog.Error("删除群组用户联系失败: " + err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 删除群组相关的申请记录
+	if err := userdao.RemoveContactAppliesByContactId(groupId); err != nil {
+		zlog.Error("删除群组申请记录失败: " + err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 清除相关缓存
+	if err := myredis.DelKeyIfExists("contact_mygroup_list_" + userId); err != nil {
+		zlog.Error("删除缓存失败: " + err.Error())
+	}
+
+	return nil
+}

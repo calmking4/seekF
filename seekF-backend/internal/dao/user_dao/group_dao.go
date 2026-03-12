@@ -31,8 +31,15 @@ func UpdateGroupInfo(group *models.GroupInfo) error {
 	return result.Error
 }
 
+// GetGroupMembersByUuid 根据群组uuid获取群组成员
 func GetGroupMembersByUuid(uuid string) (models.GroupInfo, error) {
 	var group models.GroupInfo
 	result := db.GormDB.Where("uuid = ?", uuid).First(&group)
 	return group, result.Error
+}
+
+// DeleteGroupByUUid 根据群组uuid删除群组
+func DeleteGroupByUUid(groupId string) error {
+	result := db.GormDB.Where("uuid = ?", groupId).Delete(&models.GroupInfo{})
+	return result.Error
 }
