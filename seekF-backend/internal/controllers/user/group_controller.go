@@ -119,3 +119,22 @@ func UpdateGroupInfo(c *gin.Context) {
 
 	resp.Success(c, "更新群聊信息成功", nil)
 }
+
+// GetGroupMemberList 获取群聊成员列表
+func GetGroupMemberList(c *gin.Context) {
+	var req userreq.GetGroupMemberListRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		return
+	}
+
+	groupMemberList, err := userservice.GetGroupMemberList(req.GroupId)
+	if err != nil {
+		zlog.Info("GetGroupMemberList service err: " + err.Error())
+		resp.Error(c, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(c, "获取群聊成员列表成功", groupMemberList)
+}

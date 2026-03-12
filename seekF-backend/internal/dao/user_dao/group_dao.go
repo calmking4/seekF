@@ -30,3 +30,9 @@ func UpdateGroupInfo(group *models.GroupInfo) error {
 	result := db.GormDB.Save(group)
 	return result.Error
 }
+
+func GetGroupMembersByUuid(uuid string) (models.GroupInfo, error) {
+	var group models.GroupInfo
+	result := db.GormDB.Where("uuid = ?", uuid).First(&group)
+	return group, result.Error
+}

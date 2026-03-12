@@ -193,3 +193,40 @@ func UpdateGroupInfo(req userreq.UpdateGroupInfoRequest, userId string) error {
 
 	return nil
 }
+
+// GetGroupMemberList 获取群聊成员列表
+func GetGroupMemberList(groupId string) ([]userresp.GetGroupMemberListRespond, error) {
+	// 获取群组信息
+	group, err := userdao.GetGroupMembersByUuid(groupId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, fmt.Errorf("获取群组信息失败")
+	}
+
+	// 解析群组成员列表
+	var members []string
+	if err := json.Unmarshal(group.Members, &members); err != nil {
+		zlog.Error("解析群组成员失败: " + err.Error())
+		return nil, fmt.Errorf("系统错误")
+	}
+
+	var rspList []userresp.GetGroupMemberListRespond
+	for _, memberId := range members {
+		// 获取用户信息
+		user, err := userdao.FindUserByUuid(memberId)
+		if err != nil {
+			zlog.Error("获取用户信息失败: " + err.Error())
+			continue // 跳过获取不到的用户
+		}
+
+		if user != nil {
+			rspList = append(rspList, userresp.GetGroupMemberListRespond{
+				UserId:   user.Uuid,
+				Nickname: user.Nickname,
+				Avatar:   user.Avatar,
+			})
+		}
+	}
+
+	return rspList, nil
+}
