@@ -116,6 +116,66 @@ func LoadMyGroup(ownerId string) ([]userresp.LoadMyGroupRespond, error) {
 	return groupListRsp, nil
 }
 
+// LoadMyJoinedGroup 获取我加入的群聊
+func LoadMyJoinedGroup(userId string) ([]userresp.LoadMyJoinedGroupRespond, error) {
+	rspString, err := myredis.GetKeyNilIsErr("my_joined_group_list_" + userId)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			// 使用 DAO 层方法获取用户加入的群聊联系列表
+			contactList, err := userdao.GetUserJoinedGroupContactsByUserId(userId)
+			if err != nil {
+				zlog.Error("获取用户加入的群聊联系列表失败: " + err.Error())
+				return nil, err
+			}
+
+			var groupListRsp []userresp.LoadMyJoinedGroupRespond
+			for _, contact := range contactList {
+				// 检查是否为群聊且不是用户自己创建的群
+				if contact.ContactId[0] == 'G' {
+					// 获取群聊信息
+					group, err := userdao.GetGroupInfoByUuid(contact.ContactId)
+					if err != nil {
+						zlog.Error("获取群聊信息失败: " + err.Error())
+						continue // 跳过获取不到的群聊
+					}
+
+					// 群没被删除，同时群主不是自己
+					if group.OwnerId != userId && !group.DeletedAt.Valid {
+						groupListRsp = append(groupListRsp, userresp.LoadMyJoinedGroupRespond{
+							GroupId:   group.Uuid,
+							GroupName: group.Name,
+							Avatar:    group.Avatar,
+						})
+					}
+				}
+			}
+
+			rspString, err := json.Marshal(groupListRsp)
+			if err != nil {
+				zlog.Error(err.Error())
+				return nil, err
+			}
+
+			if err := myredis.SetKeyEx("my_joined_group_list_"+userId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
+				zlog.Error(err.Error())
+			}
+
+			return groupListRsp, nil
+		} else {
+			zlog.Error(err.Error())
+			return nil, err
+		}
+	}
+
+	var rsp []userresp.LoadMyJoinedGroupRespond
+	if err := json.Unmarshal([]byte(rspString), &rsp); err != nil {
+		zlog.Error(err.Error())
+		return nil, err
+	}
+
+	return rsp, nil
+}
+
 // CheckGroupAddMode 检查群聊加群方式
 func CheckGroupAddMode(groupId string) (int8, error) {
 	group, err := userdao.GetGroupInfoByUuid(groupId)
@@ -189,6 +249,18 @@ func UpdateGroupInfo(req userreq.UpdateGroupInfoRequest, userId string) error {
 	// 清除我的群组列表缓存
 	if err := myredis.DelKeyIfExists("contact_mygroup_list_" + group.OwnerId); err != nil {
 		zlog.Error(err.Error())
+	}
+
+	// 让所有群成员的“我加入的群列表”立即刷新（群名/头像变更）
+	var members []string
+	if err := json.Unmarshal(group.Members, &members); err != nil {
+		zlog.Error("解析群组成员失败: " + err.Error())
+	} else {
+		for _, memberId := range members {
+			if err := myredis.DelKeyIfExists("my_joined_group_list_" + memberId); err != nil {
+				zlog.Error(err.Error())
+			}
+		}
 	}
 
 	return nil

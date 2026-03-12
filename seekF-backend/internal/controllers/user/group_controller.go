@@ -56,6 +56,25 @@ func LoadMyGroup(c *gin.Context) {
 	resp.Success(c, "获取群聊成功", groupList)
 }
 
+// LoadMyJoinedGroup 获取我加入的群聊
+func LoadMyJoinedGroup(c *gin.Context) {
+	// 从上下文获取当前用户UUID
+	userUuid, exists := c.Get("Uuid")
+	if !exists {
+		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	groupList, err := userservice.LoadMyJoinedGroup(userUuid.(string))
+	if err != nil {
+		zlog.Info("LoadMyJoinedGroup service err: " + err.Error())
+		resp.Error(c, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(c, "获取加入群聊成功", groupList)
+}
+
 // CheckGroupAddMode 检查群聊加群方式
 func CheckGroupAddMode(c *gin.Context) {
 	var req userreq.CheckGroupAddModeRequest

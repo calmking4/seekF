@@ -3,6 +3,7 @@ package userdao
 import (
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/db"
+	contactstatusenum "seekF-backend/internal/pkg/enum/contact_enum/contact_status_enum"
 	"time"
 
 	"gorm.io/gorm"
@@ -48,4 +49,11 @@ func UpdateUserContactStatusAndDelete(userId string, contactId string, status in
 		"status":     status,
 	})
 	return result.Error
+}
+
+// GetUserJoinedGroupContactsByUserId 根据用户ID获取用户加入的群聊联系列表
+func GetUserJoinedGroupContactsByUserId(userId string) ([]models.UserContact, error) {
+	var contactList []models.UserContact
+	result := db.GormDB.Order("created_at DESC").Where("user_id = ? AND status != ? AND status != ?", userId, contactstatusenum.QUIT_GROUP, contactstatusenum.KICK_OUT_GROUP).Find(&contactList)
+	return contactList, result.Error
 }
