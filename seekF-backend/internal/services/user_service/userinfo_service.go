@@ -7,9 +7,24 @@ import (
 	userresp "seekF-backend/internal/dto/user/user_resp"
 )
 
+type UserInfoService interface {
+	GetUserInfo(req *userreq.GetUserInfoRequest) (*userresp.GetUserInfoRespond, error)
+	UpdateUserInfo(req *userreq.UpdateUserInfoRequest) error
+}
+
+type UserInfoServiceImpl struct {
+	userInfoDAO userdao.UserInfoDAO
+}
+
+func NewUserInfoService(userInfoDAO userdao.UserInfoDAO) UserInfoService {
+	return &UserInfoServiceImpl{
+		userInfoDAO: userInfoDAO,
+	}
+}
+
 // GetUserInfo 获取用户信息
-func GetUserInfo(req *userreq.GetUserInfoRequest) (*userresp.GetUserInfoRespond, error) {
-	user, err := userdao.FindUserByUuid(req.Uuid)
+func (s *UserInfoServiceImpl) GetUserInfo(req *userreq.GetUserInfoRequest) (*userresp.GetUserInfoRespond, error) {
+	user, err := s.userInfoDAO.FindUserByUuid(req.Uuid)
 	if err != nil {
 		return nil, fmt.Errorf("获取用户信息失败：%v", err)
 	}
@@ -36,9 +51,9 @@ func GetUserInfo(req *userreq.GetUserInfoRequest) (*userresp.GetUserInfoRespond,
 }
 
 // UpdateUserInfo 更新用户信息
-func UpdateUserInfo(req *userreq.UpdateUserInfoRequest) error {
+func (s *UserInfoServiceImpl) UpdateUserInfo(req *userreq.UpdateUserInfoRequest) error {
 	// 根据UUID查找用户
-	user, err := userdao.FindUserByUuid(req.Uuid)
+	user, err := s.userInfoDAO.FindUserByUuid(req.Uuid)
 	if err != nil {
 		return fmt.Errorf("查找用户失败：%v", err)
 	}
@@ -65,7 +80,7 @@ func UpdateUserInfo(req *userreq.UpdateUserInfoRequest) error {
 	}
 
 	// 保存更新
-	err = userdao.UpdateUserInfo(user)
+	err = s.userInfoDAO.UpdateUserInfo(user)
 	if err != nil {
 		return fmt.Errorf("更新用户信息失败：%v", err)
 	}

@@ -39,10 +39,26 @@ type UserInfoResponse struct {
 	Status    int    `json:"status"`
 }
 
+type AuthService interface {
+	Register(req *RegisterRequest) error
+	Login(req *LoginRequest) (*LoginRespond, error)
+	Logout(tokenString string) error
+}
+
+type AuthServiceImpl struct {
+	authDAO userdao.AuthDAO
+}
+
+func NewAuthService(authDAO userdao.AuthDAO) AuthService {
+	return &AuthServiceImpl{
+		authDAO: authDAO,
+	}
+}
+
 // Register 用户注册
-func Register(req *RegisterRequest) error {
+func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
 	// 检查手机号是否已存在
-	existingUser, err := userdao.FindUserByTelephone(req.Telephone)
+	existingUser, err := s.authDAO.FindUserByTelephone(req.Telephone)
 	if err != nil {
 		return err
 	}
@@ -66,7 +82,7 @@ func Register(req *RegisterRequest) error {
 		Password:  password,
 	}
 
-	err = userdao.CreateUser(user)
+	err = s.authDAO.CreateUser(user)
 	if err != nil {
 		return err
 	}
@@ -75,9 +91,9 @@ func Register(req *RegisterRequest) error {
 }
 
 // Login 用户登录
-func Login(req *LoginRequest) (*LoginRespond, error) {
+func (s *AuthServiceImpl) Login(req *LoginRequest) (*LoginRespond, error) {
 	// 根据手机号查找用户
-	user, err := userdao.FindUserByTelephone(req.Telephone)
+	user, err := s.authDAO.FindUserByTelephone(req.Telephone)
 	if err != nil {
 		return nil, fmt.Errorf("登录失败：%v", err)
 	}
@@ -119,7 +135,7 @@ func Login(req *LoginRequest) (*LoginRespond, error) {
 }
 
 // Logout 用户登出
-func Logout(tokenString string) error {
+func (s *AuthServiceImpl) Logout(tokenString string) error {
 	// 从 Redis 中删除 token
 	err := jwt.DelToken(tokenString)
 	if err != nil {

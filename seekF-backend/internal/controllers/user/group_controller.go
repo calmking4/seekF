@@ -10,254 +10,264 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type GroupController struct {
+	groupService userservice.GroupService
+}
+
+func NewGroupController(groupService userservice.GroupService) *GroupController {
+	return &GroupController{
+		groupService: groupService,
+	}
+}
+
 // CreateGroup 创建群聊
-func CreateGroup(c *gin.Context) {
+func (c *GroupController) CreateGroup(ctx *gin.Context) {
 	var createGroupReq userreq.CreateGroupRequest
-	if err := c.ShouldBindJSON(&createGroupReq); err != nil {
+	if err := ctx.ShouldBindJSON(&createGroupReq); err != nil {
 		zlog.Info("CreateGroup err: " + err.Error())
-		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
 	// 从上下文获取当前用户UUID作为群主ID
-	userUuid, exists := c.Get("Uuid")
+	userUuid, exists := ctx.Get("Uuid")
 	if !exists {
-		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
 		return
 	}
 	// 设置群主ID为当前用户UUID
 	createGroupReq.OwnerId = userUuid.(string)
 
-	err := userservice.CreateGroup(&createGroupReq)
+	err := c.groupService.CreateGroup(&createGroupReq)
 	if err != nil {
 		zlog.Info("CreateGroup service err: " + err.Error())
-		resp.Error(c, err.Error(), http.StatusBadRequest)
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(c, "创建群聊成功", nil)
+	resp.Success(ctx, "创建群聊成功", nil)
 }
 
 // LoadMyGroup 获取我创建的群聊
-func LoadMyGroup(c *gin.Context) {
+func (c *GroupController) LoadMyGroup(ctx *gin.Context) {
 	// 从上下文获取当前用户UUID
-	userUuid, exists := c.Get("Uuid")
+	userUuid, exists := ctx.Get("Uuid")
 	if !exists {
-		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
 		return
 	}
 
-	groupList, err := userservice.LoadMyGroup(userUuid.(string))
+	groupList, err := c.groupService.LoadMyGroup(userUuid.(string))
 	if err != nil {
 		zlog.Info("LoadMyGroup service err: " + err.Error())
-		resp.Error(c, err.Error(), http.StatusBadRequest)
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(c, "获取群聊成功", groupList)
+	resp.Success(ctx, "获取群聊成功", groupList)
 }
 
 // LoadMyJoinedGroup 获取我加入的群聊
-func LoadMyJoinedGroup(c *gin.Context) {
+func (c *GroupController) LoadMyJoinedGroup(ctx *gin.Context) {
 	// 从上下文获取当前用户UUID
-	userUuid, exists := c.Get("Uuid")
+	userUuid, exists := ctx.Get("Uuid")
 	if !exists {
-		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
 		return
 	}
 
-	groupList, err := userservice.LoadMyJoinedGroup(userUuid.(string))
+	groupList, err := c.groupService.LoadMyJoinedGroup(userUuid.(string))
 	if err != nil {
 		zlog.Info("LoadMyJoinedGroup service err: " + err.Error())
-		resp.Error(c, err.Error(), http.StatusBadRequest)
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(c, "获取加入群聊成功", groupList)
+	resp.Success(ctx, "获取加入群聊成功", groupList)
 }
 
 // CheckGroupAddMode 检查群聊加群方式
-func CheckGroupAddMode(c *gin.Context) {
+func (c *GroupController) CheckGroupAddMode(ctx *gin.Context) {
 	var req userreq.CheckGroupAddModeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := ctx.ShouldBindJSON(&req); err != nil {
 		zlog.Error(err.Error())
-		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
 
-	addMode, err := userservice.CheckGroupAddMode(req.GroupId)
+	addMode, err := c.groupService.CheckGroupAddMode(req.GroupId)
 	if err != nil {
 		zlog.Info("CheckGroupAddMode service err: " + err.Error())
-		resp.Error(c, err.Error(), http.StatusBadRequest)
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(c, "加群方式获取成功", addMode)
+	resp.Success(ctx, "加群方式获取成功", addMode)
 }
 
 // GetGroupInfo 获取群聊详情
-func GetGroupInfo(c *gin.Context) {
+func (c *GroupController) GetGroupInfo(ctx *gin.Context) {
 	var req userreq.GetGroupInfoRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := ctx.ShouldBindJSON(&req); err != nil {
 		zlog.Error(err.Error())
-		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
 
-	groupInfo, err := userservice.GetGroupInfo(req.GroupId)
+	groupInfo, err := c.groupService.GetGroupInfo(req.GroupId)
 	if err != nil {
 		zlog.Info("GetGroupInfo service err: " + err.Error())
-		resp.Error(c, err.Error(), http.StatusBadRequest)
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(c, "获取群聊详情成功", groupInfo)
+	resp.Success(ctx, "获取群聊详情成功", groupInfo)
 }
 
 // UpdateGroupInfo 更新群组详情
-func UpdateGroupInfo(c *gin.Context) {
+func (c *GroupController) UpdateGroupInfo(ctx *gin.Context) {
 	var req userreq.UpdateGroupInfoRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := ctx.ShouldBindJSON(&req); err != nil {
 		zlog.Error(err.Error())
-		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
 
 	// 从上下文获取当前用户UUID
-	userId, exists := c.Get("Uuid")
+	userId, exists := ctx.Get("Uuid")
 	if !exists {
-		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
 		return
 	}
 
-	err := userservice.UpdateGroupInfo(req, userId.(string))
+	err := c.groupService.UpdateGroupInfo(req, userId.(string))
 	if err != nil {
 		zlog.Info("UpdateGroupInfo service err: " + err.Error())
-		resp.Error(c, err.Error(), http.StatusBadRequest)
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(c, "更新群聊信息成功", nil)
+	resp.Success(ctx, "更新群聊信息成功", nil)
 }
 
 // GetGroupMemberList 获取群聊成员列表
-func GetGroupMemberList(c *gin.Context) {
+func (c *GroupController) GetGroupMemberList(ctx *gin.Context) {
 	var req userreq.GetGroupMemberListRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := ctx.ShouldBindJSON(&req); err != nil {
 		zlog.Error(err.Error())
-		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
 
-	groupMemberList, err := userservice.GetGroupMemberList(req.GroupId)
+	groupMemberList, err := c.groupService.GetGroupMemberList(req.GroupId)
 	if err != nil {
 		zlog.Info("GetGroupMemberList service err: " + err.Error())
-		resp.Error(c, err.Error(), http.StatusBadRequest)
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(c, "获取群聊成员列表成功", groupMemberList)
+	resp.Success(ctx, "获取群聊成员列表成功", groupMemberList)
 }
 
 // RemoveGroupMembers 移除群聊成员
-func RemoveGroupMembers(c *gin.Context) {
+func (c *GroupController) RemoveGroupMembers(ctx *gin.Context) {
 	var req userreq.RemoveGroupMembersRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := ctx.ShouldBindJSON(&req); err != nil {
 		zlog.Error(err.Error())
-		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
 
 	// 从上下文获取当前用户UUID
-	userId, exists := c.Get("Uuid")
+	userId, exists := ctx.Get("Uuid")
 	if !exists {
-		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
 		return
 	}
 
-	err := userservice.RemoveGroupMembers(req, userId.(string))
+	err := c.groupService.RemoveGroupMembers(req, userId.(string))
 	if err != nil {
 		zlog.Info("RemoveGroupMembers service err: " + err.Error())
-		resp.Error(c, err.Error(), http.StatusBadRequest)
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(c, "移除群聊成员成功", nil)
+	resp.Success(ctx, "移除群聊成员成功", nil)
 }
 
 // EnterGroupDirectly 直接加入群聊
-func EnterGroupDirectly(c *gin.Context) {
+func (c *GroupController) EnterGroupDirectly(ctx *gin.Context) {
 	var req userreq.EnterGroupDirectlyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := ctx.ShouldBindJSON(&req); err != nil {
 		zlog.Error(err.Error())
-		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
 
 	// 从上下文获取当前用户UUID
-	userId, exists := c.Get("Uuid")
+	userId, exists := ctx.Get("Uuid")
 	if !exists {
-		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
 		return
 	}
 
-	err := userservice.EnterGroupDirectly(req.GroupId, userId.(string))
+	err := c.groupService.EnterGroupDirectly(req.GroupId, userId.(string))
 	if err != nil {
 		zlog.Info("EnterGroupDirectly service err: " + err.Error())
-		resp.Error(c, err.Error(), http.StatusBadRequest)
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(c, "进群成功", nil)
+	resp.Success(ctx, "进群成功", nil)
 }
 
 // LeaveGroup 退群
-func LeaveGroup(c *gin.Context) {
+func (c *GroupController) LeaveGroup(ctx *gin.Context) {
 	var req userreq.LeaveGroupRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := ctx.ShouldBindJSON(&req); err != nil {
 		zlog.Error(err.Error())
-		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
 
 	// 从上下文获取当前用户UUID
-	userId, exists := c.Get("Uuid")
+	userId, exists := ctx.Get("Uuid")
 	if !exists {
-		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
 		return
 	}
 
-	err := userservice.LeaveGroup(req.GroupId, userId.(string))
+	err := c.groupService.LeaveGroup(req.GroupId, userId.(string))
 	if err != nil {
 		zlog.Info("LeaveGroup service err: " + err.Error())
-		resp.Error(c, err.Error(), http.StatusBadRequest)
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(c, "退群成功", nil)
+	resp.Success(ctx, "退群成功", nil)
 }
 
 // DismissGroup 解散群聊
-func DismissGroup(c *gin.Context) {
+func (c *GroupController) DismissGroup(ctx *gin.Context) {
 	var req userreq.DismissGroupRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := ctx.ShouldBindJSON(&req); err != nil {
 		zlog.Error(err.Error())
-		resp.Error(c, "参数绑定失败", http.StatusBadRequest)
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
 
 	// 从上下文获取当前用户UUID
-	userId, exists := c.Get("Uuid")
+	userId, exists := ctx.Get("Uuid")
 	if !exists {
-		resp.Error(c, "无法获取用户信息", http.StatusUnauthorized)
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
 		return
 	}
 
-	err := userservice.DismissGroup(req.GroupId, userId.(string))
+	err := c.groupService.DismissGroup(req.GroupId, userId.(string))
 	if err != nil {
 		zlog.Info("DismissGroup service err: " + err.Error())
-		resp.Error(c, err.Error(), http.StatusBadRequest)
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(c, "解散群聊成功", nil)
+	resp.Success(ctx, "解散群聊成功", nil)
 }

@@ -20,8 +20,43 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+type GroupService interface {
+	CreateGroup(req *userreq.CreateGroupRequest) error
+	LoadMyGroup(ownerId string) ([]userresp.LoadMyGroupRespond, error)
+	LoadMyJoinedGroup(userId string) ([]userresp.LoadMyJoinedGroupRespond, error)
+	CheckGroupAddMode(groupId string) (int8, error)
+	GetGroupInfo(groupId string) (userresp.GetGroupInfoRespond, error)
+	UpdateGroupInfo(req userreq.UpdateGroupInfoRequest, userId string) error
+	GetGroupMemberList(groupId string) ([]userresp.GetGroupMemberListRespond, error)
+	RemoveGroupMembers(req userreq.RemoveGroupMembersRequest, userId string) error
+	EnterGroupDirectly(groupId string, userId string) error
+	LeaveGroup(groupId string, userId string) error
+	DismissGroup(groupId string, userId string) error
+}
+
+type GroupServiceImpl struct {
+	groupDAO    userdao.GroupDAO
+	contactDAO  userdao.ContactDAO
+	sessionDAO  userdao.SessionDAO
+	userInfoDAO userdao.UserInfoDAO
+}
+
+func NewGroupService(
+	groupDAO userdao.GroupDAO,
+	contactDAO userdao.ContactDAO,
+	sessionDAO userdao.SessionDAO,
+	userInfoDAO userdao.UserInfoDAO,
+) GroupService {
+	return &GroupServiceImpl{
+		groupDAO:    groupDAO,
+		contactDAO:  contactDAO,
+		sessionDAO:  sessionDAO,
+		userInfoDAO: userInfoDAO,
+	}
+}
+
 // CreateGroup 创建群聊
-func CreateGroup(req *userreq.CreateGroupRequest) error {
+func (s *GroupServiceImpl) CreateGroup(req *userreq.CreateGroupRequest) error {
 	// 生成群组UUID
 	groupUUID := fmt.Sprintf("G%s", util.GetNowAndLenRandomString(11))
 
@@ -49,7 +84,7 @@ func CreateGroup(req *userreq.CreateGroupRequest) error {
 	}
 
 	// 创建群组
-	if err := userdao.CreateGroup(group); err != nil {
+	if err := s.groupDAO.CreateGroup(group); err != nil {
 		zlog.Info("CreateGroup dao err: " + err.Error())
 		return fmt.Errorf("创建群聊失败")
 	}
@@ -64,7 +99,7 @@ func CreateGroup(req *userreq.CreateGroupRequest) error {
 		UpdateAt:    time.Now(),
 	}
 
-	if err := userdao.CreateUserContact(contact); err != nil {
+	if err := s.contactDAO.CreateUserContact(contact); err != nil {
 		zlog.Info("CreateUserContact err: " + err.Error())
 		return fmt.Errorf("添加联系人失败")
 	}
@@ -73,12 +108,12 @@ func CreateGroup(req *userreq.CreateGroupRequest) error {
 }
 
 // LoadMyGroup 获取我创建的群聊
-func LoadMyGroup(ownerId string) ([]userresp.LoadMyGroupRespond, error) {
+func (s *GroupServiceImpl) LoadMyGroup(ownerId string) ([]userresp.LoadMyGroupRespond, error) {
 	rspString, err := myredis.GetKeyNilIsErr("contact_mygroup_list_" + ownerId)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			// 使用 DAO 层方法获取群组列表
-			groupList, err := userdao.GetGroupInfoByOwnerId(ownerId)
+			groupList, err := s.groupDAO.GetGroupInfoByOwnerId(ownerId)
 			if err != nil {
 				zlog.Error(err.Error())
 				return nil, err
@@ -117,12 +152,12 @@ func LoadMyGroup(ownerId string) ([]userresp.LoadMyGroupRespond, error) {
 }
 
 // LoadMyJoinedGroup 获取我加入的群聊
-func LoadMyJoinedGroup(userId string) ([]userresp.LoadMyJoinedGroupRespond, error) {
+func (s *GroupServiceImpl) LoadMyJoinedGroup(userId string) ([]userresp.LoadMyJoinedGroupRespond, error) {
 	rspString, err := myredis.GetKeyNilIsErr("my_joined_group_list_" + userId)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			// 使用 DAO 层方法获取用户加入的群聊联系列表
-			contactList, err := userdao.GetUserJoinedGroupContactsByUserId(userId)
+			contactList, err := s.contactDAO.GetUserJoinedGroupContactsByUserId(userId)
 			if err != nil {
 				zlog.Error("获取用户加入的群聊联系列表失败: " + err.Error())
 				return nil, err
@@ -133,7 +168,7 @@ func LoadMyJoinedGroup(userId string) ([]userresp.LoadMyJoinedGroupRespond, erro
 				// 检查是否为群聊且不是用户自己创建的群
 				if contact.ContactId[0] == 'G' {
 					// 获取群聊信息
-					group, err := userdao.GetGroupInfoByUuid(contact.ContactId)
+					group, err := s.groupDAO.GetGroupInfoByUuid(contact.ContactId)
 					if err != nil {
 						zlog.Error("获取群聊信息失败: " + err.Error())
 						continue // 跳过获取不到的群聊
@@ -177,8 +212,8 @@ func LoadMyJoinedGroup(userId string) ([]userresp.LoadMyJoinedGroupRespond, erro
 }
 
 // CheckGroupAddMode 检查群聊加群方式
-func CheckGroupAddMode(groupId string) (int8, error) {
-	group, err := userdao.GetGroupInfoByUuid(groupId)
+func (s *GroupServiceImpl) CheckGroupAddMode(groupId string) (int8, error) {
+	group, err := s.groupDAO.GetGroupInfoByUuid(groupId)
 	if err != nil {
 		zlog.Error(err.Error())
 		return -1, err
@@ -187,8 +222,8 @@ func CheckGroupAddMode(groupId string) (int8, error) {
 }
 
 // GetGroupInfo 获取群聊详情
-func GetGroupInfo(groupId string) (userresp.GetGroupInfoRespond, error) {
-	group, err := userdao.GetGroupInfoByUuid(groupId)
+func (s *GroupServiceImpl) GetGroupInfo(groupId string) (userresp.GetGroupInfoRespond, error) {
+	group, err := s.groupDAO.GetGroupInfoByUuid(groupId)
 	if err != nil {
 		zlog.Error(err.Error())
 		return userresp.GetGroupInfoRespond{}, err
@@ -210,8 +245,8 @@ func GetGroupInfo(groupId string) (userresp.GetGroupInfoRespond, error) {
 }
 
 // UpdateGroupInfo 更新群组详情
-func UpdateGroupInfo(req userreq.UpdateGroupInfoRequest, userId string) error {
-	group, err := userdao.GetGroupInfoByUuid(req.Uuid)
+func (s *GroupServiceImpl) UpdateGroupInfo(req userreq.UpdateGroupInfoRequest, userId string) error {
+	group, err := s.groupDAO.GetGroupInfoByUuid(req.Uuid)
 	if err != nil {
 		zlog.Error(err.Error())
 		return err
@@ -235,13 +270,13 @@ func UpdateGroupInfo(req userreq.UpdateGroupInfoRequest, userId string) error {
 		group.Avatar = req.Avatar
 	}
 
-	if err := userdao.UpdateGroupInfo(&group); err != nil {
+	if err := s.groupDAO.UpdateGroupInfo(&group); err != nil {
 		zlog.Error(err.Error())
 		return err
 	}
 
 	// 更新会话
-	if err := userdao.UpdateSessionByReceiveId(req.Uuid, group.Name, group.Avatar); err != nil {
+	if err := s.sessionDAO.UpdateSessionByReceiveId(req.Uuid, group.Name, group.Avatar); err != nil {
 		zlog.Error(err.Error())
 		return err
 	}
@@ -267,9 +302,9 @@ func UpdateGroupInfo(req userreq.UpdateGroupInfoRequest, userId string) error {
 }
 
 // GetGroupMemberList 获取群聊成员列表
-func GetGroupMemberList(groupId string) ([]userresp.GetGroupMemberListRespond, error) {
+func (s *GroupServiceImpl) GetGroupMemberList(groupId string) ([]userresp.GetGroupMemberListRespond, error) {
 	// 获取群组信息
-	group, err := userdao.GetGroupMembersByUuid(groupId)
+	group, err := s.groupDAO.GetGroupMembersByUuid(groupId)
 	if err != nil {
 		zlog.Error(err.Error())
 		return nil, fmt.Errorf("获取群组信息失败")
@@ -285,7 +320,7 @@ func GetGroupMemberList(groupId string) ([]userresp.GetGroupMemberListRespond, e
 	var rspList []userresp.GetGroupMemberListRespond
 	for _, memberId := range members {
 		// 获取用户信息
-		user, err := userdao.FindUserByUuid(memberId)
+		user, err := s.userInfoDAO.FindUserByUuid(memberId)
 		if err != nil {
 			zlog.Error("获取用户信息失败: " + err.Error())
 			continue // 跳过获取不到的用户
@@ -304,9 +339,9 @@ func GetGroupMemberList(groupId string) ([]userresp.GetGroupMemberListRespond, e
 }
 
 // RemoveGroupMembers 移除群聊成员
-func RemoveGroupMembers(req userreq.RemoveGroupMembersRequest, userId string) error {
+func (s *GroupServiceImpl) RemoveGroupMembers(req userreq.RemoveGroupMembersRequest, userId string) error {
 	// 获取群组信息
-	group, err := userdao.GetGroupInfoByUuid(req.GroupId)
+	group, err := s.groupDAO.GetGroupInfoByUuid(req.GroupId)
 	if err != nil {
 		zlog.Error(err.Error())
 		return fmt.Errorf("获取群组信息失败")
@@ -345,19 +380,19 @@ func RemoveGroupMembers(req userreq.RemoveGroupMembersRequest, userId string) er
 		}
 
 		// 删除对应的会话记录
-		if err := userdao.RemoveSessionBySendAndReceiveId(uuid, req.GroupId); err != nil {
+		if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(uuid, req.GroupId); err != nil {
 			zlog.Error("删除会话记录失败: " + err.Error())
 			return fmt.Errorf("系统错误")
 		}
 
 		// 删除对应的联系人
-		if err := userdao.RemoveContact(uuid, req.GroupId); err != nil {
+		if err := s.contactDAO.RemoveContact(uuid, req.GroupId); err != nil {
 			zlog.Error("删除联系人记录失败: " + err.Error())
 			return fmt.Errorf("系统错误")
 		}
 
 		// 删除对应的申请记录
-		if err := userdao.RemoveContactApply(uuid, req.GroupId); err != nil {
+		if err := s.contactDAO.RemoveContactApply(uuid, req.GroupId); err != nil {
 			zlog.Error("删除申请记录失败: " + err.Error())
 			return fmt.Errorf("系统错误")
 		}
@@ -371,7 +406,7 @@ func RemoveGroupMembers(req userreq.RemoveGroupMembersRequest, userId string) er
 	}
 
 	// 保存群组信息
-	if err := userdao.UpdateGroupInfo(&group); err != nil {
+	if err := s.groupDAO.UpdateGroupInfo(&group); err != nil {
 		zlog.Error(err.Error())
 		return fmt.Errorf("更新群组信息失败")
 	}
@@ -380,9 +415,9 @@ func RemoveGroupMembers(req userreq.RemoveGroupMembersRequest, userId string) er
 }
 
 // EnterGroupDirectly 直接加入群聊
-func EnterGroupDirectly(groupId string, userId string) error {
+func (s *GroupServiceImpl) EnterGroupDirectly(groupId string, userId string) error {
 	// 获取群组信息
-	group, err := userdao.GetGroupInfoByUuid(groupId)
+	group, err := s.groupDAO.GetGroupInfoByUuid(groupId)
 	if err != nil {
 		zlog.Error("获取群组信息失败: " + err.Error())
 		return fmt.Errorf("获取群组信息失败")
@@ -425,7 +460,7 @@ func EnterGroupDirectly(groupId string, userId string) error {
 	group.MemberCnt += 1
 
 	// 保存群组信息
-	if err := userdao.UpdateGroupInfo(&group); err != nil {
+	if err := s.groupDAO.UpdateGroupInfo(&group); err != nil {
 		zlog.Error("更新群组信息失败: " + err.Error())
 		return fmt.Errorf("更新群组信息失败")
 	}
@@ -440,7 +475,7 @@ func EnterGroupDirectly(groupId string, userId string) error {
 		UpdateAt:    time.Now(),
 	}
 
-	if err := userdao.CreateUserContact(contact); err != nil {
+	if err := s.contactDAO.CreateUserContact(contact); err != nil {
 		zlog.Error("创建用户联系记录失败: " + err.Error())
 		return fmt.Errorf("添加联系人失败")
 	}
@@ -449,9 +484,9 @@ func EnterGroupDirectly(groupId string, userId string) error {
 }
 
 // LeaveGroup 退群
-func LeaveGroup(groupId string, userId string) error {
+func (s *GroupServiceImpl) LeaveGroup(groupId string, userId string) error {
 	// 获取群组信息
-	group, err := userdao.GetGroupInfoByUuid(groupId)
+	group, err := s.groupDAO.GetGroupInfoByUuid(groupId)
 	if err != nil {
 		zlog.Error("获取群组信息失败: " + err.Error())
 		return fmt.Errorf("获取群组信息失败")
@@ -496,25 +531,25 @@ func LeaveGroup(groupId string, userId string) error {
 	}
 
 	// 保存群组信息
-	if err := userdao.UpdateGroupInfo(&group); err != nil {
+	if err := s.groupDAO.UpdateGroupInfo(&group); err != nil {
 		zlog.Error("更新群组信息失败: " + err.Error())
 		return fmt.Errorf("更新群组信息失败")
 	}
 
 	// 删除会话记录
-	if err := userdao.RemoveSessionBySendAndReceiveId(userId, groupId); err != nil {
+	if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(userId, groupId); err != nil {
 		zlog.Error("删除会话记录失败: " + err.Error())
 		return fmt.Errorf("系统错误")
 	}
 
 	// 更新用户联系记录状态并软删除
-	if err := userdao.UpdateUserContactStatusAndDelete(userId, groupId, contactstatusenum.QUIT_GROUP); err != nil {
+	if err := s.contactDAO.UpdateUserContactStatusAndDelete(userId, groupId, contactstatusenum.QUIT_GROUP); err != nil {
 		zlog.Error("更新用户联系记录失败: " + err.Error())
 		return fmt.Errorf("系统错误")
 	}
 
 	// 删除对应的申请记录
-	if err := userdao.RemoveContactApply(userId, groupId); err != nil {
+	if err := s.contactDAO.RemoveContactApply(userId, groupId); err != nil {
 		zlog.Error("删除申请记录失败: " + err.Error())
 		return fmt.Errorf("系统错误")
 	}
@@ -523,9 +558,9 @@ func LeaveGroup(groupId string, userId string) error {
 }
 
 // DismissGroup 解散群聊
-func DismissGroup(groupId string, userId string) error {
+func (s *GroupServiceImpl) DismissGroup(groupId string, userId string) error {
 	// 获取群组信息
-	group, err := userdao.GetGroupInfoByUuid(groupId)
+	group, err := s.groupDAO.GetGroupInfoByUuid(groupId)
 	if err != nil {
 		zlog.Error("获取群组信息失败: " + err.Error())
 		return fmt.Errorf("获取群组信息失败")
@@ -537,25 +572,25 @@ func DismissGroup(groupId string, userId string) error {
 	}
 
 	// 删除群组信息
-	if err := userdao.DeleteGroupByUUid(groupId); err != nil {
+	if err := s.groupDAO.DeleteGroupByUUid(groupId); err != nil {
 		zlog.Error("删除群组失败: " + err.Error())
 		return fmt.Errorf("系统错误")
 	}
 
 	// 删除所有与群组相关的会话
-	if err := userdao.RemoveSessionsByReceiveId(groupId); err != nil {
+	if err := s.sessionDAO.RemoveSessionsByReceiveId(groupId); err != nil {
 		zlog.Error("删除群组会话失败: " + err.Error())
 		return fmt.Errorf("系统错误")
 	}
 
 	// 删除所有与群组相关的用户联系
-	if err := userdao.RemoveContactsByContactId(groupId); err != nil {
+	if err := s.contactDAO.RemoveContactsByContactId(groupId); err != nil {
 		zlog.Error("删除群组用户联系失败: " + err.Error())
 		return fmt.Errorf("系统错误")
 	}
 
 	// 删除群组相关的申请记录
-	if err := userdao.RemoveContactAppliesByContactId(groupId); err != nil {
+	if err := s.contactDAO.RemoveContactAppliesByContactId(groupId); err != nil {
 		zlog.Error("删除群组申请记录失败: " + err.Error())
 		return fmt.Errorf("系统错误")
 	}

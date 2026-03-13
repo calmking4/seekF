@@ -8,8 +8,19 @@ import (
 	"gorm.io/gorm"
 )
 
+type UserInfoDAO interface {
+	FindUserByUuid(uuid string) (*models.UserInfo, error)
+	UpdateUserInfo(user *models.UserInfo) error
+}
+
+type UserInfoDAOImpl struct{}
+
+func NewUserInfoDAO() UserInfoDAO {
+	return &UserInfoDAOImpl{}
+}
+
 // FindUserByUuid 根据UUID查找用户
-func FindUserByUuid(uuid string) (*models.UserInfo, error) {
+func (d *UserInfoDAOImpl) FindUserByUuid(uuid string) (*models.UserInfo, error) {
 	var user models.UserInfo
 	result := db.GormDB.Where("uuid = ?", uuid).First(&user)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -19,7 +30,7 @@ func FindUserByUuid(uuid string) (*models.UserInfo, error) {
 }
 
 // UpdateUserInfo 更新用户信息
-func UpdateUserInfo(user *models.UserInfo) error {
+func (d *UserInfoDAOImpl) UpdateUserInfo(user *models.UserInfo) error {
 	result := db.GormDB.Save(user)
 	return result.Error
 }
