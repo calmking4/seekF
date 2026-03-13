@@ -2,10 +2,13 @@ package userservice
 
 import (
 	"fmt"
+	"seekF-backend/internal/configs"
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
+	"seekF-backend/internal/pkg/auth"
 	"seekF-backend/internal/pkg/jwt"
 	"seekF-backend/internal/pkg/util"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -108,10 +111,30 @@ func (s *AuthServiceImpl) Login(req *LoginRequest) (*LoginRespond, error) {
 		return nil, fmt.Errorf("密码错误")
 	}
 
-	// 生成 JWT Token，现在需要传入 UUID
-	token, err := jwt.SetToken(uint64(user.Id), user.Uuid, user.Telephone, user.Nickname)
-	if err != nil {
-		return nil, fmt.Errorf("生成令牌失败：%v", err)
+	cfg := configs.GetConfig()
+	mode := strings.ToLower(strings.TrimSpace(cfg.AuthConfig.Mode))
+
+	var token string
+	if mode == "jwt" {
+		// JWT 方案：纯 JWT（无服务端状态）
+		token, err = jwt.GenerateToken(uint64(user.Id), user.Uuid, user.Telephone, user.Nickname)
+		if err != nil {
+			return nil, fmt.Errorf("生成令牌失败：%v", err)
+		}
+	} else {
+		// 默认方案：不透明 token + Redis 会话
+		token, err = auth.GenerateOpaqueToken()
+		if err != nil {
+			return nil, fmt.Errorf("生成令牌失败：%v", err)
+		}
+		if err := auth.SetSession(token, auth.Session{
+			Id:       uint64(user.Id),
+			UUID:     user.Uuid,
+			Phone:    user.Telephone,
+			Nickname: user.Nickname,
+		}); err != nil {
+			return nil, fmt.Errorf("生成令牌失败：%v", err)
+		}
 	}
 
 	// 构造登录响应
@@ -136,12 +159,19 @@ func (s *AuthServiceImpl) Login(req *LoginRequest) (*LoginRespond, error) {
 
 // Logout 用户登出
 func (s *AuthServiceImpl) Logout(tokenString string) error {
-	// 从 Redis 中删除 token
-	err := jwt.DelToken(tokenString)
-	if err != nil {
-		return fmt.Errorf("删除token失败: %v", err)
+	cfg := configs.GetConfig()
+	mode := strings.ToLower(strings.TrimSpace(cfg.AuthConfig.Mode))
+
+	if mode == "jwt" {
+		// 纯 JWT 无服务端会话可删；客户端自行丢弃 token
+		_ = tokenString
+		return nil
 	}
 
+	// token+redis：删除会话
+	if err := auth.DelSession(tokenString); err != nil {
+		return fmt.Errorf("删除token失败: %v", err)
+	}
 	return nil
 }
 

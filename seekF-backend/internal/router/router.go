@@ -27,7 +27,7 @@ func SetupRouter(
 
 	// 需要认证的接口
 	protectedGroup := r.Group("/user")
-	protectedGroup.Use(middlewares.JWTAuth())
+	protectedGroup.Use(middlewares.Auth())
 	{
 		protectedGroup.POST("/logout", authController.Logout)
 		protectedGroup.POST("/userinfo/getUserinfo", userInfoController.GetUserInfo)

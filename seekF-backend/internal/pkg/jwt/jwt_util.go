@@ -2,9 +2,7 @@ package jwt
 
 import (
 	"errors"
-	"fmt"
 	"seekF-backend/internal/configs"
-	"seekF-backend/internal/pkg/redis"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -18,8 +16,6 @@ type CustomClaims struct {
 	Nickname string `json:"nickname,omitempty"`
 	jwt.RegisteredClaims
 }
-
-const TokenPrefix = "auth:token:"
 
 // GenerateToken 生成 JWT
 func GenerateToken(id uint64, uuid, phone, nickname string) (string, error) {
@@ -63,60 +59,18 @@ func ParseToken(tokenString string) (*CustomClaims, error) {
 	}
 
 	if claims, ok := token.Claims.(*CustomClaims); ok && token.Valid {
+		// 额外校验 issuer/subject，避免仅依赖 exp/nbf/iat
+		if claims.Issuer != cfg.JWTConfig.Issuer {
+			return nil, errors.New("invalid issuer")
+		}
+		if claims.Subject != "user-auth" {
+			return nil, errors.New("invalid subject")
+		}
+		if claims.ExpiresAt == nil {
+			return nil, errors.New("missing exp")
+		}
 		return claims, nil
 	}
 
 	return nil, errors.New("invalid token")
-}
-
-// CheckTokenExistsInRedis 检查 token 是否存在于 Redis 中
-func CheckTokenExistsInRedis(tokenString string) (bool, error) {
-	tokenKey := TokenPrefix + tokenString
-
-	// 尝试从 Redis 获取 token
-	value, err := redis.GetKey(tokenKey)
-	if err != nil {
-		return false, err
-	}
-
-	if value == "" {
-		return false, nil
-	}
-
-	// 键存在
-	return true, nil
-}
-
-// SetToken 生成 JWT 并将其存储到 Redis 中
-func SetToken(id uint64, uuid, phone, nickname string) (string, error) {
-	// 生成 JWT token
-	tokenString, err := GenerateToken(id, uuid, phone, nickname)
-	if err != nil {
-		return "", fmt.Errorf("generate token failed: %v", err)
-	}
-
-	// 将 token 存储到 Redis 中
-	tokenKey := TokenPrefix + tokenString
-	uuidStr := uuid // UUID 字符串
-
-	// 获取配置的过期时间
-	cfg := configs.GetConfig()
-	expireTime := time.Duration(cfg.JWTConfig.ExpireMinutes) * time.Minute
-
-	err = redis.SetKeyEx(tokenKey, uuidStr, expireTime)
-	if err != nil {
-		return "", fmt.Errorf("store token to redis failed: %v", err)
-	}
-
-	return tokenString, nil
-}
-
-// DelToken 从 Redis 中删除指定的 token
-func DelToken(tokenString string) error {
-	tokenKey := TokenPrefix + tokenString
-	err := redis.DelKeyIfExists(tokenKey)
-	if err != nil {
-		return fmt.Errorf("delete token from redis failed: %v", err)
-	}
-	return nil
 }

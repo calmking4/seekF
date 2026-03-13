@@ -68,6 +68,13 @@ type JWTConfig struct {
 	Issuer        string `toml:"issuer"`
 }
 
+// AuthConfig 认证方案配置
+// mode: "redis"（默认，不透明token+redis会话）或 "jwt"
+type AuthConfig struct {
+	Mode                 string `toml:"mode"`
+	SessionExpireMinutes int64  `toml:"sessionExpireMinutes"`
+}
+
 type Config struct {
 	MainConfig      `toml:"mainConfig"`
 	MysqlConfig     `toml:"mysqlConfig"`
@@ -78,6 +85,7 @@ type Config struct {
 	KafkaConfig     `toml:"kafkaConfig"`
 	StaticSrcConfig `toml:"staticSrcConfig"`
 	JWTConfig       `toml:"jwtConfig"`
+	AuthConfig      `toml:"authConfig"`
 }
 
 var config *Config
