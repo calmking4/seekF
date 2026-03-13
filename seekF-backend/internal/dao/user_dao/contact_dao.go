@@ -17,6 +17,7 @@ type ContactDAO interface {
 	RemoveContactAppliesByContactId(contactId string) error
 	UpdateUserContactStatusAndDelete(userId string, contactId string, status int8) error
 	GetUserJoinedGroupContactsByUserId(userId string) ([]models.UserContact, error)
+	GetUserContactList(ownerId string) ([]models.UserContact, error)
 }
 
 type ContactDAOImpl struct{}
@@ -71,5 +72,12 @@ func (d *ContactDAOImpl) UpdateUserContactStatusAndDelete(userId string, contact
 func (d *ContactDAOImpl) GetUserJoinedGroupContactsByUserId(userId string) ([]models.UserContact, error) {
 	var contactList []models.UserContact
 	result := db.GormDB.Order("created_at DESC").Where("user_id = ? AND status != ? AND status != ?", userId, contactstatusenum.QUIT_GROUP, contactstatusenum.KICK_OUT_GROUP).Find(&contactList)
+	return contactList, result.Error
+}
+
+// GetUserContactList 根据用户 ID 获取用户联系人列表
+func (d *ContactDAOImpl) GetUserContactList(ownerId string) ([]models.UserContact, error) {
+	var contactList []models.UserContact
+	result := db.GormDB.Order("created_at DESC").Where("user_id = ? AND status != ?", ownerId, contactstatusenum.DELETE).Find(&contactList)
 	return contactList, result.Error
 }

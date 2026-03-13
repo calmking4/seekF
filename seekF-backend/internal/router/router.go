@@ -30,8 +30,10 @@ func SetupRouter(
 	protectedGroup.Use(middlewares.Auth())
 	{
 		protectedGroup.POST("/logout", authController.Logout)
+		//用户信息
 		protectedGroup.POST("/userinfo/getUserinfo", userInfoController.GetUserInfo)
 		protectedGroup.POST("/userinfo/updateUserInfo", userInfoController.UpdateUserInfo)
+		//群组
 		protectedGroup.POST("/group/createGroup", groupController.CreateGroup)
 		protectedGroup.POST("/group/loadMyGroup", groupController.LoadMyGroup)
 		protectedGroup.POST("/group/loadMyJoinedGroup", groupController.LoadMyJoinedGroup)
@@ -43,6 +45,8 @@ func SetupRouter(
 		protectedGroup.POST("/group/enterGroupDirectly", groupController.EnterGroupDirectly)
 		protectedGroup.POST("/group/leaveGroup", groupController.LeaveGroup)
 		protectedGroup.POST("/group/dismissGroup", groupController.DismissGroup)
+		//联系人
+		protectedGroup.POST("/contact/getUserList", contactController.GetUserList)
 	}
 
 	return r

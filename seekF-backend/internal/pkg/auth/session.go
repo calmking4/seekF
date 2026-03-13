@@ -22,12 +22,6 @@ type Session struct {
 func sessionTTL() time.Duration {
 	cfg := configs.GetConfig()
 	mins := cfg.AuthConfig.SessionExpireMinutes
-	if mins <= 0 {
-		mins = cfg.JWTConfig.ExpireMinutes
-	}
-	if mins <= 0 {
-		mins = 1440
-	}
 	return time.Duration(mins) * time.Minute
 }
 
@@ -66,4 +60,3 @@ func GetSession(token string) (*Session, error) {
 func DelSession(token string) error {
 	return redis.DelKeyIfExists(SessionPrefix + token)
 }
-

@@ -286,18 +286,6 @@ func (s *GroupServiceImpl) UpdateGroupInfo(req userreq.UpdateGroupInfoRequest, u
 		zlog.Error(err.Error())
 	}
 
-	// 让所有群成员的“我加入的群列表”立即刷新（群名/头像变更）
-	var members []string
-	if err := json.Unmarshal(group.Members, &members); err != nil {
-		zlog.Error("解析群组成员失败: " + err.Error())
-	} else {
-		for _, memberId := range members {
-			if err := myredis.DelKeyIfExists("my_joined_group_list_" + memberId); err != nil {
-				zlog.Error(err.Error())
-			}
-		}
-	}
-
 	return nil
 }
 
