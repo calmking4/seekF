@@ -47,6 +47,7 @@ func SetupRouter(
 		protectedGroup.POST("/group/dismissGroup", groupController.DismissGroup)
 		//联系人
 		protectedGroup.POST("/contact/getUserList", contactController.GetUserList)
+		protectedGroup.POST("/contact/getContactInfo", contactController.GetContactInfo)
 	}
 
 	return r

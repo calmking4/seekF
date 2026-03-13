@@ -18,7 +18,7 @@ func main() {
 	// 初始化 Service 层
 	authService := userservice.NewAuthService(authDAO)
 	userInfoService := userservice.NewUserInfoService(userInfoDAO)
-	contactService := userservice.NewContactService(contactDAO, sessionDAO, userInfoDAO)
+	contactService := userservice.NewContactService(contactDAO, sessionDAO, userInfoDAO, groupDAO)
 	groupService := userservice.NewGroupService(groupDAO, contactDAO, sessionDAO, userInfoDAO)
 
 	// 初始化 Controller 层
