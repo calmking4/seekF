@@ -246,3 +246,39 @@ func (c *ContactController) GetApplyGroupList(ctx *gin.Context) {
 
 	resp.Success(ctx, "获取成功", data)
 }
+
+// RefuseContactApply 拒绝联系人申请(用户和群聊)
+func (c *ContactController) RefuseContactApply(ctx *gin.Context) {
+	// 从上下文获取当前用户UUID
+	userUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	// 绑定请求参数
+	var passContactApplyReq userreq.PassContactApplyRequest
+	if err := ctx.BindJSON(&passContactApplyReq); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "系统错误", http.StatusBadRequest)
+		return
+	}
+
+	// 调用服务层方法
+	var err error
+	if passContactApplyReq.GroupId != "" {
+		// 群聊申请
+		err = c.contactService.RefuseContactApply(passContactApplyReq.GroupId, passContactApplyReq.ContactId, userUuid.(string))
+	} else {
+		// 用户申请
+		err = c.contactService.RefuseContactApply(userUuid.(string), passContactApplyReq.ContactId, "")
+	}
+
+	if err != nil {
+		zlog.Info("RefuseContactApply service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "拒绝申请成功", nil)
+}

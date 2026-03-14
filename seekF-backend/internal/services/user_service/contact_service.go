@@ -30,6 +30,7 @@ type ContactService interface {
 	ApplyContact(userId string, contactId string, message string) error
 	GetNewContactList(userId string) ([]userresp.NewContactListRespond, error)
 	PassContactApply(id string, contactId string, currentUserId string) error
+	RefuseContactApply(id string, contactId string, currentUserId string) error
 	BlackContact(userId string, contactId string) error
 	CancelBlackContact(userId string, contactId string) error
 	GetApplyGroupList(groupId string, currentUserId string) ([]userresp.AddGroupListRespond, error)
@@ -634,4 +635,46 @@ func (s *ContactServiceImpl) GetApplyGroupList(groupId string, currentUserId str
 	}
 
 	return rsp, nil
+}
+
+// RefuseContactApply 拒绝联系人申请(用户和群聊)
+func (s *ContactServiceImpl) RefuseContactApply(id string, contactId string, currentUserId string) error {
+	// 查询申请记录
+	contactApply, err := s.contactApplyDAO.GetContactApplyByUserIdAndContactId(contactId, id)
+	if err != nil {
+		zlog.Error(err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	if id[0] == 'U' {
+		// 更新申请状态为拒绝
+		contactApply.Status = contactapplystatusenum.REFUSE
+		if err := s.contactApplyDAO.UpdateContactApply(&contactApply); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		return nil
+	} else {
+		// 群聊申请，只有群主才能拒绝
+		group, err := s.groupDAO.GetGroupInfoByUuid(id)
+		if err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 检查是否是群主
+		if group.OwnerId != currentUserId {
+			return fmt.Errorf("只有群主才能拒绝加群申请")
+		}
+
+		// 更新申请状态为拒绝
+		contactApply.Status = contactapplystatusenum.REFUSE
+		if err := s.contactApplyDAO.UpdateContactApply(&contactApply); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		return nil
+	}
 }
