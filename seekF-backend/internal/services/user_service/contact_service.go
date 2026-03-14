@@ -9,6 +9,7 @@ import (
 	userdao "seekF-backend/internal/dao/user_dao"
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/pkg/constants"
+	contactstatusenum "seekF-backend/internal/pkg/enum/contact_enum/contact_status_enum"
 	contacttypeenum "seekF-backend/internal/pkg/enum/contact_enum/contact_type_enum"
 	groupstatusenum "seekF-backend/internal/pkg/enum/group_enum/group_status_enum"
 	userstatusenum "seekF-backend/internal/pkg/enum/user_enum/user_status_enum"
@@ -19,8 +20,9 @@ import (
 )
 
 type ContactService interface {
-	GetUserList(ownerId string) ([]userresp.MyUserListRespond, error)
+	GetUserList(userUuid string) ([]userresp.MyUserListRespond, error)
 	GetContactInfo(contactId string) (userresp.GetContactInfoRespond, error)
+	DeleteContact(ownerId string, contactId string) error
 }
 
 type ContactServiceImpl struct {
@@ -45,12 +47,12 @@ func NewContactService(
 }
 
 // GetUserList 获取联系人列表
-func (s *ContactServiceImpl) GetUserList(ownerId string) ([]userresp.MyUserListRespond, error) {
-	rspString, err := myredis.GetKeyNilIsErr("contact_user_list_" + ownerId)
+func (s *ContactServiceImpl) GetUserList(userUuid string) ([]userresp.MyUserListRespond, error) {
+	rspString, err := myredis.GetKeyNilIsErr("contact_user_list_" + userUuid)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			// dao 层获取联系人列表
-			contactList, err := s.contactDAO.GetUserContactList(ownerId)
+			contactList, err := s.contactDAO.GetUserContactList(userUuid)
 			if err != nil {
 				zlog.Error(err.Error())
 				return nil, err
@@ -82,7 +84,7 @@ func (s *ContactServiceImpl) GetUserList(ownerId string) ([]userresp.MyUserListR
 				zlog.Error(err.Error())
 				return nil, err
 			}
-			if err := myredis.SetKeyEx("contact_user_list_"+ownerId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
+			if err := myredis.SetKeyEx("contact_user_list_"+userUuid, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
 				zlog.Error(err.Error())
 			}
 			return userListRsp, nil
@@ -148,4 +150,50 @@ func (s *ContactServiceImpl) GetContactInfo(contactId string) (userresp.GetConta
 			return userresp.GetContactInfoRespond{}, fmt.Errorf("该用户处于禁用状态")
 		}
 	}
+}
+
+// DeleteContact 删除联系人（只包含用户）
+func (s *ContactServiceImpl) DeleteContact(userUuid string, contactId string) error {
+	// 将自己的联系人状态更新为删除状态
+	if err := s.contactDAO.UpdateUserContactStatusAndDelete(userUuid, contactId, contactstatusenum.DELETE); err != nil {
+		zlog.Error(err.Error())
+		return err
+	}
+
+	// 将对方对自己的联系人状态更新为被删除状态
+	if err := s.contactDAO.UpdateUserContactStatusAndDelete(contactId, userUuid, contactstatusenum.BE_DELETE); err != nil {
+		zlog.Error(err.Error())
+		return err
+	}
+
+	// 删除从自己到对方的会话记录
+	if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(userUuid, contactId); err != nil {
+		zlog.Error(err.Error())
+		return err
+	}
+
+	// 删除从对方到自己的会话记录
+	if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(contactId, userUuid); err != nil {
+		zlog.Error(err.Error())
+		return err
+	}
+
+	// 删除自己向对方发送的联系人申请记录
+	if err := s.contactDAO.RemoveContactApply(userUuid, contactId); err != nil {
+		zlog.Error(err.Error())
+		return err
+	}
+
+	// 删除对方向自己发送的联系人申请记录
+	if err := s.contactDAO.RemoveContactApply(contactId, userUuid); err != nil {
+		zlog.Error(err.Error())
+		return err
+	}
+
+	// 删除缓存中的联系人列表，以便下次获取时重新加载
+	if err := myredis.DelKeyIfExists("contact_user_list_" + userUuid); err != nil {
+		zlog.Error(err.Error())
+	}
+
+	return nil
 }

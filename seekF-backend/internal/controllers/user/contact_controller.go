@@ -58,3 +58,29 @@ func (c *ContactController) GetContactInfo(ctx *gin.Context) {
 
 	resp.Success(ctx, "获取联系人信息成功", contactInfo)
 }
+
+// DeleteContact 删除联系人（仅包含用户）
+func (c *ContactController) DeleteContact(ctx *gin.Context) {
+	var deleteContactReq userreq.DeleteContactRequest
+	if err := ctx.ShouldBindJSON(&deleteContactReq); err != nil {
+		zlog.Info("DeleteContact err: " + err.Error())
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
+		return
+	}
+
+	// 从上下文获取当前用户UUID
+	userUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	err := c.contactService.DeleteContact(userUuid.(string), deleteContactReq.ContactId)
+	if err != nil {
+		zlog.Info("DeleteContact service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "删除联系人成功", nil)
+}
