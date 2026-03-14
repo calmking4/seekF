@@ -14,6 +14,7 @@ type ContactDAO interface {
 	RemoveContact(userId string, contactId string) error
 	RemoveContactsByContactId(contactId string) error
 	UpdateUserContactStatusAndDelete(userId string, contactId string, status int8) error
+	UpdateUserContactStatus(userId string, contactId string, status int8) error
 	GetUserJoinedGroupContactsByUserId(userId string) ([]models.UserContact, error)
 	GetUserContactList(ownerId string) ([]models.UserContact, error)
 }
@@ -66,4 +67,13 @@ func (d *ContactDAOImpl) GetUserContactList(ownerId string) ([]models.UserContac
 	var contactList []models.UserContact
 	result := db.GormDB.Order("created_at DESC").Where("user_id = ? AND status != ?", ownerId, contactstatusenum.DELETE).Find(&contactList)
 	return contactList, result.Error
+}
+
+// UpdateUserContactStatus 根据用户ID和联系人ID更新联系人状态
+func (d *ContactDAOImpl) UpdateUserContactStatus(userId string, contactId string, status int8) error {
+	result := db.GormDB.Model(&models.UserContact{}).Where("user_id = ? AND contact_id = ?", userId, contactId).Updates(map[string]interface{}{
+		"status":     status,
+		"updated_at": time.Now(),
+	})
+	return result.Error
 }

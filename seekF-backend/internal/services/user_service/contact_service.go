@@ -30,6 +30,7 @@ type ContactService interface {
 	ApplyContact(userId string, contactId string, message string) error
 	GetNewContactList(userId string) ([]userresp.NewContactListRespond, error)
 	PassContactApply(id string, contactId string, currentUserId string) error
+	BlackContact(userId string, contactId string) error
 }
 
 type ContactServiceImpl struct {
@@ -498,4 +499,32 @@ func (s *ContactServiceImpl) PassContactApply(id string, contactId string, curre
 
 		return nil
 	}
+}
+
+// BlackContact 拉黑联系人
+func (s *ContactServiceImpl) BlackContact(userId string, contactId string) error {
+	// 将自己对联系人的状态更新为拉黑
+	if err := s.contactDAO.UpdateUserContactStatus(userId, contactId, contactstatusenum.BLACK); err != nil {
+		zlog.Error(err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 将联系人对自己的状态更新为被拉黑
+	if err := s.contactDAO.UpdateUserContactStatus(contactId, userId, contactstatusenum.BE_BLACK); err != nil {
+		zlog.Error(err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 删除从自己到对方的会话记录
+	if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(userId, contactId); err != nil {
+		zlog.Error(err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 删除缓存
+	if err := myredis.DelKeyIfExists("contact_user_list_" + userId); err != nil {
+		zlog.Error(err.Error())
+	}
+
+	return nil
 }

@@ -162,3 +162,31 @@ func (c *ContactController) PassContactApply(ctx *gin.Context) {
 
 	resp.Success(ctx, "通过申请成功", nil)
 }
+
+// BlackContact 拉黑联系人
+func (c *ContactController) BlackContact(ctx *gin.Context) {
+	// 从上下文获取当前用户UUID
+	userUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	// 绑定请求参数
+	var blackContactReq userreq.BlackContactRequest
+	if err := ctx.BindJSON(&blackContactReq); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "系统错误", http.StatusBadRequest)
+		return
+	}
+
+	// 调用服务层方法
+	err := c.contactService.BlackContact(userUuid.(string), blackContactReq.ContactId)
+	if err != nil {
+		zlog.Info("BlackContact service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "已拉黑该联系人", nil)
+}
