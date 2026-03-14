@@ -24,10 +24,11 @@ import (
 )
 
 type ContactService interface {
-	GetUserList(userUuid string) ([]userresp.MyUserListRespond, error)
+	GetUserList(userId string) ([]userresp.MyUserListRespond, error)
 	GetContactInfo(contactId string) (userresp.GetContactInfoRespond, error)
-	DeleteContact(ownerId string, contactId string) error
-	ApplyContact(ownerId string, contactId string, message string) error
+	DeleteContact(userId string, contactId string) error
+	ApplyContact(userId string, contactId string, message string) error
+	GetNewContactList(userId string) ([]userresp.NewContactListRespond, error)
 }
 
 type ContactServiceImpl struct {
@@ -55,12 +56,12 @@ func NewContactService(
 }
 
 // GetUserList 获取联系人列表
-func (s *ContactServiceImpl) GetUserList(userUuid string) ([]userresp.MyUserListRespond, error) {
-	rspString, err := myredis.GetKeyNilIsErr("contact_user_list_" + userUuid)
+func (s *ContactServiceImpl) GetUserList(userId string) ([]userresp.MyUserListRespond, error) {
+	rspString, err := myredis.GetKeyNilIsErr("contact_user_list_" + userId)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			// dao 层获取联系人列表
-			contactList, err := s.contactDAO.GetUserContactList(userUuid)
+			contactList, err := s.contactDAO.GetUserContactList(userId)
 			if err != nil {
 				zlog.Error(err.Error())
 				return nil, err
@@ -92,7 +93,7 @@ func (s *ContactServiceImpl) GetUserList(userUuid string) ([]userresp.MyUserList
 				zlog.Error(err.Error())
 				return nil, err
 			}
-			if err := myredis.SetKeyEx("contact_user_list_"+userUuid, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
+			if err := myredis.SetKeyEx("contact_user_list_"+userId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
 				zlog.Error(err.Error())
 			}
 			return userListRsp, nil
@@ -161,45 +162,45 @@ func (s *ContactServiceImpl) GetContactInfo(contactId string) (userresp.GetConta
 }
 
 // DeleteContact 删除联系人（只包含用户）
-func (s *ContactServiceImpl) DeleteContact(userUuid string, contactId string) error {
+func (s *ContactServiceImpl) DeleteContact(userId string, contactId string) error {
 	// 将自己的联系人状态更新为删除状态
-	if err := s.contactDAO.UpdateUserContactStatusAndDelete(userUuid, contactId, contactstatusenum.DELETE); err != nil {
+	if err := s.contactDAO.UpdateUserContactStatusAndDelete(userId, contactId, contactstatusenum.DELETE); err != nil {
 		zlog.Error(err.Error())
 		return err
 	}
 
 	// 将对方对自己的联系人状态更新为被删除状态
-	if err := s.contactDAO.UpdateUserContactStatusAndDelete(contactId, userUuid, contactstatusenum.BE_DELETE); err != nil {
+	if err := s.contactDAO.UpdateUserContactStatusAndDelete(contactId, userId, contactstatusenum.BE_DELETE); err != nil {
 		zlog.Error(err.Error())
 		return err
 	}
 
 	// 删除从自己到对方的会话记录
-	if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(userUuid, contactId); err != nil {
+	if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(userId, contactId); err != nil {
 		zlog.Error(err.Error())
 		return err
 	}
 
 	// 删除从对方到自己的会话记录
-	if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(contactId, userUuid); err != nil {
+	if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(contactId, userId); err != nil {
 		zlog.Error(err.Error())
 		return err
 	}
 
 	// 删除自己向对方发送的联系人申请记录
-	if err := s.contactApplyDAO.RemoveContactApply(userUuid, contactId); err != nil {
+	if err := s.contactApplyDAO.RemoveContactApply(userId, contactId); err != nil {
 		zlog.Error(err.Error())
 		return err
 	}
 
 	// 删除对方向自己发送的联系人申请记录
-	if err := s.contactApplyDAO.RemoveContactApply(contactId, userUuid); err != nil {
+	if err := s.contactApplyDAO.RemoveContactApply(contactId, userId); err != nil {
 		zlog.Error(err.Error())
 		return err
 	}
 
 	// 删除缓存中的联系人列表，以便下次获取时重新加载
-	if err := myredis.DelKeyIfExists("contact_user_list_" + userUuid); err != nil {
+	if err := myredis.DelKeyIfExists("contact_user_list_" + userId); err != nil {
 		zlog.Error(err.Error())
 	}
 
@@ -207,7 +208,7 @@ func (s *ContactServiceImpl) DeleteContact(userUuid string, contactId string) er
 }
 
 // ApplyContact 申请添加联系人
-func (s *ContactServiceImpl) ApplyContact(ownerId string, contactId string, message string) error {
+func (s *ContactServiceImpl) ApplyContact(userId string, contactId string, message string) error {
 	if contactId[0] == 'U' {
 		// 检查用户是否存在
 		user, err := s.userInfoDAO.FindUserByUuid(contactId)
@@ -228,13 +229,13 @@ func (s *ContactServiceImpl) ApplyContact(ownerId string, contactId string, mess
 		}
 
 		// 检查是否已存在申请记录
-		contactApply, err := s.contactApplyDAO.GetContactApplyByUserIdAndContactId(ownerId, contactId)
+		contactApply, err := s.contactApplyDAO.GetContactApplyByUserIdAndContactId(userId, contactId)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				// 创建新的申请记录
 				contactApply = models.ContactApply{
 					Uuid:        fmt.Sprintf("A%s", util.GetNowAndLenRandomString(11)),
-					UserId:      ownerId,
+					UserId:      userId,
 					ContactId:   contactId,
 					ContactType: contacttypeenum.USER,
 					Status:      contactapplystatusenum.PENDING,
@@ -285,13 +286,13 @@ func (s *ContactServiceImpl) ApplyContact(ownerId string, contactId string, mess
 		}
 
 		// 检查是否已存在申请记录
-		contactApply, err := s.contactApplyDAO.GetContactApplyByUserIdAndContactId(ownerId, contactId)
+		contactApply, err := s.contactApplyDAO.GetContactApplyByUserIdAndContactId(userId, contactId)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				// 创建新的申请记录
 				contactApply = models.ContactApply{
 					Uuid:        fmt.Sprintf("A%s", util.GetNowAndLenRandomString(11)),
-					UserId:      ownerId,
+					UserId:      userId,
 					ContactId:   contactId,
 					ContactType: contacttypeenum.GROUP,
 					Status:      contactapplystatusenum.PENDING,
@@ -319,4 +320,46 @@ func (s *ContactServiceImpl) ApplyContact(ownerId string, contactId string, mess
 	} else {
 		return fmt.Errorf("用户/群聊不存在")
 	}
+}
+
+// GetNewContactList 获取新的联系人申请列表
+func (s *ContactServiceImpl) GetNewContactList(userId string) ([]userresp.NewContactListRespond, error) {
+	// 查询状态为 PENDING 的联系人申请
+	contactApplyList, err := s.contactApplyDAO.GetPendingContactAppliesByContactId(userId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, fmt.Errorf("系统错误")
+	}
+
+	var rsp []userresp.NewContactListRespond
+	for _, contactApply := range contactApplyList {
+		// 构建消息
+		var message string
+		if contactApply.Message == "" {
+			message = "申请理由：无"
+		} else {
+			message = "申请理由：" + contactApply.Message
+		}
+
+		// 获取申请人信息
+		user, err := s.userInfoDAO.FindUserByUuid(contactApply.UserId)
+		if err != nil {
+			zlog.Error(err.Error())
+			return nil, fmt.Errorf("系统错误")
+		}
+		if user == nil {
+			continue // 跳过不存在的用户
+		}
+
+		// 构建响应
+		newContact := userresp.NewContactListRespond{
+			ContactId:     user.Uuid,
+			ContactName:   user.Nickname,
+			ContactAvatar: user.Avatar,
+			Message:       message,
+		}
+		rsp = append(rsp, newContact)
+	}
+
+	return rsp, nil
 }

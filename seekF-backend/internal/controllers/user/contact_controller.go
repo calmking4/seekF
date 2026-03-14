@@ -23,7 +23,6 @@ func NewContactController(contactService userservice.ContactService) *ContactCon
 
 // GetUserList 获取联系人列表
 func (c *ContactController) GetUserList(ctx *gin.Context) {
-	// 从上下文获取当前用户UUID
 	userUuid, exists := ctx.Get("Uuid")
 	if !exists {
 		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
@@ -68,7 +67,6 @@ func (c *ContactController) DeleteContact(ctx *gin.Context) {
 		return
 	}
 
-	// 从上下文获取当前用户UUID
 	userUuid, exists := ctx.Get("Uuid")
 	if !exists {
 		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
@@ -94,7 +92,6 @@ func (c *ContactController) ApplyContact(ctx *gin.Context) {
 		return
 	}
 
-	// 从上下文获取当前用户UUID
 	userUuid, exists := ctx.Get("Uuid")
 	if !exists {
 		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
@@ -109,4 +106,22 @@ func (c *ContactController) ApplyContact(ctx *gin.Context) {
 	}
 
 	resp.Success(ctx, "申请成功", nil)
+}
+
+// GetNewContactList 获取新的联系人申请列表
+func (c *ContactController) GetNewContactList(ctx *gin.Context) {
+	userUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	contactList, err := c.contactService.GetNewContactList(userUuid.(string))
+	if err != nil {
+		zlog.Info("GetNewContactList service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "获取成功", contactList)
 }

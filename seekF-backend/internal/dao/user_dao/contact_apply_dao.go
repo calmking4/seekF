@@ -3,10 +3,12 @@ package userdao
 import (
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/db"
+	contactapplystatusenum "seekF-backend/internal/pkg/enum/contact_enum/contact_apply_status_enum"
 )
 
 type ContactApplyDAO interface {
 	GetContactApplyByUserIdAndContactId(userId string, contactId string) (models.ContactApply, error)
+	GetPendingContactAppliesByContactId(contactId string) ([]models.ContactApply, error)
 	CreateContactApply(apply *models.ContactApply) error
 	UpdateContactApply(apply *models.ContactApply) error
 	RemoveContactApply(userId string, contactId string) error
@@ -25,6 +27,13 @@ func (d *ContactApplyDAOImpl) GetContactApplyByUserIdAndContactId(userId string,
 	//可以使用 Take 方法代替 First 方法，因为 Take 在找不到记录时不会写入日志。
 	result := db.GormDB.Where("user_id = ? AND contact_id = ?", userId, contactId).First(&contactApply)
 	return contactApply, result.Error
+}
+
+// GetPendingContactAppliesByContactId 根据联系人ID获取待处理的联系人申请列表
+func (d *ContactApplyDAOImpl) GetPendingContactAppliesByContactId(contactId string) ([]models.ContactApply, error) {
+	var contactApplyList []models.ContactApply
+	result := db.GormDB.Where("contact_id = ? AND status = ?", contactId, contactapplystatusenum.PENDING).Find(&contactApplyList)
+	return contactApplyList, result.Error
 }
 
 // CreateContactApply 创建联系人申请记录
