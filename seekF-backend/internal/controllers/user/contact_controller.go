@@ -282,3 +282,31 @@ func (c *ContactController) RefuseContactApply(ctx *gin.Context) {
 
 	resp.Success(ctx, "拒绝申请成功", nil)
 }
+
+// BlackApply 拉黑申请
+func (c *ContactController) BlackApply(ctx *gin.Context) {
+	// 从上下文获取当前用户UUID
+	userUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	// 绑定请求参数
+	var blackApplyReq userreq.BlackApplyRequest
+	if err := ctx.BindJSON(&blackApplyReq); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "系统错误", http.StatusBadRequest)
+		return
+	}
+
+	// 调用服务层方法
+	err := c.contactService.BlackApply(userUuid.(string), blackApplyReq.ContactId)
+	if err != nil {
+		zlog.Info("BlackApply service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "拉黑申请成功", nil)
+}

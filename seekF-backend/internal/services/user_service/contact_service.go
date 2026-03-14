@@ -31,6 +31,7 @@ type ContactService interface {
 	GetNewContactList(userId string) ([]userresp.NewContactListRespond, error)
 	PassContactApply(id string, contactId string, currentUserId string) error
 	RefuseContactApply(id string, contactId string, currentUserId string) error
+	BlackApply(id string, contactId string) error
 	BlackContact(userId string, contactId string) error
 	CancelBlackContact(userId string, contactId string) error
 	GetApplyGroupList(groupId string, currentUserId string) ([]userresp.AddGroupListRespond, error)
@@ -677,4 +678,23 @@ func (s *ContactServiceImpl) RefuseContactApply(id string, contactId string, cur
 
 		return nil
 	}
+}
+
+// BlackApply 拉黑申请
+func (s *ContactServiceImpl) BlackApply(id string, contactId string) error {
+	// 查询申请记录
+	contactApply, err := s.contactApplyDAO.GetContactApplyByUserIdAndContactId(contactId, id)
+	if err != nil {
+		zlog.Error(err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 更新申请状态为拉黑
+	contactApply.Status = contactapplystatusenum.BLACK
+	if err := s.contactApplyDAO.UpdateContactApply(&contactApply); err != nil {
+		zlog.Error(err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	return nil
 }
