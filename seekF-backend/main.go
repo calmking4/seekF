@@ -14,11 +14,12 @@ func main() {
 	contactDAO := userdao.NewContactDAO()
 	sessionDAO := userdao.NewSessionDAO()
 	groupDAO := userdao.NewGroupDAO()
+	contactApplyDAO := userdao.NewContactApplyDAO()
 
 	// 初始化 Service 层
 	authService := userservice.NewAuthService(authDAO)
 	userInfoService := userservice.NewUserInfoService(userInfoDAO)
-	contactService := userservice.NewContactService(contactDAO, sessionDAO, userInfoDAO, groupDAO)
+	contactService := userservice.NewContactService(contactDAO, sessionDAO, userInfoDAO, groupDAO, contactApplyDAO)
 	groupService := userservice.NewGroupService(groupDAO, contactDAO, sessionDAO, userInfoDAO)
 
 	// 初始化 Controller 层

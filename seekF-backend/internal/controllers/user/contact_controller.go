@@ -84,3 +84,29 @@ func (c *ContactController) DeleteContact(ctx *gin.Context) {
 
 	resp.Success(ctx, "删除联系人成功", nil)
 }
+
+// ApplyContact 申请添加联系人
+func (c *ContactController) ApplyContact(ctx *gin.Context) {
+	var applyContactReq userreq.ApplyContactRequest
+	if err := ctx.ShouldBindJSON(&applyContactReq); err != nil {
+		zlog.Info("ApplyContact err: " + err.Error())
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
+		return
+	}
+
+	// 从上下文获取当前用户UUID
+	userUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	err := c.contactService.ApplyContact(userUuid.(string), applyContactReq.ContactId, applyContactReq.Message)
+	if err != nil {
+		zlog.Info("ApplyContact service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "申请成功", nil)
+}

@@ -8,28 +8,34 @@ import (
 
 	userdao "seekF-backend/internal/dao/user_dao"
 	userresp "seekF-backend/internal/dto/user/user_resp"
+	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
+	contactapplystatusenum "seekF-backend/internal/pkg/enum/contact_enum/contact_apply_status_enum"
 	contactstatusenum "seekF-backend/internal/pkg/enum/contact_enum/contact_status_enum"
 	contacttypeenum "seekF-backend/internal/pkg/enum/contact_enum/contact_type_enum"
 	groupstatusenum "seekF-backend/internal/pkg/enum/group_enum/group_status_enum"
 	userstatusenum "seekF-backend/internal/pkg/enum/user_enum/user_status_enum"
 	myredis "seekF-backend/internal/pkg/redis"
+	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 )
 
 type ContactService interface {
 	GetUserList(userUuid string) ([]userresp.MyUserListRespond, error)
 	GetContactInfo(contactId string) (userresp.GetContactInfoRespond, error)
 	DeleteContact(ownerId string, contactId string) error
+	ApplyContact(ownerId string, contactId string, message string) error
 }
 
 type ContactServiceImpl struct {
-	contactDAO  userdao.ContactDAO
-	sessionDAO  userdao.SessionDAO
-	userInfoDAO userdao.UserInfoDAO
-	groupDAO    userdao.GroupDAO
+	contactDAO      userdao.ContactDAO
+	sessionDAO      userdao.SessionDAO
+	userInfoDAO     userdao.UserInfoDAO
+	groupDAO        userdao.GroupDAO
+	contactApplyDAO userdao.ContactApplyDAO
 }
 
 func NewContactService(
@@ -37,12 +43,14 @@ func NewContactService(
 	sessionDAO userdao.SessionDAO,
 	userInfoDAO userdao.UserInfoDAO,
 	groupDAO userdao.GroupDAO,
+	contactApplyDAO userdao.ContactApplyDAO,
 ) ContactService {
 	return &ContactServiceImpl{
-		contactDAO:  contactDAO,
-		sessionDAO:  sessionDAO,
-		userInfoDAO: userInfoDAO,
-		groupDAO:    groupDAO,
+		contactDAO:      contactDAO,
+		sessionDAO:      sessionDAO,
+		userInfoDAO:     userInfoDAO,
+		groupDAO:        groupDAO,
+		contactApplyDAO: contactApplyDAO,
 	}
 }
 
@@ -196,4 +204,119 @@ func (s *ContactServiceImpl) DeleteContact(userUuid string, contactId string) er
 	}
 
 	return nil
+}
+
+// ApplyContact 申请添加联系人
+func (s *ContactServiceImpl) ApplyContact(ownerId string, contactId string, message string) error {
+	if contactId[0] == 'U' {
+		// 检查用户是否存在
+		user, err := s.userInfoDAO.FindUserByUuid(contactId)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				zlog.Error("用户不存在")
+				return fmt.Errorf("用户不存在")
+			} else {
+				zlog.Error(err.Error())
+				return fmt.Errorf("系统错误")
+			}
+		}
+
+		// 检查用户状态
+		if user.Status == userstatusenum.DISABLE {
+			zlog.Info("用户已被禁用")
+			return fmt.Errorf("用户已被禁用")
+		}
+
+		// 检查是否已存在申请记录
+		contactApply, err := s.contactApplyDAO.GetContactApplyByUserIdAndContactId(ownerId, contactId)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// 创建新的申请记录
+				contactApply = models.ContactApply{
+					Uuid:        fmt.Sprintf("A%s", util.GetNowAndLenRandomString(11)),
+					UserId:      ownerId,
+					ContactId:   contactId,
+					ContactType: contacttypeenum.USER,
+					Status:      contactapplystatusenum.PENDING,
+					Message:     message,
+					LastApplyAt: time.Now(),
+				}
+				if err := s.contactApplyDAO.CreateContactApply(&contactApply); err != nil {
+					zlog.Error(err.Error())
+					return fmt.Errorf("系统错误")
+				}
+			} else {
+				zlog.Error(err.Error())
+				return fmt.Errorf("系统错误")
+			}
+		}
+
+		// 检查是否被拉黑
+		if contactApply.Status == contactapplystatusenum.BLACK {
+			return fmt.Errorf("对方已将你拉黑")
+		}
+
+		// 更新申请记录
+		contactApply.LastApplyAt = time.Now()
+		contactApply.Status = contactapplystatusenum.PENDING
+		if err := s.contactApplyDAO.UpdateContactApply(&contactApply); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		return nil
+	} else if contactId[0] == 'G' {
+		// 检查群聊是否存在
+		group, err := s.groupDAO.GetGroupInfoByUuid(contactId)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				zlog.Error("群聊不存在")
+				return fmt.Errorf("群聊不存在")
+			} else {
+				zlog.Error(err.Error())
+				return fmt.Errorf("系统错误")
+			}
+		}
+
+		// 检查群聊状态
+		if group.Status == groupstatusenum.DISABLE {
+			zlog.Info("群聊已被禁用")
+			return fmt.Errorf("群聊已被禁用")
+		}
+
+		// 检查是否已存在申请记录
+		contactApply, err := s.contactApplyDAO.GetContactApplyByUserIdAndContactId(ownerId, contactId)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// 创建新的申请记录
+				contactApply = models.ContactApply{
+					Uuid:        fmt.Sprintf("A%s", util.GetNowAndLenRandomString(11)),
+					UserId:      ownerId,
+					ContactId:   contactId,
+					ContactType: contacttypeenum.GROUP,
+					Status:      contactapplystatusenum.PENDING,
+					Message:     message,
+					LastApplyAt: time.Now(),
+				}
+				if err := s.contactApplyDAO.CreateContactApply(&contactApply); err != nil {
+					zlog.Error(err.Error())
+					return fmt.Errorf("系统错误")
+				}
+			} else {
+				zlog.Error(err.Error())
+				return fmt.Errorf("系统错误")
+			}
+		}
+
+		// 更新申请记录
+		contactApply.LastApplyAt = time.Now()
+		if err := s.contactApplyDAO.UpdateContactApply(&contactApply); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		return nil
+	} else {
+		return fmt.Errorf("用户/群聊不存在")
+	}
 }
