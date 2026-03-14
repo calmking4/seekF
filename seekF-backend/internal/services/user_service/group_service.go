@@ -99,7 +99,7 @@ func (s *GroupServiceImpl) CreateGroup(req *userreq.CreateGroupRequest) error {
 		ContactType: contacttypeenum.GROUP,
 		Status:      contactstatusenum.NORMAL,
 		CreatedAt:   time.Now(),
-		UpdateAt:    time.Now(),
+		UpdatedAt:   time.Now(),
 	}
 
 	if err := s.contactDAO.CreateUserContact(contact); err != nil {
@@ -463,7 +463,7 @@ func (s *GroupServiceImpl) EnterGroupDirectly(groupId string, userId string) err
 		ContactType: contacttypeenum.GROUP,
 		Status:      contactstatusenum.NORMAL,
 		CreatedAt:   time.Now(),
-		UpdateAt:    time.Now(),
+		UpdatedAt:   time.Now(),
 	}
 
 	if err := s.contactDAO.CreateUserContact(contact); err != nil {

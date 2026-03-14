@@ -29,6 +29,7 @@ type ContactService interface {
 	DeleteContact(userId string, contactId string) error
 	ApplyContact(userId string, contactId string, message string) error
 	GetNewContactList(userId string) ([]userresp.NewContactListRespond, error)
+	PassContactApply(id string, contactId string, currentUserId string) error
 }
 
 type ContactServiceImpl struct {
@@ -362,4 +363,139 @@ func (s *ContactServiceImpl) GetNewContactList(userId string) ([]userresp.NewCon
 	}
 
 	return rsp, nil
+}
+
+// PassContactApply 通过联系人申请（用户和群聊）
+func (s *ContactServiceImpl) PassContactApply(id string, contactId string, currentUserId string) error {
+	// 查询申请记录
+	contactApply, err := s.contactApplyDAO.GetContactApplyByUserIdAndContactId(contactId, id)
+	if err != nil {
+		zlog.Error(err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	if id[0] == 'U' {
+		// 检查申请人状态
+		user, err := s.userInfoDAO.FindUserByUuid(contactId)
+		if err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+		if user == nil {
+			return fmt.Errorf("用户不存在")
+		}
+		if user.Status == userstatusenum.DISABLE {
+			zlog.Error("用户已被禁用")
+			return fmt.Errorf("用户已被禁用")
+		}
+
+		// 更新申请状态为同意
+		contactApply.Status = contactapplystatusenum.AGREE
+		if err := s.contactApplyDAO.UpdateContactApply(&contactApply); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 创建双方的联系人关系
+		newContact := models.UserContact{
+			UserId:      id,
+			ContactId:   contactId,
+			ContactType: contacttypeenum.USER,
+			Status:      contactstatusenum.NORMAL,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+		if err := s.contactDAO.CreateUserContact(&newContact); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		anotherContact := models.UserContact{
+			UserId:      contactId,
+			ContactId:   id,
+			ContactType: contacttypeenum.USER,
+			Status:      contactstatusenum.NORMAL,
+			CreatedAt:   newContact.CreatedAt,
+			UpdatedAt:   newContact.UpdatedAt,
+		}
+		if err := s.contactDAO.CreateUserContact(&anotherContact); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 删除缓存
+		if err := myredis.DelKeyIfExists("contact_user_list_" + id); err != nil {
+			zlog.Error(err.Error())
+		}
+		if err := myredis.DelKeyIfExists("contact_user_list_" + contactId); err != nil {
+			zlog.Error(err.Error())
+		}
+
+		return nil
+	} else {
+		// 群聊申请，只有群主才能通过
+		group, err := s.groupDAO.GetGroupInfoByUuid(id)
+		if err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 检查是否是群主
+		if group.OwnerId != currentUserId {
+			return fmt.Errorf("只有群主才能通过加群申请")
+		}
+
+		if group.Status == groupstatusenum.DISABLE {
+			zlog.Error("群聊已被禁用")
+			return fmt.Errorf("群聊已被禁用")
+		}
+
+		// 更新申请状态为同意
+		contactApply.Status = contactapplystatusenum.AGREE
+		if err := s.contactApplyDAO.UpdateContactApply(&contactApply); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 创建用户与群聊的联系人关系
+		newContact := models.UserContact{
+			UserId:      contactId,
+			ContactId:   id,
+			ContactType: contacttypeenum.GROUP,
+			Status:      contactstatusenum.NORMAL,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+		if err := s.contactDAO.CreateUserContact(&newContact); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 更新群聊成员
+		var members []string
+		if err := json.Unmarshal([]byte(group.Members), &members); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+		members = append(members, contactId)
+		group.MemberCnt = len(members)
+		membersJson, err := json.Marshal(members)
+		if err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+		group.Members = membersJson
+
+		if err := s.groupDAO.UpdateGroupInfo(&group); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 删除缓存
+		if err := myredis.DelKeyIfExists("my_joined_group_list_" + contactId); err != nil {
+			zlog.Error(err.Error())
+		}
+
+		return nil
+	}
 }

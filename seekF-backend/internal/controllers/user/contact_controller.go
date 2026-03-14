@@ -110,6 +110,7 @@ func (c *ContactController) ApplyContact(ctx *gin.Context) {
 
 // GetNewContactList 获取新的联系人申请列表
 func (c *ContactController) GetNewContactList(ctx *gin.Context) {
+	// 从上下文获取当前用户UUID
 	userUuid, exists := ctx.Get("Uuid")
 	if !exists {
 		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
@@ -124,4 +125,40 @@ func (c *ContactController) GetNewContactList(ctx *gin.Context) {
 	}
 
 	resp.Success(ctx, "获取成功", contactList)
+}
+
+// PassContactApply 通过联系人申请（用户和群聊）
+func (c *ContactController) PassContactApply(ctx *gin.Context) {
+	// 从上下文获取当前用户UUID
+	userUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	// 绑定请求参数
+	var passContactApplyReq userreq.PassContactApplyRequest
+	if err := ctx.BindJSON(&passContactApplyReq); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "系统错误", http.StatusBadRequest)
+		return
+	}
+
+	// 调用服务层方法
+	var err error
+	if passContactApplyReq.GroupId != "" {
+		// 群聊申请
+		err = c.contactService.PassContactApply(passContactApplyReq.GroupId, passContactApplyReq.ContactId, userUuid.(string))
+	} else {
+		// 用户申请
+		err = c.contactService.PassContactApply(userUuid.(string), passContactApplyReq.ContactId, "")
+	}
+
+	if err != nil {
+		zlog.Info("PassContactApply service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "通过申请成功", nil)
 }
