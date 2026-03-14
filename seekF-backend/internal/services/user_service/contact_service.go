@@ -32,6 +32,7 @@ type ContactService interface {
 	PassContactApply(id string, contactId string, currentUserId string) error
 	BlackContact(userId string, contactId string) error
 	CancelBlackContact(userId string, contactId string) error
+	GetApplyGroupList(groupId string, currentUserId string) ([]userresp.AddGroupListRespond, error)
 }
 
 type ContactServiceImpl struct {
@@ -580,4 +581,57 @@ func (s *ContactServiceImpl) CancelBlackContact(userId string, contactId string)
 	}
 
 	return nil
+}
+
+// GetApplyGroupList 获取群聊申请列表
+func (s *ContactServiceImpl) GetApplyGroupList(groupId string, currentUserId string) ([]userresp.AddGroupListRespond, error) {
+	// 检查是否是群主
+	group, err := s.groupDAO.GetGroupInfoByUuid(groupId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, fmt.Errorf("系统错误")
+	}
+
+	if group.OwnerId != currentUserId {
+		return nil, fmt.Errorf("只有群主才能查看群聊申请列表")
+	}
+
+	// 查询状态为 PENDING 的群聊申请
+	contactApplyList, err := s.contactApplyDAO.GetPendingContactAppliesByContactId(groupId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, fmt.Errorf("系统错误")
+	}
+
+	var rsp []userresp.AddGroupListRespond
+	for _, contactApply := range contactApplyList {
+		// 构建消息
+		var message string
+		if contactApply.Message == "" {
+			message = "申请理由：无"
+		} else {
+			message = "申请理由：" + contactApply.Message
+		}
+
+		// 获取申请人信息
+		user, err := s.userInfoDAO.FindUserByUuid(contactApply.UserId)
+		if err != nil {
+			zlog.Error(err.Error())
+			return nil, fmt.Errorf("系统错误")
+		}
+		if user == nil {
+			continue // 跳过不存在的用户
+		}
+
+		// 构建响应
+		newContact := userresp.AddGroupListRespond{
+			ContactId:     user.Uuid,
+			ContactName:   user.Nickname,
+			ContactAvatar: user.Avatar,
+			Message:       message,
+		}
+		rsp = append(rsp, newContact)
+	}
+
+	return rsp, nil
 }

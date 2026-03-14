@@ -218,3 +218,31 @@ func (c *ContactController) CancelBlackContact(ctx *gin.Context) {
 
 	resp.Success(ctx, "已解除拉黑该联系人", nil)
 }
+
+// GetApplyGroupList 获取群聊申请列表
+func (c *ContactController) GetApplyGroupList(ctx *gin.Context) {
+	// 从上下文获取当前用户UUID
+	userUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	// 绑定请求参数
+	var getApplyGroupListReq userreq.GetApplyGroupListRequest
+	if err := ctx.BindJSON(&getApplyGroupListReq); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "系统错误", http.StatusBadRequest)
+		return
+	}
+
+	// 调用服务层方法
+	data, err := c.contactService.GetApplyGroupList(getApplyGroupListReq.GroupId, userUuid.(string))
+	if err != nil {
+		zlog.Info("GetApplyGroupList service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "获取成功", data)
+}
