@@ -17,6 +17,7 @@ type ContactDAO interface {
 	UpdateUserContactStatus(userId string, contactId string, status int8) error
 	GetUserJoinedGroupContactsByUserId(userId string) ([]models.UserContact, error)
 	GetUserContactList(ownerId string) ([]models.UserContact, error)
+	GetUserContactByUserIdAndContactId(userId string, contactId string) (*models.UserContact, error)
 }
 
 type ContactDAOImpl struct{}
@@ -76,4 +77,11 @@ func (d *ContactDAOImpl) UpdateUserContactStatus(userId string, contactId string
 		"updated_at": time.Now(),
 	})
 	return result.Error
+}
+
+// GetUserContactByUserIdAndContactId 根据用户ID和联系人ID获取联系人记录
+func (d *ContactDAOImpl) GetUserContactByUserIdAndContactId(userId string, contactId string) (*models.UserContact, error) {
+	var contact models.UserContact
+	result := db.GormDB.Where("user_id = ? AND contact_id = ?", userId, contactId).First(&contact)
+	return &contact, result.Error
 }

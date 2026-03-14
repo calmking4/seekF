@@ -190,3 +190,31 @@ func (c *ContactController) BlackContact(ctx *gin.Context) {
 
 	resp.Success(ctx, "已拉黑该联系人", nil)
 }
+
+// CancelBlackContact 解除拉黑联系人
+func (c *ContactController) CancelBlackContact(ctx *gin.Context) {
+	// 从上下文获取当前用户UUID
+	userUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	// 绑定请求参数
+	var blackContactReq userreq.BlackContactRequest
+	if err := ctx.BindJSON(&blackContactReq); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "系统错误", http.StatusBadRequest)
+		return
+	}
+
+	// 调用服务层方法
+	err := c.contactService.CancelBlackContact(userUuid.(string), blackContactReq.ContactId)
+	if err != nil {
+		zlog.Info("CancelBlackContact service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "已解除拉黑该联系人", nil)
+}

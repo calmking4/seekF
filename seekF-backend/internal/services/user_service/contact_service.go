@@ -31,6 +31,7 @@ type ContactService interface {
 	GetNewContactList(userId string) ([]userresp.NewContactListRespond, error)
 	PassContactApply(id string, contactId string, currentUserId string) error
 	BlackContact(userId string, contactId string) error
+	CancelBlackContact(userId string, contactId string) error
 }
 
 type ContactServiceImpl struct {
@@ -523,6 +524,58 @@ func (s *ContactServiceImpl) BlackContact(userId string, contactId string) error
 
 	// 删除缓存
 	if err := myredis.DelKeyIfExists("contact_user_list_" + userId); err != nil {
+		zlog.Error(err.Error())
+	}
+
+	return nil
+}
+
+// CancelBlackContact 解除拉黑联系人
+func (s *ContactServiceImpl) CancelBlackContact(userId string, contactId string) error {
+	// 检查自己对联系人的状态是否为拉黑
+	blackContact, err := s.contactDAO.GetUserContactByUserIdAndContactId(userId, contactId)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("未拉黑该联系人，无需解除拉黑")
+		}
+		zlog.Error(err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	if blackContact.Status != contactstatusenum.BLACK {
+		return fmt.Errorf("未拉黑该联系人，无需解除拉黑")
+	}
+
+	// 检查联系人对自己的状态是否为被拉黑
+	beBlackContact, err := s.contactDAO.GetUserContactByUserIdAndContactId(contactId, userId)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("该联系人未被拉黑，无需解除拉黑")
+		}
+		zlog.Error(err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	if beBlackContact.Status != contactstatusenum.BE_BLACK {
+		return fmt.Errorf("该联系人未被拉黑，无需解除拉黑")
+	}
+
+	// 取消拉黑，将双方状态更新为正常
+	if err := s.contactDAO.UpdateUserContactStatus(userId, contactId, contactstatusenum.NORMAL); err != nil {
+		zlog.Error(err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	if err := s.contactDAO.UpdateUserContactStatus(contactId, userId, contactstatusenum.NORMAL); err != nil {
+		zlog.Error(err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 删除缓存
+	if err := myredis.DelKeyIfExists("contact_user_list_" + userId); err != nil {
+		zlog.Error(err.Error())
+	}
+	if err := myredis.DelKeyIfExists("contact_user_list_" + contactId); err != nil {
 		zlog.Error(err.Error())
 	}
 
