@@ -13,8 +13,6 @@ type ContactDAO interface {
 	CreateUserContact(contact *models.UserContact) error
 	RemoveContact(userId string, contactId string) error
 	RemoveContactsByContactId(contactId string) error
-	RemoveContactApply(userId string, contactId string) error
-	RemoveContactAppliesByContactId(contactId string) error
 	UpdateUserContactStatusAndDelete(userId string, contactId string, status int8) error
 	GetUserJoinedGroupContactsByUserId(userId string) ([]models.UserContact, error)
 	GetUserContactList(ownerId string) ([]models.UserContact, error)
@@ -41,18 +39,6 @@ func (d *ContactDAOImpl) RemoveContact(userId string, contactId string) error {
 // RemoveContactsByContactId 批量删除指定联系ID的联系人
 func (d *ContactDAOImpl) RemoveContactsByContactId(contactId string) error {
 	result := db.GormDB.Where("contact_id = ?", contactId).Delete(&models.UserContact{})
-	return result.Error
-}
-
-// RemoveContactApply 根据用户ID和联系人ID删除联系人申请记录
-func (d *ContactDAOImpl) RemoveContactApply(userId string, contactId string) error {
-	result := db.GormDB.Where("user_id = ? AND contact_id = ?", userId, contactId).Delete(&models.ContactApply{})
-	return result.Error
-}
-
-// RemoveContactAppliesByContactId 批量删除指定联系ID的申请记录
-func (d *ContactDAOImpl) RemoveContactAppliesByContactId(contactId string) error {
-	result := db.GormDB.Where("contact_id = ?", contactId).Delete(&models.ContactApply{})
 	return result.Error
 }
 

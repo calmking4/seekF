@@ -9,7 +9,6 @@ import (
 
 func main() {
 	// 初始化 DAO 层
-	authDAO := userdao.NewAuthDAO()
 	userInfoDAO := userdao.NewUserInfoDAO()
 	contactDAO := userdao.NewContactDAO()
 	sessionDAO := userdao.NewSessionDAO()
@@ -17,10 +16,10 @@ func main() {
 	contactApplyDAO := userdao.NewContactApplyDAO()
 
 	// 初始化 Service 层
-	authService := userservice.NewAuthService(authDAO)
+	authService := userservice.NewAuthService(userInfoDAO)
 	userInfoService := userservice.NewUserInfoService(userInfoDAO)
 	contactService := userservice.NewContactService(contactDAO, sessionDAO, userInfoDAO, groupDAO, contactApplyDAO)
-	groupService := userservice.NewGroupService(groupDAO, contactDAO, sessionDAO, userInfoDAO)
+	groupService := userservice.NewGroupService(groupDAO, contactDAO, sessionDAO, userInfoDAO, contactApplyDAO)
 
 	// 初始化 Controller 层
 	authController := usercontroller.NewAuthController(authService)

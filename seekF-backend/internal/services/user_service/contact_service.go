@@ -187,13 +187,13 @@ func (s *ContactServiceImpl) DeleteContact(userUuid string, contactId string) er
 	}
 
 	// 删除自己向对方发送的联系人申请记录
-	if err := s.contactDAO.RemoveContactApply(userUuid, contactId); err != nil {
+	if err := s.contactApplyDAO.RemoveContactApply(userUuid, contactId); err != nil {
 		zlog.Error(err.Error())
 		return err
 	}
 
 	// 删除对方向自己发送的联系人申请记录
-	if err := s.contactDAO.RemoveContactApply(contactId, userUuid); err != nil {
+	if err := s.contactApplyDAO.RemoveContactApply(contactId, userUuid); err != nil {
 		zlog.Error(err.Error())
 		return err
 	}

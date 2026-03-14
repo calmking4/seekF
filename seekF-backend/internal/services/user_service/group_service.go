@@ -35,10 +35,11 @@ type GroupService interface {
 }
 
 type GroupServiceImpl struct {
-	groupDAO    userdao.GroupDAO
-	contactDAO  userdao.ContactDAO
-	sessionDAO  userdao.SessionDAO
-	userInfoDAO userdao.UserInfoDAO
+	groupDAO        userdao.GroupDAO
+	contactDAO      userdao.ContactDAO
+	sessionDAO      userdao.SessionDAO
+	userInfoDAO     userdao.UserInfoDAO
+	contactApplyDAO userdao.ContactApplyDAO
 }
 
 func NewGroupService(
@@ -46,12 +47,14 @@ func NewGroupService(
 	contactDAO userdao.ContactDAO,
 	sessionDAO userdao.SessionDAO,
 	userInfoDAO userdao.UserInfoDAO,
+	contactApplyDAO userdao.ContactApplyDAO,
 ) GroupService {
 	return &GroupServiceImpl{
-		groupDAO:    groupDAO,
-		contactDAO:  contactDAO,
-		sessionDAO:  sessionDAO,
-		userInfoDAO: userInfoDAO,
+		groupDAO:        groupDAO,
+		contactDAO:      contactDAO,
+		sessionDAO:      sessionDAO,
+		userInfoDAO:     userInfoDAO,
+		contactApplyDAO: contactApplyDAO,
 	}
 }
 
@@ -380,7 +383,7 @@ func (s *GroupServiceImpl) RemoveGroupMembers(req userreq.RemoveGroupMembersRequ
 		}
 
 		// 删除对应的申请记录
-		if err := s.contactDAO.RemoveContactApply(uuid, req.GroupId); err != nil {
+		if err := s.contactApplyDAO.RemoveContactApply(uuid, req.GroupId); err != nil {
 			zlog.Error("删除申请记录失败: " + err.Error())
 			return fmt.Errorf("系统错误")
 		}
@@ -537,7 +540,7 @@ func (s *GroupServiceImpl) LeaveGroup(groupId string, userId string) error {
 	}
 
 	// 删除对应的申请记录
-	if err := s.contactDAO.RemoveContactApply(userId, groupId); err != nil {
+	if err := s.contactApplyDAO.RemoveContactApply(userId, groupId); err != nil {
 		zlog.Error("删除申请记录失败: " + err.Error())
 		return fmt.Errorf("系统错误")
 	}
@@ -578,7 +581,7 @@ func (s *GroupServiceImpl) DismissGroup(groupId string, userId string) error {
 	}
 
 	// 删除群组相关的申请记录
-	if err := s.contactDAO.RemoveContactAppliesByContactId(groupId); err != nil {
+	if err := s.contactApplyDAO.RemoveContactAppliesByContactId(groupId); err != nil {
 		zlog.Error("删除群组申请记录失败: " + err.Error())
 		return fmt.Errorf("系统错误")
 	}

@@ -49,19 +49,19 @@ type AuthService interface {
 }
 
 type AuthServiceImpl struct {
-	authDAO userdao.AuthDAO
+	userInfoDAO userdao.UserInfoDAO
 }
 
-func NewAuthService(authDAO userdao.AuthDAO) AuthService {
+func NewAuthService(userInfoDAO userdao.UserInfoDAO) AuthService {
 	return &AuthServiceImpl{
-		authDAO: authDAO,
+		userInfoDAO: userInfoDAO,
 	}
 }
 
 // Register 用户注册
 func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
 	// 检查手机号是否已存在
-	existingUser, err := s.authDAO.FindUserByTelephone(req.Telephone)
+	existingUser, err := s.userInfoDAO.FindUserByTelephone(req.Telephone)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
 		Password:  password,
 	}
 
-	err = s.authDAO.CreateUser(user)
+	err = s.userInfoDAO.CreateUser(user)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
 // Login 用户登录
 func (s *AuthServiceImpl) Login(req *LoginRequest) (*LoginRespond, error) {
 	// 根据手机号查找用户
-	user, err := s.authDAO.FindUserByTelephone(req.Telephone)
+	user, err := s.userInfoDAO.FindUserByTelephone(req.Telephone)
 	if err != nil {
 		return nil, fmt.Errorf("登录失败：%v", err)
 	}
