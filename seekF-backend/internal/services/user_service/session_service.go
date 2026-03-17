@@ -10,6 +10,7 @@ import (
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
+	contactstatusenum "seekF-backend/internal/pkg/enum/contact_enum/contact_status_enum"
 	groupstatusenum "seekF-backend/internal/pkg/enum/group_enum/group_status_enum"
 	userstatusenum "seekF-backend/internal/pkg/enum/user_enum/user_status_enum"
 	myredis "seekF-backend/internal/pkg/redis"
@@ -25,23 +26,27 @@ type SessionService interface {
 	CreateSession(sendId string, receiveId string) (string, error)
 	GetSessionList(userId string) ([]userresp.GetSessionListRespond, error)
 	DeleteSession(userId string, sessionId string) error
+	CheckOpenSessionAllowed(sendId string, receiveId string) (bool, error)
 }
 
 type SessionServiceImpl struct {
 	sessionDAO  userdao.SessionDAO
 	userInfoDAO userdao.UserInfoDAO
 	groupDAO    userdao.GroupDAO
+	contactDAO  userdao.ContactDAO
 }
 
 func NewSessionService(
 	sessionDAO userdao.SessionDAO,
 	userInfoDAO userdao.UserInfoDAO,
 	groupDAO userdao.GroupDAO,
+	contactDAO userdao.ContactDAO,
 ) SessionService {
 	return &SessionServiceImpl{
 		sessionDAO:  sessionDAO,
 		userInfoDAO: userInfoDAO,
 		groupDAO:    groupDAO,
+		contactDAO:  contactDAO,
 	}
 }
 
@@ -192,4 +197,46 @@ func (s *SessionServiceImpl) DeleteSession(userId string, sessionId string) erro
 	}
 
 	return nil
+}
+
+// CheckOpenSessionAllowed 检查是否可以打开会话
+func (s *SessionServiceImpl) CheckOpenSessionAllowed(sendId string, receiveId string) (bool, error) {
+	// 检查发送者和接收者之间的联系人关系
+	contact, err := s.contactDAO.GetUserContactByUserIdAndContactId(sendId, receiveId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return false, fmt.Errorf("系统错误")
+	}
+
+	// 检查联系人状态
+	if contact.Status == contactstatusenum.BE_BLACK {
+		return false, fmt.Errorf("已被对方拉黑，无法发起会话")
+	} else if contact.Status == contactstatusenum.BLACK {
+		return false, fmt.Errorf("已拉黑对方，先解除拉黑状态才能发起会话")
+	}
+
+	// 检查接收者状态
+	if receiveId[0] == 'U' {
+		// 接收者是用户
+		user, err := s.userInfoDAO.FindUserByUuid(receiveId)
+		if err != nil {
+			zlog.Error(err.Error())
+			return false, fmt.Errorf("系统错误")
+		}
+		if user.Status == userstatusenum.DISABLE {
+			return false, fmt.Errorf("对方已被禁用，无法发起会话")
+		}
+	} else {
+		// 接收者是群聊
+		group, err := s.groupDAO.GetGroupInfoByUuid(receiveId)
+		if err != nil {
+			zlog.Error(err.Error())
+			return false, fmt.Errorf("系统错误")
+		}
+		if group.Status == groupstatusenum.DISABLE {
+			return false, fmt.Errorf("对方已被禁用，无法发起会话")
+		}
+	}
+
+	return true, nil
 }

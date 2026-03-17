@@ -62,6 +62,7 @@ func SetupRouter(
 			protectedGroup.POST("/session/openSession", sessionController.OpenSession)
 			protectedGroup.POST("/session/getSessionList", sessionController.GetSessionList)
 			protectedGroup.POST("/session/deleteSession", sessionController.DeleteSession)
+			protectedGroup.POST("/session/checkOpenSessionAllowed", sessionController.CheckOpenSessionAllowed)
 		}
 	}
 

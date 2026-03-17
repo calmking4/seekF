@@ -20,7 +20,7 @@ func main() {
 	userInfoService := userservice.NewUserInfoService(userInfoDAO)
 	contactService := userservice.NewContactService(contactDAO, sessionDAO, userInfoDAO, groupDAO, contactApplyDAO)
 	groupService := userservice.NewGroupService(groupDAO, contactDAO, sessionDAO, userInfoDAO, contactApplyDAO)
-	sessionService := userservice.NewSessionService(sessionDAO, userInfoDAO, groupDAO)
+	sessionService := userservice.NewSessionService(sessionDAO, userInfoDAO, groupDAO, contactDAO)
 
 	// 初始化 Controller 层
 	authController := usercontroller.NewAuthController(authService)

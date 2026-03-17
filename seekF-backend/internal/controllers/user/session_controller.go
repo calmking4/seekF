@@ -96,3 +96,31 @@ func (c *SessionController) DeleteSession(ctx *gin.Context) {
 
 	resp.Success(ctx, "删除成功", nil)
 }
+
+// CheckOpenSessionAllowed 检查是否可以打开会话
+func (c *SessionController) CheckOpenSessionAllowed(ctx *gin.Context) {
+	// 从上下文获取当前用户UUID
+	userUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	// 绑定请求参数
+	var openSessionReq userreq.OpenSessionRequest
+	if err := ctx.BindJSON(&openSessionReq); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "系统错误", http.StatusBadRequest)
+		return
+	}
+
+	// 调用服务层方法
+	allowed, err := c.sessionService.CheckOpenSessionAllowed(userUuid.(string), openSessionReq.ReceiveId)
+	if err != nil {
+		zlog.Info("CheckOpenSessionAllowed service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "检查成功", allowed)
+}
