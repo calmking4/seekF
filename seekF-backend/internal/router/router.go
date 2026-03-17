@@ -14,6 +14,7 @@ func SetupRouter(
 	contactController *user.ContactController,
 	sessionController *user.SessionController,
 	messageController *user.MessageController,
+	fileController *user.FileController,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -67,6 +68,8 @@ func SetupRouter(
 			// 消息
 			protectedGroup.POST("/message/getUserMessageList", messageController.GetUserMessageList)
 			protectedGroup.POST("/message/getGroupMessageList", messageController.GetGroupMessageList)
+			// 文件上传
+			protectedGroup.POST("/file/upload", fileController.UploadFile)
 		}
 	}
 

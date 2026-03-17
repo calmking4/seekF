@@ -23,6 +23,7 @@ func main() {
 	groupService := userservice.NewGroupService(groupDAO, contactDAO, sessionDAO, userInfoDAO, contactApplyDAO)
 	sessionService := userservice.NewSessionService(sessionDAO, userInfoDAO, groupDAO, contactDAO)
 	messageService := userservice.NewMessageService(messageDAO)
+	fileService := userservice.NewFileService()
 
 	// 初始化 Controller 层
 	authController := usercontroller.NewAuthController(authService)
@@ -31,9 +32,10 @@ func main() {
 	groupController := usercontroller.NewGroupController(groupService)
 	sessionController := usercontroller.NewSessionController(sessionService)
 	messageController := usercontroller.NewMessageController(messageService)
+	fileController := usercontroller.NewFileController(fileService)
 
 	// 初始化路由器
-	r := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController)
+	r := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController)
 
 	//启动服务，监听 8080 端口
 	r.Run()
