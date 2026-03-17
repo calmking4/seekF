@@ -82,7 +82,7 @@ func initOSSClient() {
 }
 
 func getClient() (*oss.Client, error) {
-	clientOnce.Do(initOSSClient)
+	clientOnce.Do(initOSSClient) //只初始化一次
 	if clientErr != nil {
 		return nil, clientErr
 	}
@@ -94,8 +94,8 @@ func getClient() (*oss.Client, error) {
 	return ossClient, nil
 }
 
-func dirForCategory(cat FileCategory) string {
-	switch cat {
+func dirForCategory(category FileCategory) string {
+	switch category {
 	case UserAvatar:
 		return avatarDirPrefix
 	case GroupAvatar:
@@ -111,8 +111,9 @@ func dirForCategory(cat FileCategory) string {
 	}
 }
 
-func buildObjectKey(cat FileCategory, originalFilename string) string {
-	dir := dirForCategory(cat)
+// 生成OSS文件的唯一标识（路径+文件名）
+func buildObjectKey(category FileCategory, originalFilename string) string {
+	dir := dirForCategory(category)
 	datePrefix := time.Now().Format("2006/01/02")
 
 	ext := strings.ToLower(path.Ext(originalFilename))
@@ -121,11 +122,12 @@ func buildObjectKey(cat FileCategory, originalFilename string) string {
 	}
 
 	randomPart := util.GetNowAndLenRandomString(6)
-	baseName := time.Now().Format("150405") + "_" + randomPart + ext
+	baseName := time.Now().Format("150405") + "_" + randomPart + ext // Format("150405")时分秒
 
 	return path.Join(dir, datePrefix, baseName)
 }
 
+// 生成文件的访问URL
 func buildFileURL(objectKey string) string {
 	if ossBaseURL != "" {
 		return fmt.Sprintf("%s/%s", ossBaseURL, objectKey)
@@ -133,7 +135,7 @@ func buildFileURL(objectKey string) string {
 	return objectKey
 }
 
-func UploadReader(ctx context.Context, r io.Reader, filename string, cat FileCategory) (*UploadResult, error) {
+func UploadReader(ctx context.Context, r io.Reader, filename string, category FileCategory) (*UploadResult, error) {
 	if r == nil {
 		return nil, fmt.Errorf("reader is nil")
 	}
@@ -143,7 +145,7 @@ func UploadReader(ctx context.Context, r io.Reader, filename string, cat FileCat
 		return nil, err
 	}
 
-	objectKey := buildObjectKey(cat, filename)
+	objectKey := buildObjectKey(category, filename)
 
 	if ctx == nil {
 		ctx = context.Background()
@@ -164,7 +166,7 @@ func UploadReader(ctx context.Context, r io.Reader, filename string, cat FileCat
 	}, nil
 }
 
-func UploadMultipartFile(ctx context.Context, fileHeader *multipart.FileHeader, cat FileCategory) (*UploadResult, error) {
+func UploadMultipartFile(ctx context.Context, fileHeader *multipart.FileHeader, category FileCategory) (*UploadResult, error) {
 	if fileHeader == nil {
 		return nil, fmt.Errorf("file header is nil")
 	}
@@ -175,5 +177,5 @@ func UploadMultipartFile(ctx context.Context, fileHeader *multipart.FileHeader, 
 	}
 	defer src.Close()
 
-	return UploadReader(ctx, src, fileHeader.Filename, cat)
+	return UploadReader(ctx, src, fileHeader.Filename, category)
 }
