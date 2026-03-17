@@ -1,23 +1,29 @@
 package userservice
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	userdao "seekF-backend/internal/dao/user_dao"
+	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
+	"seekF-backend/internal/pkg/constants"
 	groupstatusenum "seekF-backend/internal/pkg/enum/group_enum/group_status_enum"
 	userstatusenum "seekF-backend/internal/pkg/enum/user_enum/user_status_enum"
+	myredis "seekF-backend/internal/pkg/redis"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
 type SessionService interface {
 	OpenSession(sendId string, receiveId string) (string, error)
 	CreateSession(sendId string, receiveId string) (string, error)
+	GetSessionList(userId string) ([]userresp.GetSessionListRespond, error)
 }
 
 type SessionServiceImpl struct {
@@ -111,5 +117,62 @@ func (s *SessionServiceImpl) CreateSession(sendId string, receiveId string) (str
 		return "", fmt.Errorf("系统错误")
 	}
 
+	// 清除用户会话列表缓存
+	if err := myredis.DelKeysWithPattern("session_list_" + sendId); err != nil {
+		zlog.Error(err.Error())
+	}
+
 	return session.Uuid, nil
+}
+
+// GetSessionList 获取会话列表（用户和群聊）
+func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessionListRespond, error) {
+	// 从 Redis 获取会话列表
+	rspString, err := myredis.GetKeyNilIsErr("session_list_" + userId)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			// Redis 中不存在，从数据库获取
+			sessionList, err := s.sessionDAO.GetSessionListBySendId(userId)
+			if err != nil {
+				zlog.Error(err.Error())
+				return nil, fmt.Errorf("系统错误")
+			}
+
+			// 构建响应
+			var sessionListRsp []userresp.GetSessionListRespond
+			for _, session := range sessionList {
+				// 构建会话响应
+				sessionRsp := userresp.GetSessionListRespond{
+					SessionId: session.Uuid,
+					Avatar:    session.Avatar,
+					Id:        session.ReceiveId,
+					Name:      session.ReceiveName,
+				}
+				sessionListRsp = append(sessionListRsp, sessionRsp)
+			}
+
+			// 缓存到 Redis
+			rspString, err := json.Marshal(sessionListRsp)
+			if err != nil {
+				zlog.Error(err.Error())
+			}
+			if err := myredis.SetKeyEx("session_list_"+userId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
+				zlog.Error(err.Error())
+			}
+
+			return sessionListRsp, nil
+		} else {
+			zlog.Error(err.Error())
+			return nil, fmt.Errorf("系统错误")
+		}
+	}
+
+	// 从 Redis 缓存中获取
+	var sessionListRsp []userresp.GetSessionListRespond
+	if err := json.Unmarshal([]byte(rspString), &sessionListRsp); err != nil {
+		zlog.Error(err.Error())
+		return nil, fmt.Errorf("系统错误")
+	}
+
+	return sessionListRsp, nil
 }

@@ -11,6 +11,7 @@ type SessionDAO interface {
 	RemoveSessionsByReceiveId(receiveId string) error
 	GetSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error)
 	CreateSession(session *models.Session) error
+	GetSessionListBySendId(userId string) ([]models.Session, error)
 }
 
 type SessionDAOImpl struct{}
@@ -51,4 +52,11 @@ func (d *SessionDAOImpl) GetSessionBySendAndReceiveId(sendId string, receiveId s
 func (d *SessionDAOImpl) CreateSession(session *models.Session) error {
 	result := db.GormDB.Create(session)
 	return result.Error
+}
+
+// GetSessionListBySendId 根据发送者ID获取用户会话列表
+func (d *SessionDAOImpl) GetSessionListBySendId(userId string) ([]models.Session, error) {
+	var sessionList []models.Session
+	result := db.GormDB.Order("created_at DESC").Where("send_id = ?", userId).Find(&sessionList)
+	return sessionList, result.Error
 }

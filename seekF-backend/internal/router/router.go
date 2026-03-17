@@ -60,6 +60,7 @@ func SetupRouter(
 			protectedGroup.POST("/contact/blackApply", contactController.BlackApply)
 			// 会话
 			protectedGroup.POST("/session/openSession", sessionController.OpenSession)
+			protectedGroup.POST("/session/getSessionList", sessionController.GetSessionList)
 		}
 	}
 
