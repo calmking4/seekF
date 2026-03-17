@@ -4,9 +4,9 @@ import (
 	"net/http"
 
 	userreq "seekF-backend/internal/dto/user/user_req"
-	userservice "seekF-backend/internal/services/user_service"
 	"seekF-backend/internal/pkg/resp"
 	"seekF-backend/internal/pkg/zlog"
+	userservice "seekF-backend/internal/services/user_service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,10 +23,10 @@ func NewMessageController(messageService userservice.MessageService) *MessageCon
 	}
 }
 
-// GetMessageList 获取聊天记录
-func (c *MessageController) GetMessageList(ctx *gin.Context) {
+// GetUserMessageList 获取用户聊天记录
+func (c *MessageController) GetUserMessageList(ctx *gin.Context) {
 	// 绑定请求参数
-	var req userreq.GetMessageListRequest
+	var req userreq.GetUserMessageListRequest
 	if err := ctx.BindJSON(&req); err != nil {
 		zlog.Error(err.Error())
 		resp.Error(ctx, "系统错误", http.StatusBadRequest)
@@ -34,9 +34,9 @@ func (c *MessageController) GetMessageList(ctx *gin.Context) {
 	}
 
 	// 调用服务层方法
-	messageList, err := c.messageService.GetMessageList(req.UserOneId, req.UserTwoId)
+	messageList, err := c.messageService.GetUserMessageList(req.UserOneId, req.UserTwoId)
 	if err != nil {
-		zlog.Info("GetMessageList service err: " + err.Error())
+		zlog.Info("GetUserMessageList service err: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}

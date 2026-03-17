@@ -10,7 +10,7 @@ import (
 
 // MessageService 消息服务接口
 type MessageService interface {
-	GetMessageList(userOneId string, userTwoId string) ([]userresp.GetMessageListRespond, error)
+	GetUserMessageList(userOneId string, userTwoId string) ([]userresp.GetMessageListRespond, error)
 }
 
 // MessageServiceImpl 消息服务实现
@@ -25,10 +25,10 @@ func NewMessageService(messageDAO userdao.MessageDAO) MessageService {
 	}
 }
 
-// GetMessageList 获取聊天记录
-func (s *MessageServiceImpl) GetMessageList(userOneId string, userTwoId string) ([]userresp.GetMessageListRespond, error) {
+// GetUserMessageList 获取用户聊天记录
+func (s *MessageServiceImpl) GetUserMessageList(userOneId string, userTwoId string) ([]userresp.GetMessageListRespond, error) {
 	// 从数据库获取消息列表
-	messageList, err := s.messageDAO.GetMessageList(userOneId, userTwoId)
+	messageList, err := s.messageDAO.GetUserMessageList(userOneId, userTwoId)
 	if err != nil {
 		zlog.Error(err.Error())
 		return nil, fmt.Errorf("系统错误")
