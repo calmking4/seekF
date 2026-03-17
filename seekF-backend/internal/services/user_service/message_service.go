@@ -11,6 +11,7 @@ import (
 // MessageService 消息服务接口
 type MessageService interface {
 	GetUserMessageList(userOneId string, userTwoId string) ([]userresp.GetMessageListRespond, error)
+	GetGroupMessageList(groupId string) ([]userresp.GetMessageListRespond, error)
 }
 
 // MessageServiceImpl 消息服务实现
@@ -28,7 +29,37 @@ func NewMessageService(messageDAO userdao.MessageDAO) MessageService {
 // GetUserMessageList 获取用户聊天记录
 func (s *MessageServiceImpl) GetUserMessageList(userOneId string, userTwoId string) ([]userresp.GetMessageListRespond, error) {
 	// 从数据库获取消息列表
-	messageList, err := s.messageDAO.GetUserMessageList(userOneId, userTwoId)
+	messageList, err := s.messageDAO.GetMessagesBetweenUsers(userOneId, userTwoId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, fmt.Errorf("系统错误")
+	}
+
+	// 构建响应
+	var rspList []userresp.GetMessageListRespond
+	for _, message := range messageList {
+		rspList = append(rspList, userresp.GetMessageListRespond{
+			SendId:     message.SendId,
+			SendName:   message.SendName,
+			SendAvatar: message.SendAvatar,
+			ReceiveId:  message.ReceiveId,
+			Content:    message.Content,
+			Url:        message.Url,
+			Type:       message.Type,
+			FileType:   message.FileType,
+			FileName:   message.FileName,
+			FileSize:   message.FileSize,
+			CreatedAt:  message.CreatedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	return rspList, nil
+}
+
+// GetGroupMessageList 获取群聊消息记录
+func (s *MessageServiceImpl) GetGroupMessageList(groupId string) ([]userresp.GetMessageListRespond, error) {
+	// 从数据库获取消息列表
+	messageList, err := s.messageDAO.GetMessagesByReceiverId(groupId)
 	if err != nil {
 		zlog.Error(err.Error())
 		return nil, fmt.Errorf("系统错误")

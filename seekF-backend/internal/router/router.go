@@ -66,6 +66,7 @@ func SetupRouter(
 			protectedGroup.POST("/session/checkOpenSessionAllowed", sessionController.CheckOpenSessionAllowed)
 			// 消息
 			protectedGroup.POST("/message/getUserMessageList", messageController.GetUserMessageList)
+			protectedGroup.POST("/message/getGroupMessageList", messageController.GetGroupMessageList)
 		}
 	}
 

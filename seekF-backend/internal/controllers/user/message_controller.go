@@ -43,3 +43,24 @@ func (c *MessageController) GetUserMessageList(ctx *gin.Context) {
 
 	resp.Success(ctx, "获取聊天记录成功", messageList)
 }
+
+// GetGroupMessageList 获取群聊消息记录
+func (c *MessageController) GetGroupMessageList(ctx *gin.Context) {
+	// 绑定请求参数
+	var req userreq.GetGroupMessageListRequest
+	if err := ctx.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "系统错误", http.StatusBadRequest)
+		return
+	}
+
+	// 调用服务层方法
+	messageList, err := c.messageService.GetGroupMessageList(req.GroupId)
+	if err != nil {
+		zlog.Info("GetGroupMessageList service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "获取聊天记录成功", messageList)
+}
