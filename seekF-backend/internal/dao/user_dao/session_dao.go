@@ -11,6 +11,7 @@ type SessionDAO interface {
 	RemoveSessionsByReceiveId(receiveId string) error
 	GetSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error)
 	CreateSession(session *models.Session) error
+	DeleteSession(sessionId string) error
 	GetSessionListBySendId(userId string) ([]models.Session, error)
 }
 
@@ -51,6 +52,12 @@ func (d *SessionDAOImpl) GetSessionBySendAndReceiveId(sendId string, receiveId s
 // CreateSession 创建会话
 func (d *SessionDAOImpl) CreateSession(session *models.Session) error {
 	result := db.GormDB.Create(session)
+	return result.Error
+}
+
+// DeleteSession 删除会话
+func (d *SessionDAOImpl) DeleteSession(sessionId string) error {
+	result := db.GormDB.Delete(&models.Session{}, "uuid = ?", sessionId)
 	return result.Error
 }
 

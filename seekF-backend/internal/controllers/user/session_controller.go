@@ -68,3 +68,31 @@ func (c *SessionController) GetSessionList(ctx *gin.Context) {
 
 	resp.Success(ctx, "获取成功", sessionList)
 }
+
+// DeleteSession 删除会话
+func (c *SessionController) DeleteSession(ctx *gin.Context) {
+	// 从上下文获取当前用户UUID
+	userUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	// 绑定请求参数
+	var deleteSessionReq userreq.DeleteSessionRequest
+	if err := ctx.BindJSON(&deleteSessionReq); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "系统错误", http.StatusBadRequest)
+		return
+	}
+
+	// 调用服务层方法
+	err := c.sessionService.DeleteSession(userUuid.(string), deleteSessionReq.SessionId)
+	if err != nil {
+		zlog.Info("DeleteSession service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "删除成功", nil)
+}

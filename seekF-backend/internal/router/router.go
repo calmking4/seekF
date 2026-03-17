@@ -61,6 +61,7 @@ func SetupRouter(
 			// 会话
 			protectedGroup.POST("/session/openSession", sessionController.OpenSession)
 			protectedGroup.POST("/session/getSessionList", sessionController.GetSessionList)
+			protectedGroup.POST("/session/deleteSession", sessionController.DeleteSession)
 		}
 	}
 

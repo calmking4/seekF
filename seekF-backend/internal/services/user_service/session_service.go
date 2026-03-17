@@ -24,6 +24,7 @@ type SessionService interface {
 	OpenSession(sendId string, receiveId string) (string, error)
 	CreateSession(sendId string, receiveId string) (string, error)
 	GetSessionList(userId string) ([]userresp.GetSessionListRespond, error)
+	DeleteSession(userId string, sessionId string) error
 }
 
 type SessionServiceImpl struct {
@@ -175,4 +176,20 @@ func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessio
 	}
 
 	return sessionListRsp, nil
+}
+
+// DeleteSession 删除会话
+func (s *SessionServiceImpl) DeleteSession(userId string, sessionId string) error {
+	// 从数据库中删除会话
+	if err := s.sessionDAO.DeleteSession(sessionId); err != nil {
+		zlog.Error(err.Error())
+		return fmt.Errorf("系统错误")
+	}
+
+	// 清除用户会话列表缓存
+	if err := myredis.DelKeysWithPattern("session_list_" + userId); err != nil {
+		zlog.Error(err.Error())
+	}
+
+	return nil
 }

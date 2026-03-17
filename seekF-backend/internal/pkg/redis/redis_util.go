@@ -141,7 +141,7 @@ func DelKeysWithPattern(pattern string) error {
 
 		// 如果没有更多的键，则跳出循环
 		if len(keys) == 0 {
-			log.Println("没有找到对应key")
+			// log.Println("没有找到对应key")
 			break
 		}
 
@@ -151,7 +151,7 @@ func DelKeysWithPattern(pattern string) error {
 			if err != nil {
 				return err
 			}
-			log.Println("成功删除相关对应key", keys)
+			// log.Println("成功删除相关对应key", keys)
 		}
 	}
 
