@@ -12,6 +12,7 @@ func SetupRouter(
 	userInfoController *user.UserInfoController,
 	groupController *user.GroupController,
 	contactController *user.ContactController,
+	sessionController *user.SessionController,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -57,6 +58,8 @@ func SetupRouter(
 			protectedGroup.POST("/contact/getApplyGroupList", contactController.GetApplyGroupList)
 			protectedGroup.POST("/contact/refuseContactApply", contactController.RefuseContactApply)
 			protectedGroup.POST("/contact/blackApply", contactController.BlackApply)
+			// 会话
+			protectedGroup.POST("/session/openSession", sessionController.OpenSession)
 		}
 	}
 
