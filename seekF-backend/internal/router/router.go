@@ -13,6 +13,7 @@ func SetupRouter(
 	groupController *user.GroupController,
 	contactController *user.ContactController,
 	sessionController *user.SessionController,
+	messageController *user.MessageController,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -63,6 +64,8 @@ func SetupRouter(
 			protectedGroup.POST("/session/getSessionList", sessionController.GetSessionList)
 			protectedGroup.POST("/session/deleteSession", sessionController.DeleteSession)
 			protectedGroup.POST("/session/checkOpenSessionAllowed", sessionController.CheckOpenSessionAllowed)
+			// 消息
+			protectedGroup.POST("/message/getMessageList", messageController.GetMessageList)
 		}
 	}
 
