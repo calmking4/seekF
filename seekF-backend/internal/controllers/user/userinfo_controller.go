@@ -39,6 +39,31 @@ func (c *UserInfoController) GetUserInfo(ctx *gin.Context) {
 	resp.Success(ctx, "获取用户信息成功", result)
 }
 
+// GetMyInfo 获取当前登录用户的信息
+func (c *UserInfoController) GetMyInfo(ctx *gin.Context) {
+	// 从上下文获取当前用户的 UUID
+	currentUserUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		zlog.Info("GetMyInfo err: Unable to get user UUID from context")
+		resp.Error(ctx, "无法获取用户信息", http.StatusInternalServerError)
+		return
+	}
+
+	// 创建请求对象
+	req := &userreq.GetUserInfoRequest{
+		Uuid: currentUserUuid.(string),
+	}
+
+	result, err := c.userInfoService.GetUserInfo(req)
+	if err != nil {
+		zlog.Info("GetMyInfo service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "获取用户信息成功", result)
+}
+
 // UpdateUserInfo 更新用户信息
 func (c *UserInfoController) UpdateUserInfo(ctx *gin.Context) {
 	var req userreq.UpdateUserInfoRequest

@@ -35,6 +35,7 @@ func SetupRouter(
 			protectedGroup.POST("/logout", authController.Logout)
 			// 用户信息
 			protectedGroup.POST("/userinfo/getUserinfo", userInfoController.GetUserInfo)
+			protectedGroup.POST("/userinfo/getMyInfo", userInfoController.GetMyInfo)
 			protectedGroup.POST("/userinfo/updateUserInfo", userInfoController.UpdateUserInfo)
 			// 群组
 			protectedGroup.POST("/group/createGroup", groupController.CreateGroup)

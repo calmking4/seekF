@@ -25,7 +25,7 @@ func sessionTTL() time.Duration {
 	return time.Duration(mins) * time.Minute
 }
 
-func GenerateOpaqueToken() (string, error) {
+func GenerateToken() (string, error) {
 	// 32 bytes -> 43 chars base64url (no padding)
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

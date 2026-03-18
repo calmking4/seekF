@@ -23,21 +23,13 @@ func Auth() gin.HandlerFunc {
 // TokenRedisAuth 中间件：校验不透明 token，并从 Redis 会话中恢复用户信息
 func TokenRedisAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
+		// 从 cookie 中获取 token
+		tokenString, err := c.Cookie("token")
+		if err != nil || tokenString == "" {
 			resp.Error(c, "未登录或 token 缺失", 401)
 			c.Abort()
 			return
 		}
-
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			resp.Error(c, "Authorization 格式错误", 401)
-			c.Abort()
-			return
-		}
-
-		tokenString := parts[1]
 		sess, err := auth.GetSession(tokenString)
 		if err != nil {
 			resp.Error(c, "token 无效或已过期", 401)

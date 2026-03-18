@@ -143,17 +143,9 @@ const editForm = reactive({
 // 获取用户信息
 const loadUserInfo = async () => {
   try {
-    // 获取当前用户的UUID，通常从前端状态或JWT token中获得
-    const authState = useAuthState()
-    const user = authState.getUser()
-
-
-    // 使用useApi$发送请求
-    const data = await useApi$('/user/userinfo/getUserinfo', {
-      method: 'POST',
-      body: {
-        uuid: user.uuid
-      }
+    // 获取个人信息
+    const data = await useApi$('/user/userinfo/getMyInfo', {
+      method: 'POST'
     })
 
     if (data && data.code === 200) {

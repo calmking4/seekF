@@ -4,12 +4,13 @@ export const useApi = (url, options = {}) => {
     return useFetch(url, {
         baseURL:useRuntimeConfig().public.apiBase,
         ...options,
-        onRequest:({request,options})=>{
-            const token = state.getToken();
-            if(token){
-                options.headers.set('Authorization', `Bearer ${token}`)
-            }
-        },
+        credentials: "include",
+        // onRequest:({request,options})=>{
+        //     const token = state.getToken();
+        //     if(token){
+        //         options.headers.set('Authorization', `Bearer ${token}`)
+        //     }
+        // },
         onRequestError: (error) => {
             console.error('onRequestError: ', error);
         },
@@ -25,12 +26,13 @@ export const useApi$ = (url, options = {}) => {
     return $fetch(url, {
         baseURL:useRuntimeConfig().public.apiBase,
         ...options,
-        onRequest:({request,options})=>{
-            const token = state.getToken();
-            if(token){
-                options.headers.set('Authorization', `Bearer ${token}`)
-            }
-        },
+        credentials: "include",
+        // onRequest:({request,options})=>{
+        //     const token = state.getToken();
+        //     if(token){
+        //         options.headers.set('Authorization', `Bearer ${token}`)
+        //     }
+        // },
         onRequestError: (error) => {
             console.error('onRequestError: ', error);
         },

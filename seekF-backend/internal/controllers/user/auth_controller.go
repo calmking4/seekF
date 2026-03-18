@@ -2,6 +2,7 @@ package user
 
 import (
 	"net/http"
+	"seekF-backend/internal/configs"
 	"seekF-backend/internal/pkg/resp"
 	"seekF-backend/internal/pkg/zlog"
 	userservice "seekF-backend/internal/services/user_service"
@@ -54,6 +55,11 @@ func (c *AuthController) Login(ctx *gin.Context) {
 		return
 	}
 
+	// 设置cookie
+	cfg := configs.GetConfig()
+	expireSeconds := cfg.SessionExpireMinutes * 60
+	ctx.SetCookie("token", result.Token, int(expireSeconds), "/", "localhost", false, true)
+
 	resp.Success(ctx, "登录成功", result)
 }
 
@@ -79,6 +85,9 @@ func (c *AuthController) Logout(ctx *gin.Context) {
 		resp.Error(ctx, "退出登录失败", http.StatusInternalServerError)
 		return
 	}
+
+	// 清除 token cookie
+	ctx.SetCookie("token", "", -1, "/", "localhost", false, true)
 
 	resp.Success(ctx, "退出登录成功", nil)
 }

@@ -123,7 +123,7 @@ func (s *AuthServiceImpl) Login(req *LoginRequest) (*LoginRespond, error) {
 		}
 	} else {
 		// 默认方案：不透明 token + Redis 会话
-		token, err = auth.GenerateOpaqueToken()
+		token, err = auth.GenerateToken()
 		if err != nil {
 			return nil, fmt.Errorf("生成令牌失败：%v", err)
 		}
