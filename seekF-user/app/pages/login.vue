@@ -138,17 +138,36 @@ const loading = ref(false);
 // 公共输入框样式
 const inputClass = "w-full h-12 px-4 border border-gray-300 rounded-lg transition-all duration-200 focus:border-[#60a5fa] focus:ring-2 focus:ring-[#60a5fa]/20 outline-none text-sm bg-white text-gray-900 placeholder:text-gray-400";
 
-const getVerifyCode = () => {
+const getVerifyCode = async () => {
   if (!/^1[3-9]\d{9}$/.test(loginForm.value.phone)) {
     ElMessage('请输入正确的手机号');
     return;
   }
-  codeCountdown.value = 60;
-  const timer = setInterval(() => {
-    codeCountdown.value--;
-    if (codeCountdown.value <= 0) clearInterval(timer);
-  }, 1000);
-  console.log('发送验证码到：', loginForm.value.phone);
+  
+  try {
+    // 调用发送验证码接口
+    const res = await useApi$('/user/sendVerifyCode', {
+      method: 'POST',
+      body: {
+        telephone: loginForm.value.phone
+      }
+    });
+    
+    if (res && res.code === 200) {
+      ElMessage.success('验证码发送成功');
+      // 开始倒计时
+      codeCountdown.value = 60;
+      const timer = setInterval(() => {
+        codeCountdown.value--;
+        if (codeCountdown.value <= 0) clearInterval(timer);
+      }, 1000);
+    } else {
+      ElMessage.error(res?.message || '验证码发送失败');
+    }
+  } catch (err) {
+    console.error('发送验证码错误:', err);
+    ElMessage.error(err?.data?.message || err?.message || '发送验证码请求失败');
+  }
 };
 
 const handleLogin = async () => {
@@ -198,9 +217,40 @@ const handleLogin = async () => {
       return;
     }
     
-    // 验证码登录逻辑待实现
-    console.log('登录参数：', loginForm.value);
-    ElMessage('验证码登录功能待完善');
+    loading.value = true;
+    
+    try {
+      // 使用 useApi$ 发送验证码登录请求
+      const res = await useApi$('/user/loginByCode', {
+        method: 'POST',
+        body: {
+          telephone: loginForm.value.phone,
+          code: loginForm.value.code
+        }
+      });
+
+      if (res && res.code === 200) {
+        // 处理成功响应，获取用户信息和token
+        const { user, token } = res.data;
+        
+        // 存储用户信息和token
+        const authState = useAuthState();
+        authState.setUser(user);
+        authState.setToken(token);
+        
+        ElMessage.success('登录成功');
+        
+        // 跳转到首页或其他页面
+        navigateTo('/');
+      } else {
+        ElMessage.error(res?.message || '登录失败');
+      }
+    } catch (err) {
+      console.error('登录错误:', err);
+      ElMessage.error(err?.data?.message || err?.message || '登录请求失败');
+    } finally {
+      loading.value = false;
+    }
   }
 };
 

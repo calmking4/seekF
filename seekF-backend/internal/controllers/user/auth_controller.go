@@ -3,6 +3,7 @@ package user
 import (
 	"net/http"
 	"seekF-backend/internal/configs"
+	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/pkg/resp"
 	"seekF-backend/internal/pkg/zlog"
 	userservice "seekF-backend/internal/services/user_service"
@@ -90,4 +91,49 @@ func (c *AuthController) Logout(ctx *gin.Context) {
 	ctx.SetCookie("token", "", -1, "/", "localhost", false, true)
 
 	resp.Success(ctx, "退出登录成功", nil)
+}
+
+// SendVerifyCode 发送验证码
+func (c *AuthController) SendVerifyCode(ctx *gin.Context) {
+	var req userreq.SendVerifyCodeRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		zlog.Info("SendVerifyCode err: " + err.Error())
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
+		return
+	}
+
+	// 调用service层发送验证码
+	err := c.authService.SendVerifyCode(req.Telephone)
+	if err != nil {
+		zlog.Info("SendVerifyCode service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "验证码发送成功", nil)
+}
+
+// LoginByCode 验证码登录
+func (c *AuthController) LoginByCode(ctx *gin.Context) {
+	var req userreq.LoginByCodeRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		zlog.Info("LoginByCode err: " + err.Error())
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
+		return
+	}
+
+	// 调用service层执行验证码登录
+	result, err := c.authService.LoginByCode(req.Telephone, req.Code)
+	if err != nil {
+		zlog.Info("LoginByCode service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// 设置cookie
+	cfg := configs.GetConfig()
+	expireSeconds := cfg.SessionExpireMinutes * 60
+	ctx.SetCookie("token", result.Token, int(expireSeconds), "/", "localhost", false, true)
+
+	resp.Success(ctx, "登录成功", result)
 }

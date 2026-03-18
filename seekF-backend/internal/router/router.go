@@ -27,6 +27,8 @@ func SetupRouter(
 		// 无需认证的接口
 		userGroup.POST("/register", authController.Register)
 		userGroup.POST("/login", authController.Login)
+		userGroup.POST("/sendVerifyCode", authController.SendVerifyCode)
+		userGroup.POST("/loginByCode", authController.LoginByCode)
 
 		// 需要认证的接口
 		protectedGroup := userGroup.Group("")
