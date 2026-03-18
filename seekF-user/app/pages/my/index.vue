@@ -72,7 +72,18 @@
           <el-input v-model="editForm.nickname" placeholder="请输入昵称"></el-input>
         </el-form-item>
         <el-form-item label="头像">
-          <el-input v-model="editForm.avatar" placeholder="请输入头像链接"></el-input>
+          <el-upload
+            class="avatar-uploader"
+            :action="useRuntimeConfig().public.apiBase+'user/file/upload'"
+            :data="{ fileType: 'user_avatar' }"
+            :show-file-list="false"
+            :on-success="handleAvatarSuccess"
+            :before-upload="beforeAvatarUpload"
+            :with-credentials="true"
+          >
+            <img v-if="editForm.avatar" :src="editForm.avatar" class="avatar" />
+            <el-icon v-else class="avatar-uploader-icon"><Plus /></el-icon>
+          </el-upload>
         </el-form-item>
         <el-form-item label="邮箱">
           <el-input v-model="editForm.email" placeholder="请输入邮箱"></el-input>
@@ -112,6 +123,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useApi$ } from '~/composables/useApi'
 import { ElMessage } from 'element-plus'
 import { useAuthState } from '~/composables/useAuthState'
+import { Plus } from '@element-plus/icons-vue'
 
 const activeTab = ref('notes')
 const editDialogVisible = ref(false)
@@ -188,6 +200,35 @@ const editInfo = () => {
 // 取消编辑
 const cancelEdit = () => {
   editDialogVisible.value = false
+}
+
+// 处理头像上传成功
+const handleAvatarSuccess = (response, uploadFile) => {
+  if (response && response.code === 200) {
+    // 确保 editForm.avatar 是一个字符串
+    if (typeof response.data === 'object' && response.data.url) {
+      editForm.avatar = response.data.url
+    } else {
+      editForm.avatar = response.data
+    }
+    ElMessage.success('头像上传成功')
+  } else {
+    ElMessage.error(response?.message || '头像上传失败')
+  }
+}
+
+// 上传前的校验
+const beforeAvatarUpload = (file) => {
+  const isJPG = file.type === 'image/jpeg' || file.type === 'image/png' || file.type === 'image/gif'
+  const isLt2M = file.size / 1024 / 1024 < 2
+
+  if (!isJPG) {
+    ElMessage.error('只能上传 JPG、PNG 或 GIF 格式的图片')
+  }
+  if (!isLt2M) {
+    ElMessage.error('上传图片大小不能超过 2MB')
+  }
+  return isJPG && isLt2M
 }
 
 // 确认编辑
@@ -282,5 +323,33 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* 头像上传样式 */
+.avatar-uploader .avatar {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.avatar-uploader-icon {
+  width: 100px;
+  height: 100px;
+  line-height: 100px;
+  border: 1px dashed #d9d9d9;
+  border-radius: 50%;
+  font-size: 24px;
+  color: #999;
+  background-color: #fafafa;
+  transition: all 0.3s;
+}
+
+.avatar-uploader:hover .avatar-uploader-icon {
+  border-color: #409eff;
+}
+
+.el-upload {
+  display: block;
 }
 </style>
