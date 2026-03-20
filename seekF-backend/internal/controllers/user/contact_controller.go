@@ -338,3 +338,22 @@ func (c *ContactController) SearchUsers(ctx *gin.Context) {
 
 	resp.Success(ctx, "搜索用户成功", userList)
 }
+
+// GetMyApplyList 获取用户自己的申请状态列表
+func (c *ContactController) GetMyApplyList(ctx *gin.Context) {
+	// 从上下文获取当前用户UUID
+	userUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	applyList, err := c.contactService.GetMyApplyList(userUuid.(string))
+	if err != nil {
+		zlog.Info("GetMyApplyList service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "获取申请列表成功", applyList)
+}

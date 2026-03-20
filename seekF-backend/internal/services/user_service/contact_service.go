@@ -36,6 +36,7 @@ type ContactService interface {
 	CancelBlackContact(userId string, contactId string) error
 	GetApplyGroupList(groupId string, currentUserId string) ([]userresp.AddGroupListRespond, error)
 	SearchUsers(keyword string, userId string) ([]userresp.SearchUsersRespond, error)
+	GetMyApplyList(userId string) ([]userresp.MyApplyListRespond, error)
 }
 
 type ContactServiceImpl struct {
@@ -726,4 +727,69 @@ func (s *ContactServiceImpl) SearchUsers(keyword string, userId string) ([]userr
 	}
 
 	return userListRsp, nil
+}
+
+// GetMyApplyList 获取用户自己的申请状态列表
+func (s *ContactServiceImpl) GetMyApplyList(userId string) ([]userresp.MyApplyListRespond, error) {
+	// 查询用户发送的所有申请记录
+	contactApplyList, err := s.contactApplyDAO.GetContactAppliesByUserId(userId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, fmt.Errorf("系统错误")
+	}
+
+	var rsp []userresp.MyApplyListRespond
+	for _, contactApply := range contactApplyList {
+		var contactName, contactAvatar string
+		var contactType string
+
+		if contactApply.ContactId[0] == 'U' {
+			// 获取用户信息
+			user, err := s.userInfoDAO.FindUserByUuid(contactApply.ContactId)
+			if err != nil {
+				zlog.Error(err.Error())
+				continue
+			}
+			if user == nil {
+				continue
+			}
+			contactName = user.Nickname
+			contactAvatar = user.Avatar
+			contactType = "user"
+		} else if contactApply.ContactId[0] == 'G' {
+			// 获取群聊信息
+			group, err := s.groupDAO.GetGroupInfoByUuid(contactApply.ContactId)
+			if err != nil {
+				zlog.Error(err.Error())
+				continue
+			}
+			contactName = group.Name
+			contactAvatar = group.Avatar
+			contactType = "group"
+		} else {
+			continue
+		}
+
+		// 构建消息
+		var message string
+		if contactApply.Message == "" {
+			message = "申请理由：无"
+		} else {
+			message = "申请理由：" + contactApply.Message
+		}
+
+		// 构建响应
+		myApply := userresp.MyApplyListRespond{
+			ContactId:     contactApply.ContactId,
+			ContactName:   contactName,
+			ContactAvatar: contactAvatar,
+			ContactType:   contactType,
+			Status:        int(contactApply.Status),
+			Message:       message,
+			ApplyTime:     contactApply.LastApplyAt.Format("2006-01-02 15:04:05"),
+		}
+		rsp = append(rsp, myApply)
+	}
+
+	return rsp, nil
 }

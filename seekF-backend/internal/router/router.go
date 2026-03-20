@@ -65,6 +65,7 @@ func SetupRouter(
 			protectedGroup.POST("/contact/refuseContactApply", contactController.RefuseContactApply)
 			protectedGroup.POST("/contact/blackApply", contactController.BlackApply)
 			protectedGroup.POST("/contact/searchUsers", contactController.SearchUsers)
+			protectedGroup.POST("/contact/getMyApplyList", contactController.GetMyApplyList)
 			// 会话
 			protectedGroup.POST("/session/openSession", sessionController.OpenSession)
 			protectedGroup.POST("/session/getSessionList", sessionController.GetSessionList)

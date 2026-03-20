@@ -9,6 +9,7 @@ import (
 type ContactApplyDAO interface {
 	GetContactApplyByUserIdAndContactId(userId string, contactId string) (models.ContactApply, error)
 	GetPendingContactAppliesByContactId(contactId string) ([]models.ContactApply, error)
+	GetContactAppliesByUserId(userId string) ([]models.ContactApply, error)
 	CreateContactApply(apply *models.ContactApply) error
 	UpdateContactApply(apply *models.ContactApply) error
 	RemoveContactApply(userId string, contactId string) error
@@ -24,7 +25,9 @@ func NewContactApplyDAO() ContactApplyDAO {
 // GetContactApplyByUserIdAndContactId 根据用户ID和联系人ID获取联系人申请记录
 func (d *ContactApplyDAOImpl) GetContactApplyByUserIdAndContactId(userId string, contactId string) (models.ContactApply, error) {
 	var contactApply models.ContactApply
-	result := db.GormDB.Where("user_id = ? AND contact_id = ?", userId, contactId).Find(&contactApply)
+	// 使用 First 以便在未查询到记录时返回 gorm.ErrRecordNotFound。
+	// 否则使用 Find 在未命中时不会返回错误，调用方就会误以为记录存在并走更新分支。
+	result := db.GormDB.Where("user_id = ? AND contact_id = ?", userId, contactId).First(&contactApply)
 	return contactApply, result.Error
 }
 
@@ -57,4 +60,11 @@ func (d *ContactApplyDAOImpl) RemoveContactApply(userId string, contactId string
 func (d *ContactApplyDAOImpl) RemoveContactAppliesByContactId(contactId string) error {
 	result := db.GormDB.Where("contact_id = ?", contactId).Delete(&models.ContactApply{})
 	return result.Error
+}
+
+// GetContactAppliesByUserId 根据用户ID获取联系人申请列表
+func (d *ContactApplyDAOImpl) GetContactAppliesByUserId(userId string) ([]models.ContactApply, error) {
+	var contactApplyList []models.ContactApply
+	result := db.GormDB.Where("user_id = ?", userId).Find(&contactApplyList)
+	return contactApplyList, result.Error
 }

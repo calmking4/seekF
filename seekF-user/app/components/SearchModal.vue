@@ -36,7 +36,7 @@
                 <div class="text-sm font-medium">{{ user.nickname || user.name }}</div>
                 <div class="text-xs text-gray-500">{{ user.phone || user.email }}</div>
               </div>
-              <el-button type="primary" size="small">添加</el-button>
+              <el-button type="primary" size="small" @click="showApplyDialog(user, 'user')">添加</el-button>
             </div>
           </el-card>
         </div>
@@ -61,7 +61,7 @@
               <el-button v-if="group.is_in_group" type="info" size="small" disabled>已在群中</el-button>
               <el-button v-else-if="group.is_applied" type="warning" size="small" disabled>已申请</el-button>
               <el-button v-else-if="group.add_mode === 0" type="primary" size="small" @click="joinGroupDirectly(group)">直接加入</el-button>
-              <el-button v-else type="primary" size="small" @click="showApplyDialog(group)">申请加入</el-button>
+              <el-button v-else type="primary" size="small" @click="showApplyDialog(group, 'group')">申请加入</el-button>
             </div>
           </el-card>
         </div>
@@ -72,12 +72,12 @@
   <!-- 申请加入对话框 -->
   <el-dialog
     v-model="applyDialogVisible"
-    title="申请加入群聊"
+    :title="applyForm.contactType === 'group' ? '申请加入群聊' : '申请添加好友'"
     width="500px"
   >
     <el-form :model="applyForm" label-width="80px">
-      <el-form-item label="群聊名称">
-        <el-input v-model="applyForm.groupName" disabled />
+      <el-form-item :label="applyForm.contactType === 'group' ? '群聊名称' : '用户名称'">
+        <el-input v-model="applyForm.contactName" disabled />
       </el-form-item>
       <el-form-item label="申请理由">
         <el-input
@@ -118,8 +118,9 @@ const userResults = ref([])
 const groupResults = ref([])
 const applyDialogVisible = ref(false)
 const applyForm = ref({
-  groupId: '',
-  groupName: '',
+  contactId: '',
+  contactName: '',
+  contactType: '', // 'user' 或 'group'
   message: ''
 })
 
@@ -211,43 +212,55 @@ const joinGroupDirectly = async (group) => {
   }
 }
 
-const showApplyDialog = (group) => {
+const showApplyDialog = (contact, type) => {
+  // 兼容不同后端返回字段：用户用 user_id，群用 group_id
+  const contactId = type === 'user'
+    ? (contact.user_id || contact.id)
+    : (contact.group_id || contact.id)
+
   applyForm.value = {
-    groupId: group.group_id,
-    groupName: group.group_name || group.name,
+    contactId,
+    contactName: contact.nickname || contact.group_name || contact.name,
+    contactType: type, // 'user' 或 'group'
     message: ''
   }
   applyDialogVisible.value = true
 }
 
 const submitApply = async () => {
-  if (!applyForm.value.message.trim()) {
-    ElMessage.warning('请输入申请理由')
-    return
-  }
-  
   try {
+    // 后端允许 message 为空；为空时使用默认文案以匹配列表展示效果
+    if (!applyForm.value.contactId) {
+      ElMessage.error('无法获取联系人ID，请稍后重试')
+      return
+    }
+    const submitMessage = applyForm.value.message.trim() || '已发送验证消息'
+
     const applyData = await useApi$('/user/contact/applyContact', {
       method: 'POST',
       body: {
-        contact_id: applyForm.value.groupId,
-        message: applyForm.value.message
+        contact_id: applyForm.value.contactId,
+        message: submitMessage
       }
     })
     
     if (applyData && applyData.code === 200) {
-      ElMessage.success('申请已发送，等待群主审核')
-      applyDialogVisible.value = false
-      // 更新群聊状态
-      const group = groupResults.value.find(g => g.group_id === applyForm.value.groupId)
-      if (group) {
-        group.is_applied = true
+      if (applyForm.value.contactType === 'group') {
+        ElMessage.success('申请已发送，等待群主审核')
+        // 更新群聊状态
+        const group = groupResults.value.find(g => g.group_id === applyForm.value.contactId)
+        if (group) {
+          group.is_applied = true
+        }
+      } else {
+        ElMessage.success('好友申请已发送')
       }
+      applyDialogVisible.value = false
     } else {
-      ElMessage.error(applyData?.message || '申请加入失败')
+      ElMessage.error(applyData?.message || '申请失败')
     }
   } catch (error) {
-    console.error('申请加入失败:', error)
+    console.error('申请失败:', error)
     ElMessage.error('网络错误，请稍后重试')
   }
 }
