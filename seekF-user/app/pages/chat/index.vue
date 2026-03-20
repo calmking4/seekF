@@ -1,25 +1,16 @@
 <template>
   <div class="flex h-full bg-gray-100">
     <!-- 左侧：搜索栏 + 联系人/会话列表 -->
-    <aside class="w-80 bg-white border-r border-gray-200 h-full flex flex-col flex-shrink-0">
+    <aside class="w-80 bg-white border-r border-gray-200 h-full flex flex-col flex-shrink-0 pr-3">
       <!-- 顶部搜索栏 -->
-      <div class="p-3 border-b border-gray-100">
-        <div class="relative">
-          <input
-            type="text"
-            placeholder="搜索"
-            class="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm"
-          >
-          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
-        </div>
-      </div>
+      <SearchBar />
 
       <!-- 联系人/会话列表 -->
       <div class="flex-1 overflow-y-auto">
         <div
           v-for="(item, index) in chatList"
           :key="index"
-          class="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100"
+          class="flex items-center gap-3 px-3 py-3 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100"
           :class="{ 'bg-gray-100': activeIndex === index }"
           @click="activeIndex = index"
         >
@@ -133,7 +124,6 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
 
 // 模拟聊天列表数据（参考你截图中的内容）
 const chatList = ref([
