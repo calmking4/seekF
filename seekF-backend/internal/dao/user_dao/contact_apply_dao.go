@@ -24,8 +24,7 @@ func NewContactApplyDAO() ContactApplyDAO {
 // GetContactApplyByUserIdAndContactId 根据用户ID和联系人ID获取联系人申请记录
 func (d *ContactApplyDAOImpl) GetContactApplyByUserIdAndContactId(userId string, contactId string) (models.ContactApply, error) {
 	var contactApply models.ContactApply
-	//可以使用 Take 方法代替 First 方法，因为 Take 在找不到记录时不会写入日志。
-	result := db.GormDB.Where("user_id = ? AND contact_id = ?", userId, contactId).First(&contactApply)
+	result := db.GormDB.Where("user_id = ? AND contact_id = ?", userId, contactId).Find(&contactApply)
 	return contactApply, result.Error
 }
 

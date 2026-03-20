@@ -9,6 +9,7 @@ import (
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
+	"seekF-backend/internal/pkg/enum/contact_enum/contact_apply_status_enum"
 	contactstatusenum "seekF-backend/internal/pkg/enum/contact_enum/contact_status_enum"
 	contacttypeenum "seekF-backend/internal/pkg/enum/contact_enum/contact_type_enum"
 	groupstatusenum "seekF-backend/internal/pkg/enum/group_enum/group_status_enum"
@@ -623,11 +624,20 @@ func (s *GroupServiceImpl) SearchGroups(keyword string, userId string) ([]userre
 			}
 		}
 
+		// 检查用户是否已经申请加入群聊
+		isApplied := false
+		contactApply, err := s.contactApplyDAO.GetContactApplyByUserIdAndContactId(userId, group.Uuid)
+		if err == nil && contactApply.Status == contact_apply_status_enum.PENDING { // 0 表示 PENDING 状态
+			isApplied = true
+		}
+
 		groupListRsp = append(groupListRsp, userresp.SearchGroupsRespond{
 			GroupId:   group.Uuid,
 			GroupName: group.Name,
 			Avatar:    group.Avatar,
 			IsInGroup: isInGroup,
+			AddMode:   group.AddMode,
+			IsApplied: isApplied,
 		})
 	}
 

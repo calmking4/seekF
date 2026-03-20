@@ -59,12 +59,41 @@
                 <div class="text-xs text-gray-500">群聊</div>
               </div>
               <el-button v-if="group.is_in_group" type="info" size="small" disabled>已在群中</el-button>
-              <el-button v-else type="primary" size="small">申请加入</el-button>
+              <el-button v-else-if="group.is_applied" type="warning" size="small" disabled>已申请</el-button>
+              <el-button v-else-if="group.add_mode === 0" type="primary" size="small" @click="joinGroupDirectly(group)">直接加入</el-button>
+              <el-button v-else type="primary" size="small" @click="showApplyDialog(group)">申请加入</el-button>
             </div>
           </el-card>
         </div>
       </el-tab-pane>
     </el-tabs>
+  </el-dialog>
+  
+  <!-- 申请加入对话框 -->
+  <el-dialog
+    v-model="applyDialogVisible"
+    title="申请加入群聊"
+    width="500px"
+  >
+    <el-form :model="applyForm" label-width="80px">
+      <el-form-item label="群聊名称">
+        <el-input v-model="applyForm.groupName" disabled />
+      </el-form-item>
+      <el-form-item label="申请理由">
+        <el-input
+          v-model="applyForm.message"
+          type="textarea"
+          :rows="4"
+          placeholder="请输入申请理由"
+        />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <span class="dialog-footer">
+        <el-button @click="applyDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitApply">提交申请</el-button>
+      </span>
+    </template>
   </el-dialog>
 </template>
 
@@ -87,6 +116,12 @@ const activeTab = ref('user')
 const keyword = ref('')
 const userResults = ref([])
 const groupResults = ref([])
+const applyDialogVisible = ref(false)
+const applyForm = ref({
+  groupId: '',
+  groupName: '',
+  message: ''
+})
 
 const handleClose = () => {
   emit('update:visible', false)
@@ -151,6 +186,69 @@ const search = async () => {
       console.error('搜索群聊失败:', error)
       ElMessage.error('网络错误，请稍后重试')
     }
+  }
+}
+
+const joinGroupDirectly = async (group) => {
+  try {
+    const enterData = await useApi$('/user/group/enterGroupDirectly', {
+      method: 'POST',
+      body: {
+        group_id: group.group_id
+      }
+    })
+    
+    if (enterData && enterData.code === 200) {
+      ElMessage.success('加入群聊成功')
+      // 更新群聊状态
+      group.is_in_group = true
+    } else {
+      ElMessage.error(enterData?.message || '加入群聊失败')
+    }
+  } catch (error) {
+    console.error('加入群聊失败:', error)
+    ElMessage.error('网络错误，请稍后重试')
+  }
+}
+
+const showApplyDialog = (group) => {
+  applyForm.value = {
+    groupId: group.group_id,
+    groupName: group.group_name || group.name,
+    message: ''
+  }
+  applyDialogVisible.value = true
+}
+
+const submitApply = async () => {
+  if (!applyForm.value.message.trim()) {
+    ElMessage.warning('请输入申请理由')
+    return
+  }
+  
+  try {
+    const applyData = await useApi$('/user/contact/applyContact', {
+      method: 'POST',
+      body: {
+        contact_id: applyForm.value.groupId,
+        message: applyForm.value.message
+      }
+    })
+    
+    if (applyData && applyData.code === 200) {
+      ElMessage.success('申请已发送，等待群主审核')
+      applyDialogVisible.value = false
+      // 更新群聊状态
+      const group = groupResults.value.find(g => g.group_id === applyForm.value.groupId)
+      if (group) {
+        group.is_applied = true
+      }
+    } else {
+      ElMessage.error(applyData?.message || '申请加入失败')
+    }
+  } catch (error) {
+    console.error('申请加入失败:', error)
+    ElMessage.error('网络错误，请稍后重试')
   }
 }
 </script>
