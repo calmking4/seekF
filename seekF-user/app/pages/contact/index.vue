@@ -28,41 +28,19 @@
         <!-- 好友列表 -->
         <el-tab-pane label="好友" name="friend">
           <div class="py-1">
-            <div
-              v-for="group in friendGroups"
-              :key="group.name"
-              class="border-b last:border-b-0"
-            >
+            <div v-if="friends.length === 0" class="p-8 text-center text-gray-400">
+              暂无好友
+            </div>
+            <div v-else class="space-y-1">
               <div
-                class="flex items-center justify-between px-3 py-1.5 hover:bg-gray-50 cursor-pointer"
-                @click="group.expanded = !group.expanded"
+                v-for="friend in friends"
+                :key="friend.id"
+                class="flex items-center gap-3 px-3 py-2 hover:bg-gray-100 cursor-pointer"
+                @click="selectFriend(friend)"
               >
-                <div class="flex items-center gap-2">
-                  <!-- 箭头替换为 Nuxt Icon 并添加旋转效果 -->
-                  <Icon 
-                    name="uil:angle-right" 
-                    class="text-gray-400 transition-transform duration-200"
-                    :class="{ 'rotate-90': group.expanded }"
-                  />
-                  <span>{{ group.name }}</span>
-                </div>
-                <span class="text-xs text-gray-400">
-                  {{ group.online }}/{{ group.total }}
-                </span>
+                <el-avatar :size="32" :src="friend.avatar" />
+                <span class="text-sm">{{ friend.name }}</span>
               </div>
-              <transition name="el-collapse-transition">
-                <div v-if="group.expanded" class="bg-gray-50">
-                  <div
-                    v-for="friend in group.friends"
-                    :key="friend.id"
-                    class="flex items-center gap-3 px-6 py-2 hover:bg-gray-100 cursor-pointer"
-                    @click="currentView = 'chat'; selectFriend(friend)"
-                  >
-                    <el-avatar :size="32" :src="friend.avatar" />
-                    <span class="text-sm">{{ friend.name }}</span>
-                  </div>
-                </div>
-              </transition>
             </div>
           </div>
         </el-tab-pane>
@@ -128,7 +106,6 @@
       <div class="flex-1 overflow-y-auto">
         <!-- 好友通知视图 -->
         <div v-if="currentView === 'friendNotification'" class="p-4">
-          <h2 class="text-lg font-medium mb-4">好友通知</h2>
           
           <!-- 别人申请加我好友 -->
           <div v-if="friendRequests.length > 0" class="mb-4">
@@ -208,7 +185,6 @@
         
         <!-- 群通知视图 -->
         <div v-if="currentView === 'groupNotification'" class="p-4">
-          <h2 class="text-lg font-medium mb-4">群通知</h2>
           
           <!-- 别人申请加入我的群 -->
           <div v-if="groupRequests.length > 0" class="mb-4">
@@ -314,130 +290,11 @@ const activeTab = ref('friend')
 const currentView = ref('default') // 'default', 'friendNotification', 'groupNotification', 'chat'
 const selectedContact = ref(null)
 
-// 好友分组数据
-const friendGroups = ref([
-  {
-    name: '我的设备',
-    online: 1,
-    total: 1,
-    expanded: false,
-    friends: [
-      { id: 1, name: '我的iPhone', avatar: 'https://picsum.photos/32/32?random=1' }
-    ]
-  },
-  {
-    name: '机器人',
-    online: 1,
-    total: 1,
-    expanded: false,
-    friends: [
-      { id: 2, name: 'QQ小冰', avatar: 'https://picsum.photos/32/32?random=2' }
-    ]
-  },
-  {
-    name: '特别关心',
-    online: 0,
-    total: 0,
-    expanded: false,
-    friends: []
-  },
-  {
-    name: '我的好友',
-    online: 91,
-    total: 136,
-    expanded: false,
-    friends: Array.from({ length: 10 }, (_, i) => ({
-      id: i + 3,
-      name: `好友${i + 1}`,
-      avatar: `https://picsum.photos/32/32?random=${i + 3}`
-    }))
-  },
-  {
-    name: '朋友',
-    online: 5,
-    total: 9,
-    expanded: false,
-    friends: Array.from({ length: 5 }, (_, i) => ({
-      id: i + 13,
-      name: `朋友${i + 1}`,
-      avatar: `https://picsum.photos/32/32?random=${i + 13}`
-    }))
-  },
-  {
-    name: '家人',
-    online: 3,
-    total: 6,
-    expanded: false,
-    friends: Array.from({ length: 3 }, (_, i) => ({
-      id: i + 18,
-      name: `家人${i + 1}`,
-      avatar: `https://picsum.photos/32/32?random=${i + 18}`
-    }))
-  },
-  {
-    name: '同学',
-    online: 10,
-    total: 20,
-    expanded: false,
-    friends: Array.from({ length: 10 }, (_, i) => ({
-      id: i + 21,
-      name: `同学${i + 1}`,
-      avatar: `https://picsum.photos/32/32?random=${i + 21}`
-    }))
-  },
-  {
-    name: '六年级同学',
-    online: 8,
-    total: 12,
-    expanded: false,
-    friends: Array.from({ length: 8 }, (_, i) => ({
-      id: i + 31,
-      name: `六年级同学${i + 1}`,
-      avatar: `https://picsum.photos/32/32?random=${i + 31}`
-    }))
-  },
-  {
-    name: '漫友',
-    online: 7,
-    total: 16,
-    expanded: false,
-    friends: Array.from({ length: 7 }, (_, i) => ({
-      id: i + 39,
-      name: `漫友${i + 1}`,
-      avatar: `https://picsum.photos/32/32?random=${i + 39}`
-    }))
-  },
-  {
-    name: '未知分组',
-    online: 0,
-    total: 0,
-    expanded: false,
-    friends: []
-  },
-  {
-    name: '陌生人（注意）',
-    online: 0,
-    total: 1,
-    expanded: false,
-    friends: []
-  }
-])
+// 好友列表数据
+const friends = ref([])
 
 // 群聊分类数据
-const groupCategories = ref([
-  {
-    name: '我创建的群聊',
-    count: 0,
-    expanded: false,
-    list: []
-  },
-  {
-    name: '我加入的群聊',
-    count: 0,
-    expanded: false,
-    list: []
-  }
-])
+const groupCategories = ref([])
 
 // 好友请求数据
 const friendRequests = ref([])
@@ -548,10 +405,44 @@ const selectGroup = (group) => {
   }
 }
 
+// 加载好友列表
+const loadFriends = async () => {
+  try {
+    const data = await useApi$('/user/contact/getUserList', {
+      method: 'POST'
+    })
+    
+    if (data && data.code === 200) {
+      const friendList = data.data || []
+      
+      // 直接存储好友列表，不使用分组
+      friends.value = friendList.map((friend) => ({
+        id: friend.user_id,
+        name: friend.user_name,
+        avatar: friend.avatar
+      }))
+    } else {
+      ElMessage.error(data?.message || '获取好友列表失败')
+      // 如果获取失败，显示空的好友列表
+      friends.value = []
+    }
+  } catch (error) {
+    console.error('获取好友列表失败:', error)
+    ElMessage.error('网络错误，请稍后重试')
+    // 如果网络错误，显示空的好友列表
+    friends.value = []
+  }
+}
+
 // 处理标签页点击
-const handleTabClick = () => {
+const handleTabClick = (tab) => {
   currentView.value = 'default'
   selectedContact.value = null
+  
+  // 当点击好友标签页时，加载好友列表
+  if (tab?.props?.name === 'friend') {
+    loadFriends()
+  }
 }
 
 // 同意好友申请
@@ -656,14 +547,49 @@ const loadMyGroup = async () => {
     })
     
     if (data && data.code === 200) {
-      groupCategories.value[0].list = data.data || []
-      groupCategories.value[0].count = (data.data && data.data.length) || 0
+      const groups = data.data || []
+      // 更新群聊分类数据，只使用真实数据
+      if (groupCategories.value.length === 0) {
+        groupCategories.value.push({
+          name: '我创建的群聊',
+          count: groups.length,
+          expanded: false,
+          list: groups
+        })
+      } else {
+        groupCategories.value[0].list = groups
+        groupCategories.value[0].count = groups.length
+      }
     } else {
       ElMessage.error(data?.message || '获取我创建的群聊失败')
+      // 如果获取失败，显示空的群聊列表
+      if (groupCategories.value.length === 0) {
+        groupCategories.value.push({
+          name: '我创建的群聊',
+          count: 0,
+          expanded: false,
+          list: []
+        })
+      } else {
+        groupCategories.value[0].list = []
+        groupCategories.value[0].count = 0
+      }
     }
   } catch (error) {
     console.error('获取我创建的群聊失败:', error)
     ElMessage.error('网络错误，请稍后重试')
+    // 如果网络错误，显示空的群聊列表
+    if (groupCategories.value.length === 0) {
+      groupCategories.value.push({
+        name: '我创建的群聊',
+        count: 0,
+        expanded: false,
+        list: []
+      })
+    } else {
+      groupCategories.value[0].list = []
+      groupCategories.value[0].count = 0
+    }
   }
 }
 
@@ -675,14 +601,49 @@ const loadMyJoinedGroup = async () => {
     })
     
     if (data && data.code === 200) {
-      groupCategories.value[1].list = data.data || []
-      groupCategories.value[1].count = (data.data && data.data.length) || 0
+      const groups = data.data || []
+      // 更新群聊分类数据，只使用真实数据
+      if (groupCategories.value.length < 2) {
+        groupCategories.value.push({
+          name: '我加入的群聊',
+          count: groups.length,
+          expanded: false,
+          list: groups
+        })
+      } else {
+        groupCategories.value[1].list = groups
+        groupCategories.value[1].count = groups.length
+      }
     } else {
       ElMessage.error(data?.message || '获取我加入的群聊失败')
+      // 如果获取失败，显示空的群聊列表
+      if (groupCategories.value.length < 2) {
+        groupCategories.value.push({
+          name: '我加入的群聊',
+          count: 0,
+          expanded: false,
+          list: []
+        })
+      } else {
+        groupCategories.value[1].list = []
+        groupCategories.value[1].count = 0
+      }
     }
   } catch (error) {
     console.error('获取我加入的群聊失败:', error)
     ElMessage.error('网络错误，请稍后重试')
+    // 如果网络错误，显示空的群聊列表
+    if (groupCategories.value.length < 2) {
+      groupCategories.value.push({
+        name: '我加入的群聊',
+        count: 0,
+        expanded: false,
+        list: []
+      })
+    } else {
+      groupCategories.value[1].list = []
+      groupCategories.value[1].count = 0
+    }
   }
 }
 
@@ -743,6 +704,7 @@ const loadAllNotifications = async () => {
 }
 
 onMounted(() => {
+  loadFriends()
   loadMyGroup()
   loadMyJoinedGroup()
   loadAllNotifications()
