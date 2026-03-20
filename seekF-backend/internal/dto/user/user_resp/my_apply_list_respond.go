@@ -9,4 +9,5 @@ type MyApplyListRespond struct {
 	Status        int    `json:"status"`      // 0: 待处理, 1: 已同意, 2: 已拒绝, 3: 已拉黑
 	Message       string `json:"message"`
 	ApplyTime     string `json:"apply_time"`
+	IsReceived    bool   `json:"is_received"` // 是否是收到的申请
 }

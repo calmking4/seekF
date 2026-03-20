@@ -732,14 +732,23 @@ func (s *ContactServiceImpl) SearchUsers(keyword string, userId string) ([]userr
 // GetMyApplyList 获取用户自己的申请状态列表
 func (s *ContactServiceImpl) GetMyApplyList(userId string) ([]userresp.MyApplyListRespond, error) {
 	// 查询用户发送的所有申请记录
-	contactApplyList, err := s.contactApplyDAO.GetContactAppliesByUserId(userId)
+	sentApplyList, err := s.contactApplyDAO.GetContactAppliesByUserId(userId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, fmt.Errorf("系统错误")
+	}
+
+	// 查询用户收到的所有申请记录
+	receivedApplyList, err := s.contactApplyDAO.GetContactAppliesByContactId(userId)
 	if err != nil {
 		zlog.Error(err.Error())
 		return nil, fmt.Errorf("系统错误")
 	}
 
 	var rsp []userresp.MyApplyListRespond
-	for _, contactApply := range contactApplyList {
+
+	// 处理发送的申请记录
+	for _, contactApply := range sentApplyList {
 		var contactName, contactAvatar string
 		var contactType string
 
@@ -787,6 +796,47 @@ func (s *ContactServiceImpl) GetMyApplyList(userId string) ([]userresp.MyApplyLi
 			Status:        int(contactApply.Status),
 			Message:       message,
 			ApplyTime:     contactApply.LastApplyAt.Format("2006-01-02 15:04:05"),
+			IsReceived:    false,
+		}
+		rsp = append(rsp, myApply)
+	}
+
+	// 处理收到的申请记录
+	for _, contactApply := range receivedApplyList {
+		var contactName, contactAvatar string
+		var contactType string
+
+		// 获取申请人信息
+		user, err := s.userInfoDAO.FindUserByUuid(contactApply.UserId)
+		if err != nil {
+			zlog.Error(err.Error())
+			continue
+		}
+		if user == nil {
+			continue
+		}
+		contactName = user.Nickname
+		contactAvatar = user.Avatar
+		contactType = "user"
+
+		// 构建消息
+		var message string
+		if contactApply.Message == "" {
+			message = "申请理由：无"
+		} else {
+			message = "申请理由：" + contactApply.Message
+		}
+
+		// 构建响应
+		myApply := userresp.MyApplyListRespond{
+			ContactId:     contactApply.UserId,
+			ContactName:   contactName,
+			ContactAvatar: contactAvatar,
+			ContactType:   contactType,
+			Status:        int(contactApply.Status),
+			Message:       message,
+			ApplyTime:     contactApply.LastApplyAt.Format("2006-01-02 15:04:05"),
+			IsReceived:    true,
 		}
 		rsp = append(rsp, myApply)
 	}

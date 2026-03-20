@@ -10,6 +10,7 @@ type ContactApplyDAO interface {
 	GetContactApplyByUserIdAndContactId(userId string, contactId string) (models.ContactApply, error)
 	GetPendingContactAppliesByContactId(contactId string) ([]models.ContactApply, error)
 	GetContactAppliesByUserId(userId string) ([]models.ContactApply, error)
+	GetContactAppliesByContactId(contactId string) ([]models.ContactApply, error)
 	CreateContactApply(apply *models.ContactApply) error
 	UpdateContactApply(apply *models.ContactApply) error
 	RemoveContactApply(userId string, contactId string) error
@@ -66,5 +67,12 @@ func (d *ContactApplyDAOImpl) RemoveContactAppliesByContactId(contactId string) 
 func (d *ContactApplyDAOImpl) GetContactAppliesByUserId(userId string) ([]models.ContactApply, error) {
 	var contactApplyList []models.ContactApply
 	result := db.GormDB.Where("user_id = ?", userId).Find(&contactApplyList)
+	return contactApplyList, result.Error
+}
+
+// GetContactAppliesByContactId 根据联系人ID获取联系人申请列表
+func (d *ContactApplyDAOImpl) GetContactAppliesByContactId(contactId string) ([]models.ContactApply, error) {
+	var contactApplyList []models.ContactApply
+	result := db.GormDB.Where("contact_id = ?", contactId).Find(&contactApplyList)
 	return contactApplyList, result.Error
 }
