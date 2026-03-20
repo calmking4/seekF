@@ -272,6 +272,84 @@
           <p v-else>选择一个好友或群聊开始聊天</p>
         </div>
         
+        <!-- 用户信息视图 -->
+        <div v-if="currentView === 'userInfo'" class="flex-1 p-6 overflow-auto">
+          <div v-if="userInfo" class="bg-white rounded-lg shadow-sm p-6">
+            <!-- 基本信息 -->
+            <div class="mb-8">
+              <div class="flex items-center gap-6">
+                <el-avatar :size="100" :src="userInfo.avatar" class="flex-shrink-0 border-4 border-gray-100" />
+                <div class="flex-1">
+                  <h2 class="text-2xl font-bold mb-2">{{ userInfo.nickname }}</h2>
+                  <div class="flex items-center gap-3 text-sm text-gray-500">
+                    <span class="flex items-center gap-1">
+                      <span class="inline-block w-2 h-2 bg-green-500 rounded-full"></span>
+                      在线
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- 详细信息 -->
+            <div class="space-y-4">
+              <div class="bg-gray-50 rounded-lg p-4">
+                <h3 class="text-lg font-medium mb-3">基本信息</h3>
+                <div class="grid grid-cols-2 gap-4">
+                  <div class="flex flex-col">
+                    <span class="text-sm text-gray-500 mb-1">用户ID</span>
+                    <span class="font-medium">{{ userInfo.uuid }}</span>
+                  </div>
+                  <div class="flex flex-col">
+                    <span class="text-sm text-gray-500 mb-1">昵称</span>
+                    <span class="font-medium">{{ userInfo.nickname }}</span>
+                  </div>
+                  <div class="flex flex-col">
+                    <span class="text-sm text-gray-500 mb-1">手机号</span>
+                    <span class="font-medium">{{ userInfo.telephone }}</span>
+                  </div>
+                  <div class="flex flex-col">
+                    <span class="text-sm text-gray-500 mb-1">邮箱</span>
+                    <span class="font-medium">{{ userInfo.email }}</span>
+                  </div>
+                  <div class="flex flex-col">
+                    <span class="text-sm text-gray-500 mb-1">性别</span>
+                    <span class="font-medium">{{ userInfo.gender === 0 ? '男' : '女' }}</span>
+                  </div>
+                  <div class="flex flex-col">
+                    <span class="text-sm text-gray-500 mb-1">生日</span>
+                    <span class="font-medium">{{ userInfo.birthday }}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="bg-gray-50 rounded-lg p-4">
+                <h3 class="text-lg font-medium mb-3">个人资料</h3>
+                <div class="flex flex-col">
+                  <span class="text-sm text-gray-500 mb-1">签名</span>
+                  <span class="font-medium">{{ userInfo.signature || '暂无签名' }}</span>
+                </div>
+                <div class="flex flex-col mt-4">
+                  <span class="text-sm text-gray-500 mb-1">注册时间</span>
+                  <span class="font-medium">{{ userInfo.created_at }}</span>
+                </div>
+              </div>
+              
+
+            </div>
+            
+            <!-- 底部按钮 -->
+            <div class="flex gap-4 mt-8">
+              <el-button type="default" class="flex-1">编辑资料</el-button>
+              <el-button type="primary" class="flex-1">发消息</el-button>
+            </div>
+          </div>
+          <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400">
+            <Icon name="uil:user" class="text-6xl mb-3" />
+            <p>加载用户信息失败</p>
+          </div>
+        </div>
+        
         <!-- 默认视图 -->
         <div v-if="currentView === 'default'" class="flex-1 flex flex-col items-center justify-center text-gray-400">
           <Icon name="uil:comment-alt" class="text-6xl mb-3" />
@@ -307,6 +385,12 @@ const groupRequests = ref([])
 
 // 我申请的群聊状态
 const myGroupApplies = ref([])
+
+// 用户信息数据
+const userInfo = ref(null)
+
+// 好友分组
+const friendGroup = ref('my_friends')
 
 // 获取申请状态文本
 const getApplyStatusText = (status) => {
@@ -386,14 +470,37 @@ const getCurrentViewTitle = () => {
       return '群通知'
     case 'chat':
       return selectedContact.value ? selectedContact.value.name : '聊天'
+    case 'userInfo':
+      return selectedContact.value ? selectedContact.value.name : '用户信息'
     default:
       return '联系人'
   }
 }
 
 // 选择好友
-const selectFriend = (friend) => {
+const selectFriend = async (friend) => {
   selectedContact.value = friend
+  currentView.value = 'userInfo'
+  
+  try {
+    const data = await useApi$('/user/userinfo/getUserinfo', {
+      method: 'POST',
+      body: {
+        uuid: friend.id
+      }
+    })
+    
+    if (data && data.code === 200) {
+      userInfo.value = data.data
+    } else {
+      ElMessage.error(data?.message || '获取用户信息失败')
+      userInfo.value = null
+    }
+  } catch (error) {
+    console.error('获取用户信息失败:', error)
+    ElMessage.error('网络错误，请稍后重试')
+    userInfo.value = null
+  }
 }
 
 // 选择群聊
