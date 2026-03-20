@@ -91,11 +91,11 @@
                 <div v-if="group.expanded" class="bg-gray-50">
                   <div
                     v-for="item in group.list"
-                    :key="item.id"
+                    :key="item.group_id || item.id"
                     class="flex items-center gap-3 px-6 py-2 hover:bg-gray-100 cursor-pointer"
                   >
                     <el-avatar :size="32" :src="item.avatar" />
-                    <span class="text-sm">{{ item.name }}</span>
+                    <span class="text-sm">{{ item.group_name || item.name }}</span>
                   </div>
                 </div>
               </transition>
@@ -124,6 +124,10 @@
 </template>
 
 <script setup>
+import { ref, onMounted } from 'vue'
+import { useApi$ } from '~/composables/useApi'
+import { ElMessage } from 'element-plus'
+
 const activeTab = ref('friend')
 
 // 好友分组数据
@@ -238,50 +242,61 @@ const friendGroups = ref([
 // 群聊分类数据
 const groupCategories = ref([
   {
-    name: '置顶群聊',
+    name: '我创建的群聊',
     count: 0,
     expanded: false,
     list: []
   },
   {
-    name: '未命名的群聊',
-    count: 1,
-    expanded: false,
-    list: [
-      { id: 101, name: '未命名群聊1', avatar: 'https://picsum.photos/32/32?random=101' }
-    ]
-  },
-  {
-    name: '我创建的群聊',
-    count: 2,
-    expanded: false,
-    list: [
-      { id: 102, name: '我的项目组', avatar: 'https://picsum.photos/32/32?random=102' },
-      { id: 103, name: '家庭群', avatar: 'https://picsum.photos/32/32?random=103' }
-    ]
-  },
-  {
-    name: '我管理的群聊',
-    count: 4,
-    expanded: false,
-    list: [
-      { id: 104, name: '班级群', avatar: 'https://picsum.photos/32/32?random=104' },
-      { id: 105, name: '兴趣小组', avatar: 'https://picsum.photos/32/32?random=105' },
-      { id: 106, name: '工作群', avatar: 'https://picsum.photos/32/32?random=106' },
-      { id: 107, name: '技术交流群', avatar: 'https://picsum.photos/32/32?random=107' }
-    ]
-  },
-  {
     name: '我加入的群聊',
-    count: 45,
+    count: 0,
     expanded: false,
-    list: Array.from({ length: 10 }, (_, i) => ({
-      id: i + 108,
-      name: `加入的群聊${i + 1}`,
-      avatar: `https://picsum.photos/32/32?random=${i + 108}`
-    }))
+    list: []
   }
 ])
+
+// 获取我创建的群聊
+const loadMyGroup = async () => {
+  try {
+    const data = await useApi$('/user/group/loadMyGroup', {
+      method: 'POST'
+    })
+    
+    if (data && data.code === 200) {
+      groupCategories.value[0].list = data.data || []
+      groupCategories.value[0].count = (data.data && data.data.length) || 0
+    } else {
+      ElMessage.error(data?.message || '获取我创建的群聊失败')
+    }
+  } catch (error) {
+    console.error('获取我创建的群聊失败:', error)
+    ElMessage.error('网络错误，请稍后重试')
+  }
+}
+
+// 获取我加入的群聊
+const loadMyJoinedGroup = async () => {
+  try {
+    const data = await useApi$('/user/group/loadMyJoinedGroup', {
+      method: 'POST'
+    })
+    
+    if (data && data.code === 200) {
+      groupCategories.value[1].list = data.data || []
+      groupCategories.value[1].count = (data.data && data.data.length) || 0
+    } else {
+      ElMessage.error(data?.message || '获取我加入的群聊失败')
+    }
+  } catch (error) {
+    console.error('获取我加入的群聊失败:', error)
+    ElMessage.error('网络错误，请稍后重试')
+  }
+}
+
+onMounted(() => {
+  loadMyGroup()
+  loadMyJoinedGroup()
+})
 </script>
 
 <style scoped>
