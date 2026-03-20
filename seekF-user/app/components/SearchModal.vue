@@ -36,7 +36,9 @@
                 <div class="text-sm font-medium">{{ user.nickname || user.name }}</div>
                 <div class="text-xs text-gray-500">{{ user.phone || user.email }}</div>
               </div>
-              <el-button type="primary" size="small" @click="showApplyDialog(user, 'user')">添加</el-button>
+              <el-button v-if="user.is_friend" type="info" size="small" disabled>已在好友</el-button>
+              <el-button v-else-if="user.is_applied" type="warning" size="small" disabled>已申请</el-button>
+              <el-button v-else type="primary" size="small" @click="showApplyDialog(user, 'user')">添加</el-button>
             </div>
           </el-card>
         </div>
@@ -160,7 +162,33 @@ const search = async () => {
       })
       
       if (data && data.code === 200) {
-        userResults.value = data.data || []
+        const users = data.data || []
+        
+        // 获取我的好友列表
+        const contactData = await useApi$('/user/contact/getUserList', {
+          method: 'POST'
+        })
+        
+        const friendList = contactData && contactData.code === 200 ? contactData.data || [] : []
+        const friendIds = new Set(friendList.map(f => f.id))
+        
+        // 获取我的申请列表
+        const applyData = await useApi$('/user/contact/getMyApplyList', {
+          method: 'POST'
+        })
+        
+        const applyList = applyData && applyData.code === 200 ? applyData.data || [] : []
+        const appliedIds = new Set(applyList.filter(a => !a.is_received).map(a => a.contact_id))
+        
+        // 为用户添加状态
+        userResults.value = users.map(user => {
+          const userId = user.user_id || user.id
+          return {
+            ...user,
+            is_friend: friendIds.has(userId),
+            is_applied: appliedIds.has(userId)
+          }
+        })
       } else {
         ElMessage.error(data?.message || '搜索用户失败')
       }

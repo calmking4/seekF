@@ -141,19 +141,22 @@
                     <div class="min-w-0">
                       <div class="flex items-center min-w-0 gap-2">
                         <div class="text-sm font-medium text-gray-900 truncate min-w-0">
-                          {{ req.contact_name }} 请求加为好友
+                          {{ req.status === 1 ? (req.is_received ? '已同意加好友：' + req.contact_name : '对方已同意加好友：' + req.contact_name) : (req.is_received ? req.contact_name + ' 请求加为好友' : '请求加为好友：' + req.contact_name) }}
                         </div>
                         <span class="text-sm text-gray-500 font-normal whitespace-nowrap">
                           {{ formatApplyTime(req.apply_time) }}
                         </span>
                       </div>
                     </div>
+                    <div v-if="req.status !== 0" class="text-xs text-gray-500 font-medium whitespace-nowrap">
+                      {{ getApplyStatusText(req.status) }}
+                    </div>
                   </div>
                   <div class="text-xs text-gray-500 mt-1 whitespace-nowrap">
                     {{ req.message }}
                   </div>
                 </div>
-                <div class="flex gap-2 justify-center items-center">
+                <div v-if="req.status === 0" class="flex gap-2 justify-center items-center">
                   <el-button type="primary" size="small" @click="passFriendRequest(req.contact_id)">同意</el-button>
                   <el-button size="small" @click="refuseFriendRequest(req.contact_id)">拒绝</el-button>
                 </div>
@@ -218,12 +221,15 @@
                     <div class="min-w-0">
                       <div class="flex items-center min-w-0 gap-2">
                         <div class="text-sm font-medium text-gray-900 truncate min-w-0">
-                          {{ req.contact_name }} 请求加为好友
+                          {{ req.status === 1 ? (req.is_received ? '已同意加好友：' + req.contact_name : '对方已同意加好友：' + req.contact_name) : (req.is_received ? req.contact_name + ' 请求加为好友' : '请求加为好友：' + req.contact_name) }}
                         </div>
                         <span class="text-sm text-gray-500 font-normal whitespace-nowrap">
                           {{ formatApplyTime(req.apply_time) }}
                         </span>
                       </div>
+                    </div>
+                    <div v-if="req.status !== 0" class="text-xs text-gray-500 font-medium whitespace-nowrap">
+                      {{ getApplyStatusText(req.status) }}
                     </div>
                   </div>
                   <div class="text-xs text-gray-500 mt-1 whitespace-nowrap">
@@ -233,7 +239,7 @@
                     {{ req.message }}
                   </div>
                 </div>
-                <div class="flex gap-2 justify-center items-center">
+                <div v-if="req.status === 0" class="flex gap-2 justify-center items-center">
                   <el-button type="primary" size="small" @click="passGroupRequest(req.contact_id, req.group_id)">同意</el-button>
                   <el-button size="small" @click="refuseGroupRequest(req.contact_id, req.group_id)">拒绝</el-button>
                 </div>
@@ -473,12 +479,39 @@ const getApplyMainText = (apply) => {
   const name = apply?.contact_name || ''
   const type = apply?.contact_type
   const isGroup = type === 'group'
+  const isReceived = apply?.is_received || false
 
   if (apply?.status === 0) {
-    return isGroup ? `${name} 正在验证加入群聊` : `${name} 正在验证你的邀请`
+    if (isReceived) {
+      return isGroup ? `${name} 正在验证加入群聊` : `${name} 正在验证你的邀请`
+    } else {
+      return isGroup ? `正在验证加入群聊：${name}` : `正在验证你的邀请：${name}`
+    }
+  } else if (apply?.status === 1) {
+    if (isReceived) {
+      return isGroup ? `已同意加入群聊：${name}` : `已同意加好友：${name}`
+    } else {
+      return isGroup ? `对方已同意加入群聊：${name}` : `对方已同意加好友：${name}`
+    }
+  } else if (apply?.status === 2) {
+    if (isReceived) {
+      return isGroup ? `已拒绝加入群聊：${name}` : `已拒绝加好友：${name}`
+    } else {
+      return isGroup ? `对方已拒绝加入群聊：${name}` : `对方已拒绝加好友：${name}`
+    }
+  } else if (apply?.status === 3) {
+    if (isReceived) {
+      return isGroup ? `已拉黑加入群聊：${name}` : `已拉黑加好友：${name}`
+    } else {
+      return isGroup ? `对方已拉黑加入群聊：${name}` : `对方已拉黑加好友：${name}`
+    }
   }
 
-  return isGroup ? `${name} 请求加入群聊` : `${name} 请求加好友`
+  if (isReceived) {
+    return isGroup ? `${name} 请求加入群聊` : `${name} 请求加好友`
+  } else {
+    return isGroup ? `请求加入群聊：${name}` : `请求加好友：${name}`
+  }
 }
 
 // 留言：后端 message 可能是 `申请理由：xxx`，这里去掉前缀
