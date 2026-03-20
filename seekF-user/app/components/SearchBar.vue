@@ -17,15 +17,14 @@
         <Icon name="uil:users-alt" class="w-4 h-4" />
         <span>创建群聊</span>
       </div>
-      <div class="px-4 py-2 hover:bg-gray-100 cursor-pointer flex items-center gap-2">
+      <div class="px-4 py-2 hover:bg-gray-100 cursor-pointer flex items-center gap-2" @click="showSearchModal = true; showCreateMenu = false">
         <Icon name="uil:user-plus" class="w-4 h-4" />
-        <span>添加好友</span>
-      </div>
-      <div class="px-4 py-2 hover:bg-gray-100 cursor-pointer flex items-center gap-2">
-        <Icon name="uil:comment-alt" class="w-4 h-4" />
-        <span>加入群聊</span>
+        <span>加好友/群聊</span>
       </div>
     </div>
+    
+    <!-- 搜索模态框 -->
+    <SearchModal v-model:visible="showSearchModal" @close="showCreateMenu = false" />
     
     <!-- 创建群聊表单 -->
     <div v-if="showCreateGroupForm" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -103,9 +102,11 @@ import { ElMessage } from 'element-plus'
 import { useApi$ } from '~/composables/useApi'
 import { Plus } from '@element-plus/icons-vue'
 import { useRuntimeConfig } from 'nuxt/app'
+import SearchModal from './SearchModal.vue'
 
 const showCreateMenu = ref(false)
 const showCreateGroupForm = ref(false)
+const showSearchModal = ref(false)
 const createGroupForm = ref({
   name: '',
   notice: '',

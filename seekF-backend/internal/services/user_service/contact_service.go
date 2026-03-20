@@ -35,6 +35,7 @@ type ContactService interface {
 	BlackContact(userId string, contactId string) error
 	CancelBlackContact(userId string, contactId string) error
 	GetApplyGroupList(groupId string, currentUserId string) ([]userresp.AddGroupListRespond, error)
+	SearchUsers(keyword string, userId string) ([]userresp.SearchUsersRespond, error)
 }
 
 type ContactServiceImpl struct {
@@ -697,4 +698,32 @@ func (s *ContactServiceImpl) BlackApply(id string, contactId string) error {
 	}
 
 	return nil
+}
+
+// SearchUsers 根据关键词搜索用户
+func (s *ContactServiceImpl) SearchUsers(keyword string, userId string) ([]userresp.SearchUsersRespond, error) {
+	// 使用 DAO 层方法搜索用户
+	userList, err := s.userInfoDAO.SearchUsers(keyword)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, err
+	}
+
+	var userListRsp []userresp.SearchUsersRespond
+	for _, user := range userList {
+		// 过滤掉当前用户自己
+		if user.Uuid == userId {
+			continue
+		}
+
+		userListRsp = append(userListRsp, userresp.SearchUsersRespond{
+			UserId:   user.Uuid,
+			Nickname: user.Nickname,
+			Avatar:   user.Avatar,
+			Phone:    user.Telephone,
+			Email:    user.Email,
+		})
+	}
+
+	return userListRsp, nil
 }

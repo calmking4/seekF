@@ -271,3 +271,31 @@ func (c *GroupController) DismissGroup(ctx *gin.Context) {
 
 	resp.Success(ctx, "解散群聊成功", nil)
 }
+
+// SearchGroups 根据关键词搜索群组
+func (c *GroupController) SearchGroups(ctx *gin.Context) {
+	var req struct {
+		Keyword string `json:"keyword"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
+		return
+	}
+
+	// 从上下文获取当前用户UUID
+	userId, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	groupList, err := c.groupService.SearchGroups(req.Keyword, userId.(string))
+	if err != nil {
+		zlog.Info("SearchGroups service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "搜索群组成功", groupList)
+}

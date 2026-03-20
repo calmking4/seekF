@@ -12,6 +12,7 @@ type GroupDAO interface {
 	UpdateGroupInfo(group *models.GroupInfo) error
 	GetGroupMembersByUuid(uuid string) (models.GroupInfo, error)
 	DeleteGroupByUUid(groupId string) error
+	SearchGroups(keyword string) ([]models.GroupInfo, error)
 }
 
 type GroupDAOImpl struct{}
@@ -57,4 +58,11 @@ func (d *GroupDAOImpl) GetGroupMembersByUuid(uuid string) (models.GroupInfo, err
 func (d *GroupDAOImpl) DeleteGroupByUUid(groupId string) error {
 	result := db.GormDB.Where("uuid = ?", groupId).Delete(&models.GroupInfo{})
 	return result.Error
+}
+
+// SearchGroups 根据关键词搜索群组
+func (d *GroupDAOImpl) SearchGroups(keyword string) ([]models.GroupInfo, error) {
+	var groupList []models.GroupInfo
+	result := db.GormDB.Where("name LIKE ?", "%"+keyword+"%").Find(&groupList)
+	return groupList, result.Error
 }

@@ -32,6 +32,7 @@ type GroupService interface {
 	EnterGroupDirectly(groupId string, userId string) error
 	LeaveGroup(groupId string, userId string) error
 	DismissGroup(groupId string, userId string) error
+	SearchGroups(keyword string, userId string) ([]userresp.SearchGroupsRespond, error)
 }
 
 type GroupServiceImpl struct {
@@ -592,4 +593,43 @@ func (s *GroupServiceImpl) DismissGroup(groupId string, userId string) error {
 	}
 
 	return nil
+}
+
+// SearchGroups 根据关键词搜索群组
+func (s *GroupServiceImpl) SearchGroups(keyword string, userId string) ([]userresp.SearchGroupsRespond, error) {
+	// 使用 DAO 层方法搜索群组
+	groupList, err := s.groupDAO.SearchGroups(keyword)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, err
+	}
+
+	var groupListRsp []userresp.SearchGroupsRespond
+	for _, group := range groupList {
+		// 检查群组是否已被删除
+		if group.DeletedAt.Valid {
+			continue
+		}
+
+		// 检查用户是否在群成员列表中
+		isInGroup := false
+		var members []string
+		if err := json.Unmarshal(group.Members, &members); err == nil {
+			for _, member := range members {
+				if member == userId {
+					isInGroup = true
+					break
+				}
+			}
+		}
+
+		groupListRsp = append(groupListRsp, userresp.SearchGroupsRespond{
+			GroupId:   group.Uuid,
+			GroupName: group.Name,
+			Avatar:    group.Avatar,
+			IsInGroup: isInGroup,
+		})
+	}
+
+	return groupListRsp, nil
 }

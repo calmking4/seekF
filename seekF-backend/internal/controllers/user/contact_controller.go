@@ -310,3 +310,31 @@ func (c *ContactController) BlackApply(ctx *gin.Context) {
 
 	resp.Success(ctx, "拉黑申请成功", nil)
 }
+
+// SearchUsers 根据关键词搜索用户
+func (c *ContactController) SearchUsers(ctx *gin.Context) {
+	var req struct {
+		Keyword string `json:"keyword"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
+		return
+	}
+
+	// 从上下文获取当前用户UUID
+	userUuid, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+
+	userList, err := c.contactService.SearchUsers(req.Keyword, userUuid.(string))
+	if err != nil {
+		zlog.Info("SearchUsers service err: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "搜索用户成功", userList)
+}

@@ -51,6 +51,7 @@ func SetupRouter(
 			protectedGroup.POST("/group/enterGroupDirectly", groupController.EnterGroupDirectly)
 			protectedGroup.POST("/group/leaveGroup", groupController.LeaveGroup)
 			protectedGroup.POST("/group/dismissGroup", groupController.DismissGroup)
+			protectedGroup.POST("/group/searchGroups", groupController.SearchGroups)
 			// 联系人
 			protectedGroup.POST("/contact/getUserList", contactController.GetUserList)
 			protectedGroup.POST("/contact/getContactInfo", contactController.GetContactInfo)
@@ -63,6 +64,7 @@ func SetupRouter(
 			protectedGroup.POST("/contact/getApplyGroupList", contactController.GetApplyGroupList)
 			protectedGroup.POST("/contact/refuseContactApply", contactController.RefuseContactApply)
 			protectedGroup.POST("/contact/blackApply", contactController.BlackApply)
+			protectedGroup.POST("/contact/searchUsers", contactController.SearchUsers)
 			// 会话
 			protectedGroup.POST("/session/openSession", sessionController.OpenSession)
 			protectedGroup.POST("/session/getSessionList", sessionController.GetSessionList)
