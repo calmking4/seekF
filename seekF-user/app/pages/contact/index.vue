@@ -216,8 +216,8 @@
                   </div>
                 </div>
                 <div v-if="req.status === 0" class="flex gap-2 justify-center items-center">
-                  <el-button type="primary" size="small" @click="passGroupRequest(req.group_id, req.user_id)">同意</el-button>
-                  <el-button size="small" @click="refuseGroupRequest(req.group_id, req.user_id)">拒绝</el-button>
+                  <el-button type="primary" size="small" @click="passGroupRequest(req.user_id, req.group_id)">同意</el-button>
+                  <el-button size="small" @click="refuseGroupRequest(req.user_id, req.group_id)">拒绝</el-button>
                 </div>
               </div>
             </div>
