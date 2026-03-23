@@ -191,12 +191,11 @@ const handleLogin = async () => {
 
       if (res && res.code === 200) {
         // 处理成功响应，获取用户信息和token
-        const { user, token } = res.data;
+        const { user } = res.data;
         
         // 存储用户信息和token
         const authState = useAuthState();
         authState.setUser(user);
-        authState.setToken(token);
         
         ElMessage.success('登录成功');
         
@@ -231,12 +230,11 @@ const handleLogin = async () => {
 
       if (res && res.code === 200) {
         // 处理成功响应，获取用户信息和token
-        const { user, token } = res.data;
+        const { user } = res.data;
         
         // 存储用户信息和token
         const authState = useAuthState();
         authState.setUser(user);
-        authState.setToken(token);
         
         ElMessage.success('登录成功');
         
