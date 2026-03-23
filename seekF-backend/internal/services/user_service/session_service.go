@@ -100,8 +100,6 @@ func (s *SessionServiceImpl) CreateSession(sendId string, receiveId string) (str
 			zlog.Error("该用户被禁用了")
 			return "", fmt.Errorf("该用户被禁用了")
 		}
-		session.ReceiveName = receiveUser.Nickname
-		session.Avatar = receiveUser.Avatar
 	} else {
 		// 接收者是群聊
 		receiveGroup, err := s.groupDAO.GetGroupInfoByUuid(receiveId)
@@ -113,8 +111,6 @@ func (s *SessionServiceImpl) CreateSession(sendId string, receiveId string) (str
 			zlog.Error("该群聊被禁用了")
 			return "", fmt.Errorf("该群聊被禁用了")
 		}
-		session.ReceiveName = receiveGroup.Name
-		session.Avatar = receiveGroup.Avatar
 	}
 
 	// 直接保存会话到数据库
@@ -147,12 +143,42 @@ func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessio
 			// 构建响应
 			var sessionListRsp []userresp.GetSessionListRespond
 			for _, session := range sessionList {
+				// 根据 ReceiveId 获取最新的头像和名称信息
+				var avatar, name string
+
+				if session.ReceiveId[0] == 'U' {
+					// ReceiveId 是用户ID，获取用户最新信息
+					user, err := s.userInfoDAO.FindUserByUuid(session.ReceiveId)
+					if err != nil {
+						zlog.Error("获取用户信息失败: " + err.Error())
+						// 用户不存在，跳过这个会话
+						continue
+					} else if user == nil {
+						// 用户不存在，跳过这个会话
+						continue
+					} else {
+						avatar = user.Avatar
+						name = user.Nickname
+					}
+				} else {
+					// ReceiveId 是群聊ID，获取群聊最新信息
+					group, err := s.groupDAO.GetGroupInfoByUuid(session.ReceiveId)
+					if err != nil {
+						zlog.Error("获取群聊信息失败: " + err.Error())
+						// 群聊不存在，跳过这个会话
+						continue
+					} else {
+						avatar = group.Avatar
+						name = group.Name
+					}
+				}
+
 				// 构建会话响应
 				sessionRsp := userresp.GetSessionListRespond{
 					SessionId: session.Uuid,
-					Avatar:    session.Avatar,
+					Avatar:    avatar,
 					Id:        session.ReceiveId,
-					Name:      session.ReceiveName,
+					Name:      name,
 				}
 				sessionListRsp = append(sessionListRsp, sessionRsp)
 			}

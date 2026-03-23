@@ -341,7 +341,7 @@
             <!-- 底部按钮 -->
             <div class="flex gap-4 mt-8">
               <el-button type="default" class="flex-1">编辑资料</el-button>
-              <el-button type="primary" class="flex-1">发消息</el-button>
+              <el-button type="primary" class="flex-1" @click="openSession(userInfo.uuid)">发消息</el-button>
             </div>
           </div>
           <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400">
@@ -411,7 +411,7 @@
             <!-- 底部按钮 -->
             <div class="flex gap-4 mt-8">
               <el-button type="default" class="flex-1">群成员管理</el-button>
-              <el-button type="primary" class="flex-1">发消息</el-button>
+              <el-button type="primary" class="flex-1" @click="openSession(groupInfo.uuid)">发消息</el-button>
             </div>
           </div>
           <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400">
@@ -739,6 +739,37 @@ const refuseGroupRequest = async (contactId, groupId) => {
     }
   } catch (error) {
     console.error('拒绝群聊申请失败:', error)
+  }
+}
+
+// 打开会话
+const openSession = async (receiveId) => {
+  try {
+    const data = await useApi$('/user/session/openSession', {
+      method: 'POST',
+      body: {
+        receive_id: receiveId
+      }
+    })
+
+    if (data && data.code === 200) {
+      ElMessage.success('会话已打开')
+      // 获取会话ID
+      const sessionId = data.data
+      // 跳转到聊天页面，并传递会话ID和接收者ID
+      await navigateTo({
+        path: '/chat',
+        query: {
+          session_id: sessionId,
+          receive_id: receiveId
+        }
+      })
+    } else {
+      ElMessage.error(data?.message || '打开会话失败')
+    }
+  } catch (error) {
+    console.error('打开会话失败:', error)
+    ElMessage.error('打开会话失败')
   }
 }
 

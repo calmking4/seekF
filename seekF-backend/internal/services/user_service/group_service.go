@@ -280,12 +280,6 @@ func (s *GroupServiceImpl) UpdateGroupInfo(req userreq.UpdateGroupInfoRequest, u
 		return err
 	}
 
-	// 更新会话
-	if err := s.sessionDAO.UpdateSessionByReceiveId(req.Uuid, group.Name, group.Avatar); err != nil {
-		zlog.Error(err.Error())
-		return err
-	}
-
 	// 清除我的群组列表缓存
 	if err := myredis.DelKeyIfExists("contact_mygroup_list_" + group.OwnerId); err != nil {
 		zlog.Error(err.Error())

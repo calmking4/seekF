@@ -7,17 +7,20 @@
 
       <!-- 联系人/会话列表 -->
       <div class="flex-1 overflow-y-auto">
+        <div v-if="chatList.length === 0" class="p-8 text-center text-gray-400">
+          暂无会话
+        </div>
         <div
           v-for="(item, index) in chatList"
-          :key="index"
+          :key="item.sessionId"
           class="flex items-center gap-3 px-3 py-3 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100"
           :class="{ 'bg-gray-100': activeIndex === index }"
-          @click="activeIndex = index"
+          @click="selectSession(index)"
         >
           <!-- 头像 -->
-          <div class="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-500 flex-shrink-0">
-            {{ item.avatarText }}
-          </div>
+          <el-avatar :size="48" :src="item.avatar" class="flex-shrink-0">
+            {{ item.name ? item.name.charAt(0) : '?' }}
+          </el-avatar>
           <!-- 消息内容 -->
           <div class="flex-1 min-w-0">
             <div class="flex justify-between items-start">
@@ -47,9 +50,9 @@
       <div v-else class="flex flex-col h-full">
         <!-- 聊天头部 -->
         <div class="bg-white border-b border-gray-200 p-3 flex items-center gap-3">
-          <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-500">
-            {{ currentChat.avatarText }}
-          </div>
+          <el-avatar :size="40" :src="currentChat.avatar">
+            {{ currentChat.name ? currentChat.name.charAt(0) : '?' }}
+          </el-avatar>
           <h3 class="font-medium flex-1">{{ currentChat.name }}</h3>
           <div class="flex gap-4 text-gray-500">
             <button><Icon name="uil:search" /></button>
@@ -59,44 +62,31 @@
 
         <!-- 聊天内容区 -->
         <div class="flex-1 p-6 overflow-y-auto space-y-4">
-          <!-- 对方消息 -->
-          <div class="flex items-start gap-3">
-            <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 flex-shrink-0">
-              {{ currentChat.avatarText }}
-            </div>
-            <div class="bg-white rounded-lg px-4 py-2 max-w-[60%] shadow-sm">
-              <p class="text-sm">{{ currentChat.lastMsg }}</p>
-              <p class="text-xs text-gray-400 text-right mt-1">09:30</p>
-            </div>
+          <div v-if="messageList.length === 0" class="flex items-center justify-center h-full text-gray-400">
+            <p>暂无消息</p>
           </div>
-
-          <!-- 我方消息 -->
-          <div class="flex items-start gap-3 justify-end">
-            <div class="bg-[#D9FDD3] rounded-lg px-4 py-2 max-w-[60%]">
-              <p class="text-sm">收到，链接已添加到邮件中。</p>
-              <p class="text-xs text-gray-400 text-right mt-1">09:32</p>
+          <div
+            v-for="msg in messageList"
+            :key="msg.messageId"
+            class="flex items-start gap-3"
+            :class="{ 'justify-end': msg.isSelf }"
+          >
+            <!-- 对方头像 -->
+            <el-avatar v-if="!msg.isSelf" :size="32" :src="msg.avatar" class="flex-shrink-0">
+              {{ msg.senderName ? msg.senderName.charAt(0) : '?' }}
+            </el-avatar>
+            <!-- 消息内容 -->
+            <div
+              class="rounded-lg px-4 py-2 max-w-[60%] shadow-sm"
+              :class="msg.isSelf ? 'bg-[#D9FDD3]' : 'bg-white'"
+            >
+              <p class="text-sm">{{ msg.content }}</p>
+              <p class="text-xs text-gray-400 text-right mt-1">{{ formatTime(msg.sendTime) }}</p>
             </div>
-            <div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 flex-shrink-0">
+            <!-- 自己头像 -->
+            <el-avatar v-if="msg.isSelf" :size="32" :src="currentUserAvatar" class="flex-shrink-0">
               我
-            </div>
-          </div>
-
-          <!-- 系统消息 -->
-          <div class="flex justify-center">
-            <span class="text-xs bg-gray-300 text-white px-3 py-1 rounded-full">昨天 10:17</span>
-          </div>
-
-          <!-- 更多消息示例 -->
-          <div class="flex items-start gap-3">
-            <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 flex-shrink-0">
-              三
-            </div>
-            <div class="bg-white rounded-lg px-4 py-2 max-w-[60%] shadow-sm">
-              <p class="text-sm text-blue-500" @click="window.open('https://www.brics-ofsmd.com/uploads/2026/Abstracts.docx')">
-                https://www.brics-ofsmd.com/uploads/2026/Abstracts.docx
-              </p>
-              <p class="text-xs text-gray-400 text-right mt-1">10:17</p>
-            </div>
+            </el-avatar>
           </div>
         </div>
 
@@ -109,11 +99,16 @@
           </div>
           <div class="flex gap-3">
             <textarea
+              v-model="inputMessage"
               placeholder="请输入消息..."
               class="flex-1 border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm resize-none"
               rows="2"
+              @keydown.enter.prevent="sendMessage"
             ></textarea>
-            <button class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+            <button
+              class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors"
+              @click="sendMessage"
+            >
               发送
             </button>
           </div>
@@ -124,46 +119,202 @@
 </template>
 
 <script setup>
+// 获取路由和URL参数
+const route = useRoute()
+const router = useRouter()
 
-// 模拟聊天列表数据（参考你截图中的内容）
-const chatList = ref([
-  {
-    name: '沉默的福尔摩斯',
-    avatarText: '沉',
-    lastMsg: '如何在邮件中附件件?您看是您教我一下还是您自行插入一下',
-    time: '昨天',
-    unread: 0
-  },
-  {
-    name: '三叔',
-    avatarText: '三',
-    lastMsg: '选中要加链接的文字，加上链接就可以',
-    time: '10:17',
-    unread: 2
-  },
-  {
-    name: 'TB系统开发',
-    avatarText: 'T',
-    lastMsg: '已形成',
-    time: '01/06',
-    unread: 0
-  },
-  {
-    name: '公众号',
-    avatarText: '公',
-    lastMsg: '黑马程序员-首发...',
-    time: '15:02',
-    unread: 0
-  }
-])
+// 当前用户信息
+const currentUserAvatar = ref('')
+const currentUserId = ref('')
 
+// 会话列表
+const chatList = ref([])
 // 当前选中的会话索引
 const activeIndex = ref(-1)
+// 消息列表
+const messageList = ref([])
+// 输入的消息
+const inputMessage = ref('')
 
 // 当前选中的聊天对象
 const currentChat = computed(() => {
   if (activeIndex.value === -1) return {}
   return chatList.value[activeIndex.value]
+})
+
+// 格式化时间
+const formatTime = (time) => {
+  if (!time) return ''
+  const date = new Date(time)
+  const now = new Date()
+  const isToday = date.toDateString() === now.toDateString()
+
+  if (isToday) {
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  } else {
+    return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+  }
+}
+
+// 获取当前用户信息
+const getCurrentUserInfo = async () => {
+  try {
+    const data = await useApi$('/user/userinfo/getMyInfo', {
+      method: 'POST'
+    })
+    if (data && data.code === 200) {
+      currentUserAvatar.value = data.data.avatar
+      currentUserId.value = data.data.uuid
+    }
+  } catch (error) {
+    console.error('获取用户信息失败:', error)
+  }
+}
+
+// 加载会话列表
+const loadSessionList = async () => {
+  try {
+    const data = await useApi$('/user/session/getSessionList', {
+      method: 'POST'
+    })
+    if (data && data.code === 200) {
+      const sessions = data.data || []
+      chatList.value = sessions.map(session => ({
+        sessionId: session.sessionId,
+        id: session.id,
+        name: session.name,
+        avatar: session.avatar,
+        lastMsg: '点击开始聊天',
+        time: '',
+        unread: 0
+      }))
+
+      // 如果有URL参数，尝试选中对应会话
+      const { session_id, receive_id } = route.query
+      if (session_id || receive_id) {
+        selectSessionByParams(session_id, receive_id)
+      }
+    } else {
+      ElMessage.error(data?.message || '获取会话列表失败')
+    }
+  } catch (error) {
+    console.error('获取会话列表失败:', error)
+    ElMessage.error('获取会话列表失败')
+  }
+}
+
+// 根据参数选中会话
+const selectSessionByParams = (sessionId, receiveId) => {
+  let index = -1
+
+  if (sessionId) {
+    // 根据sessionId查找
+    index = chatList.value.findIndex(item => item.sessionId === sessionId)
+  }
+
+  if (index === -1 && receiveId) {
+    // 根据receiveId查找
+    index = chatList.value.findIndex(item => item.id === receiveId)
+  }
+
+  if (index !== -1) {
+    selectSession(index)
+  } else if (receiveId) {
+    // 如果找不到对应会话，但传了receiveId，说明是新创建的会话，需要刷新列表
+    loadSessionList()
+  }
+}
+
+// 选择会话
+const selectSession = async (index) => {
+  activeIndex.value = index
+  const session = chatList.value[index]
+  if (!session) return
+
+  // 加载消息列表
+  await loadMessageList(session.id)
+
+  // 清除URL参数
+  if (route.query.session_id || route.query.receive_id) {
+    router.replace({ path: '/chat' })
+  }
+}
+
+// 加载消息列表
+const loadMessageList = async (receiveId) => {
+  try {
+    if (!receiveId) return
+
+    const isGroup = receiveId.startsWith('G')
+    const url = isGroup
+      ? '/user/message/getGroupMessageList'
+      : '/user/message/getUserMessageList'
+
+    const body = isGroup
+      ? { group_id: receiveId }
+      : { user_one_id: currentUserId.value, user_two_id: receiveId }
+
+    const data = await useApi$(url, {
+      method: 'POST',
+      body
+    })
+
+    if (data && data.code === 200) {
+      const messages = data.data || []
+      messageList.value = messages.map(msg => ({
+        messageId: msg.messageId || msg.uuid,
+        content: msg.content,
+        senderName: msg.senderName,
+        avatar: msg.avatar,
+        sendTime: msg.sendTime || msg.createdAt,
+        isSelf: msg.senderId === currentUserId.value || msg.isSelf
+      }))
+    } else {
+      ElMessage.error(data?.message || '获取消息列表失败')
+    }
+  } catch (error) {
+    console.error('获取消息列表失败:', error)
+    ElMessage.error('获取消息列表失败')
+  }
+}
+
+// 发送消息
+const sendMessage = async () => {
+  if (!inputMessage.value.trim()) {
+    ElMessage.warning('请输入消息内容')
+    return
+  }
+
+  if (activeIndex.value === -1) {
+    ElMessage.warning('请先选择一个会话')
+    return
+  }
+
+  const session = currentChat.value
+  if (!session) return
+
+  // TODO: 实现发送消息接口
+  // 这里暂时只添加到本地列表
+  messageList.value.push({
+    messageId: Date.now().toString(),
+    content: inputMessage.value,
+    senderName: '我',
+    avatar: currentUserAvatar.value,
+    sendTime: new Date().toISOString(),
+    isSelf: true
+  })
+
+  // 更新会话列表的最后消息
+  session.lastMsg = inputMessage.value
+  session.time = '刚刚'
+
+  inputMessage.value = ''
+}
+
+// 页面加载时
+onMounted(() => {
+  getCurrentUserInfo()
+  loadSessionList()
 })
 </script>
 
