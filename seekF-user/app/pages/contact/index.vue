@@ -350,6 +350,76 @@
           </div>
         </div>
         
+        <!-- 群组信息视图 -->
+        <div v-if="currentView === 'groupInfo'" class="flex-1 p-6 overflow-auto">
+          <div v-if="groupInfo" class="bg-white rounded-lg shadow-sm p-6">
+            <!-- 基本信息 -->
+            <div class="mb-8">
+              <div class="flex items-center gap-6">
+                <el-avatar :size="100" :src="groupInfo.avatar" class="flex-shrink-0 border-4 border-gray-100" />
+                <div class="flex-1">
+                  <h2 class="text-2xl font-bold mb-2">{{ groupInfo.name }}</h2>
+                  <div class="flex items-center gap-3 text-sm text-gray-500">
+                    <span>{{ groupInfo.member_cnt }} 人</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- 详细信息 -->
+            <div class="space-y-4">
+              <div class="bg-gray-50 rounded-lg p-4">
+                <h3 class="text-lg font-medium mb-3">基本信息</h3>
+                <div class="grid grid-cols-2 gap-4">
+                  <div class="flex flex-col">
+                    <span class="text-sm text-gray-500 mb-1">群组ID</span>
+                    <span class="font-medium">{{ groupInfo.uuid }}</span>
+                  </div>
+                  <div class="flex flex-col">
+                    <span class="text-sm text-gray-500 mb-1">群组名称</span>
+                    <span class="font-medium">{{ groupInfo.name }}</span>
+                  </div>
+                  <div class="flex flex-col">
+                    <span class="text-sm text-gray-500 mb-1">群主</span>
+                    <span class="font-medium">{{ groupInfo.owner_id }}</span>
+                  </div>
+                  <div class="flex flex-col">
+                    <span class="text-sm text-gray-500 mb-1">加群方式</span>
+                    <span class="font-medium">{{ groupInfo.add_mode === 0 ? '直接加入' : groupInfo.add_mode === 1 ? '需要验证' : '禁止加入' }}</span>
+                  </div>
+                  <div class="flex flex-col">
+                    <span class="text-sm text-gray-500 mb-1">成员数量</span>
+                    <span class="font-medium">{{ groupInfo.member_cnt }}</span>
+                  </div>
+                  <div class="flex flex-col">
+                    <span class="text-sm text-gray-500 mb-1">群组状态</span>
+                    <span class="font-medium">{{ groupInfo.status === 0 ? '正常' : '已解散' }}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="bg-gray-50 rounded-lg p-4">
+                <h3 class="text-lg font-medium mb-3">群组资料</h3>
+                <div class="flex flex-col">
+                  <span class="text-sm text-gray-500 mb-1">群公告</span>
+                  <span class="font-medium">{{ groupInfo.notice || '暂无公告' }}</span>
+                </div>
+              </div>
+              
+            </div>
+            
+            <!-- 底部按钮 -->
+            <div class="flex gap-4 mt-8">
+              <el-button type="default" class="flex-1">群成员管理</el-button>
+              <el-button type="primary" class="flex-1">发消息</el-button>
+            </div>
+          </div>
+          <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400">
+            <Icon name="uil:users-alt" class="text-6xl mb-3" />
+            <p>加载群组信息失败</p>
+          </div>
+        </div>
+        
         <!-- 默认视图 -->
         <div v-if="currentView === 'default'" class="flex-1 flex flex-col items-center justify-center text-gray-400">
           <Icon name="uil:comment-alt" class="text-6xl mb-3" />
@@ -472,6 +542,8 @@ const getCurrentViewTitle = () => {
       return selectedContact.value ? selectedContact.value.name : '聊天'
     case 'userInfo':
       return selectedContact.value ? selectedContact.value.name : '用户信息'
+    case 'groupInfo':
+      return selectedContact.value ? selectedContact.value.name : '群组信息'
     default:
       return '联系人'
   }
@@ -502,12 +574,35 @@ const selectFriend = async (friend) => {
   }
 }
 
+// 群组信息数据
+const groupInfo = ref(null)
+
 // 选择群聊
-const selectGroup = (group) => {
+const selectGroup = async (group) => {
   selectedContact.value = {
     id: group.group_id || group.id,
     name: group.group_name || group.name,
     avatar: group.avatar
+  }
+  currentView.value = 'groupInfo'
+  
+  try {
+    const data = await useApi$('/user/group/getGroupInfo', {
+      method: 'POST',
+      body: {
+        group_id: group.group_id || group.id
+      }
+    })
+    
+    if (data && data.code === 200) {
+      groupInfo.value = data.data
+    } else {
+      ElMessage.error(data?.message || '获取群组信息失败')
+      groupInfo.value = null
+    }
+  } catch (error) {
+    console.error('获取群组信息失败:', error)
+    groupInfo.value = null
   }
 }
 
@@ -543,10 +638,17 @@ const loadFriends = async () => {
 const handleTabClick = (tab) => {
   currentView.value = 'default'
   selectedContact.value = null
+  userInfo.value = null
+  groupInfo.value = null
   
   // 当点击好友标签页时，加载好友列表
   if (tab?.props?.name === 'friend') {
     loadFriends()
+  }
+  // 当点击群聊标签页时，加载群聊列表
+  if (tab?.props?.name === 'group') {
+    loadMyGroup()
+    loadMyJoinedGroup()
   }
 }
 
