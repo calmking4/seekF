@@ -738,13 +738,6 @@ func (s *ContactServiceImpl) GetMyApplyList(userId string) ([]userresp.MyApplyLi
 		return nil, fmt.Errorf("系统错误")
 	}
 
-	// 查询用户收到的所有申请记录
-	receivedApplyList, err := s.contactApplyDAO.GetContactAppliesByContactId(userId)
-	if err != nil {
-		zlog.Error(err.Error())
-		return nil, fmt.Errorf("系统错误")
-	}
-
 	var rsp []userresp.MyApplyListRespond
 
 	// 处理发送的申请记录
@@ -789,6 +782,9 @@ func (s *ContactServiceImpl) GetMyApplyList(userId string) ([]userresp.MyApplyLi
 
 		// 构建响应
 		myApply := userresp.MyApplyListRespond{
+			UserId:        contactApply.UserId,
+			UserName:      "", // 发出的申请不需要额外用户名
+			UserAvatar:    "", // 发出的申请不需要额外用户头像
 			ContactId:     contactApply.ContactId,
 			ContactName:   contactName,
 			ContactAvatar: contactAvatar,
@@ -801,12 +797,19 @@ func (s *ContactServiceImpl) GetMyApplyList(userId string) ([]userresp.MyApplyLi
 		rsp = append(rsp, myApply)
 	}
 
-	// 处理收到的申请记录
+	// 查询用户收到的好友申请（其他人向该用户发出的好友申请）
+	receivedApplyList, err := s.contactApplyDAO.GetContactAppliesByContactId(userId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, fmt.Errorf("系统错误")
+	}
+
+	// 处理收到的好友申请
 	for _, contactApply := range receivedApplyList {
 		var contactName, contactAvatar string
 		var contactType string
 
-		// 获取申请人信息
+		// 这些是用户申请，获取申请人信息
 		user, err := s.userInfoDAO.FindUserByUuid(contactApply.UserId)
 		if err != nil {
 			zlog.Error(err.Error())
@@ -829,7 +832,10 @@ func (s *ContactServiceImpl) GetMyApplyList(userId string) ([]userresp.MyApplyLi
 
 		// 构建响应
 		myApply := userresp.MyApplyListRespond{
-			ContactId:     contactApply.UserId,
+			UserId:        user.Uuid,
+			UserName:      user.Nickname,
+			UserAvatar:    user.Avatar,
+			ContactId:     contactApply.ContactId,
 			ContactName:   contactName,
 			ContactAvatar: contactAvatar,
 			ContactType:   contactType,
@@ -839,6 +845,59 @@ func (s *ContactServiceImpl) GetMyApplyList(userId string) ([]userresp.MyApplyLi
 			IsReceived:    true,
 		}
 		rsp = append(rsp, myApply)
+	}
+
+	// 查询用户创建的所有群聊
+	createdGroups, err := s.groupDAO.GetGroupInfoByOwnerId(userId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, fmt.Errorf("系统错误")
+	}
+
+	// 查询用户创建的群聊收到的申请
+	for _, group := range createdGroups {
+		groupApplyList, err := s.contactApplyDAO.GetContactAppliesByContactId(group.Uuid)
+		if err != nil {
+			zlog.Error(err.Error())
+			continue
+		}
+
+		for _, contactApply := range groupApplyList {
+			// 获取申请人信息
+			user, err := s.userInfoDAO.FindUserByUuid(contactApply.UserId)
+			if err != nil {
+				zlog.Error(err.Error())
+				continue
+			}
+			if user == nil {
+				continue
+			}
+
+			// 构建消息
+			var message string
+			if contactApply.Message == "" {
+				message = "申请理由：无"
+			} else {
+				message = "申请理由：" + contactApply.Message
+			}
+
+			// 构建响应 - 这是用户创建的群收到的申请
+			// 现在正确设置：申请人信息放在 UserId、UserName 和 UserAvatar 字段，群聊信息放在 Contact 相关字段
+			myApply := userresp.MyApplyListRespond{
+				UserId:        user.Uuid,     // 申请人ID
+				UserName:      user.Nickname, // 申请人姓名
+				UserAvatar:    user.Avatar,   // 申请人头像
+				ContactId:     group.Uuid,    // 群聊ID
+				ContactName:   group.Name,    // 群聊名称
+				ContactAvatar: group.Avatar,  // 群聊头像
+				ContactType:   "group",       // 申请类型
+				Status:        int(contactApply.Status),
+				Message:       message,
+				ApplyTime:     contactApply.LastApplyAt.Format("2006-01-02 15:04:05"),
+				IsReceived:    true, // 对于用户来说，这是收到的申请
+			}
+			rsp = append(rsp, myApply)
+		}
 	}
 
 	return rsp, nil

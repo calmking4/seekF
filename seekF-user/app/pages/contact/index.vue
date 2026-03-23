@@ -190,14 +190,14 @@
           <div v-if="groupRequests.length > 0" class="mb-4">
             <h3 class="text-sm font-medium mb-2">收到的请求</h3>
             <div class="space-y-2">
-              <div v-for="req in groupRequests" :key="req.contact_id + req.group_id" class="flex items-start gap-3 px-4 py-3 bg-white rounded-lg hover:bg-gray-50">
+              <div v-for="req in groupRequests" :key="req.user_id + req.group_id" class="flex items-start gap-3 px-4 py-3 bg-white rounded-lg hover:bg-gray-50">
                 <el-avatar :size="44" :src="req.contact_avatar" class="flex-shrink-0" />
                 <div class="flex-1 min-w-0">
                   <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0">
                       <div class="flex items-center min-w-0 gap-2">
                         <div class="text-sm font-medium text-gray-900 truncate min-w-0">
-                          {{ req.status === 1 ? (req.is_received ? '已同意加好友：' + req.contact_name : '对方已同意加好友：' + req.contact_name) : (req.is_received ? req.contact_name + ' 请求加为好友' : '请求加为好友：' + req.contact_name) }}
+                          {{ req.status === 1 ? (req.is_received ? '已同意加入群聊：' + req.contact_name : '对方已同意加入群聊：' + req.contact_name) : (req.is_received ? req.contact_name + ' 请求加入群聊' : '请求加入群聊：' + req.contact_name) }}
                         </div>
                         <span class="text-sm text-gray-500 font-normal whitespace-nowrap">
                           {{ formatApplyTime(req.apply_time) }}
@@ -209,15 +209,15 @@
                     </div>
                   </div>
                   <div class="text-xs text-gray-500 mt-1 whitespace-nowrap">
-                    申请加入群聊：{{ req.group_name }}
+                    群聊名称：{{ req.group_name }}
                   </div>
                   <div class="text-xs text-gray-500 mt-1 whitespace-nowrap">
                     {{ req.message }}
                   </div>
                 </div>
                 <div v-if="req.status === 0" class="flex gap-2 justify-center items-center">
-                  <el-button type="primary" size="small" @click="passGroupRequest(req.contact_id, req.group_id)">同意</el-button>
-                  <el-button size="small" @click="refuseGroupRequest(req.contact_id, req.group_id)">拒绝</el-button>
+                  <el-button type="primary" size="small" @click="passGroupRequest(req.group_id, req.user_id)">同意</el-button>
+                  <el-button size="small" @click="refuseGroupRequest(req.group_id, req.user_id)">拒绝</el-button>
                 </div>
               </div>
             </div>
@@ -862,39 +862,26 @@ const loadAllNotifications = async () => {
       friendRequests.value = allNotifications.filter(item => item.contact_type === 'user' && item.is_received)
       myFriendApplies.value = allNotifications.filter(item => item.contact_type === 'user' && !item.is_received)
       
-      // 处理群聊申请
-      // 对于收到的群聊申请，需要获取群聊信息
+      // 分离群聊申请
       const receivedGroupApplies = allNotifications.filter(item => item.contact_type === 'group' && item.is_received)
       const myGroupAppliesList = allNotifications.filter(item => item.contact_type === 'group' && !item.is_received)
       
-      // 获取我创建的群聊，用于匹配群聊申请
-      const myGroupsData = await useApi$('/user/group/loadMyGroup', {
-        method: 'POST'
-      })
+      // 设置收到的群聊申请（别人申请加入我创建的群聊）
+      // 现在后端返回的群聊申请数据中，申请人信息在 user_name/user_avatar，群聊信息在 contact_name/contact_avatar
+      groupRequests.value = receivedGroupApplies.map(apply => ({
+        ...apply,
+        group_id: apply.contact_id, // 群聊ID
+        group_name: apply.contact_name, // 群聊名称
+        contact_name: apply.user_name, // 申请人名称
+        contact_avatar: apply.user_avatar // 申请人头像
+      }))
       
-      if (myGroupsData && myGroupsData.code === 200) {
-        const myGroups = myGroupsData.data || []
-        const groupMap = new Map()
-        
-        // 构建群聊ID到群聊信息的映射
-        myGroups.forEach(group => {
-          groupMap.set(group.group_id, group)
-        })
-        
-        // 为收到的群聊申请添加群聊信息
-        groupRequests.value = receivedGroupApplies.map(apply => {
-          const group = groupMap.get(apply.contact_id)
-          return {
-            ...apply,
-            group_id: apply.contact_id,
-            group_name: group ? (group.group_name || group.name) : '未知群聊'
-          }
-        })
-      } else {
-        groupRequests.value = []
-      }
-      
-      myGroupApplies.value = myGroupAppliesList
+      // 为我发出的群聊申请添加群聊信息
+      myGroupApplies.value = myGroupAppliesList.map(apply => ({
+        ...apply,
+        group_id: apply.contact_id,
+        group_name: apply.contact_name
+      }))
     } else {
       ElMessage.error(data?.message || '获取通知数据失败')
     }
