@@ -262,7 +262,6 @@ const confirmEdit = async () => {
     }
   } catch (err) {
     console.error('更新用户信息时发生错误:', err)
-    ElMessage.error('网络错误，请稍后重试')
   } finally {
     updating.value = false
   }

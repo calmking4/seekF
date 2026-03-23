@@ -161,7 +161,6 @@ const createGroup = async () => {
     }
   } catch (error) {
     console.error('创建群聊失败:', error)
-    ElMessage.error('网络错误，请稍后重试')
   }
 }
 </script>

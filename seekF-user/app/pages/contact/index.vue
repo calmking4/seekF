@@ -498,7 +498,6 @@ const selectFriend = async (friend) => {
     }
   } catch (error) {
     console.error('获取用户信息失败:', error)
-    ElMessage.error('网络错误，请稍后重试')
     userInfo.value = null
   }
 }
@@ -535,7 +534,6 @@ const loadFriends = async () => {
     }
   } catch (error) {
     console.error('获取好友列表失败:', error)
-    ElMessage.error('网络错误，请稍后重试')
     // 如果网络错误，显示空的好友列表
     friends.value = []
   }
@@ -571,7 +569,6 @@ const passFriendRequest = async (contactId) => {
     }
   } catch (error) {
     console.error('同意好友申请失败:', error)
-    ElMessage.error('网络错误，请稍后重试')
   }
 }
 
@@ -594,7 +591,6 @@ const refuseFriendRequest = async (contactId) => {
     }
   } catch (error) {
     console.error('拒绝好友申请失败:', error)
-    ElMessage.error('网络错误，请稍后重试')
   }
 }
 
@@ -618,7 +614,6 @@ const passGroupRequest = async (contactId, groupId) => {
     }
   } catch (error) {
     console.error('同意群聊申请失败:', error)
-    ElMessage.error('网络错误，请稍后重试')
   }
 }
 
@@ -642,7 +637,6 @@ const refuseGroupRequest = async (contactId, groupId) => {
     }
   } catch (error) {
     console.error('拒绝群聊申请失败:', error)
-    ElMessage.error('网络错误，请稍后重试')
   }
 }
 
@@ -684,7 +678,6 @@ const loadMyGroup = async () => {
     }
   } catch (error) {
     console.error('获取我创建的群聊失败:', error)
-    ElMessage.error('网络错误，请稍后重试')
     // 如果网络错误，显示空的群聊列表
     if (groupCategories.value.length === 0) {
       groupCategories.value.push({
@@ -738,7 +731,6 @@ const loadMyJoinedGroup = async () => {
     }
   } catch (error) {
     console.error('获取我加入的群聊失败:', error)
-    ElMessage.error('网络错误，请稍后重试')
     // 如果网络错误，显示空的群聊列表
     if (groupCategories.value.length < 2) {
       groupCategories.value.push({
@@ -806,7 +798,6 @@ const loadAllNotifications = async () => {
     }
   } catch (error) {
     console.error('获取通知数据失败:', error)
-    ElMessage.error('网络错误，请稍后重试')
   }
 }
 

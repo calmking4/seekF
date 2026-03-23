@@ -194,7 +194,6 @@ const search = async () => {
       }
     } catch (error) {
       console.error('搜索用户失败:', error)
-      ElMessage.error('网络错误，请稍后重试')
     }
   } else if (activeTab.value === 'group') {
     // 搜索群聊
@@ -213,7 +212,6 @@ const search = async () => {
       }
     } catch (error) {
       console.error('搜索群聊失败:', error)
-      ElMessage.error('网络错误，请稍后重试')
     }
   }
 }
@@ -236,7 +234,6 @@ const joinGroupDirectly = async (group) => {
     }
   } catch (error) {
     console.error('加入群聊失败:', error)
-    ElMessage.error('网络错误，请稍后重试')
   }
 }
 
@@ -289,7 +286,6 @@ const submitApply = async () => {
     }
   } catch (error) {
     console.error('申请失败:', error)
-    ElMessage.error('网络错误，请稍后重试')
   }
 }
 </script>
