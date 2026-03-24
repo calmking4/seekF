@@ -170,15 +170,17 @@ const getVerifyCode = async () => {
   }
 };
 
+const ws = useWebSocket();
+
 const handleLogin = async () => {
   if (loginType.value === 'password') {
     if (!loginForm.value.username || !loginForm.value.password) {
       ElMessage('请输入账号和密码');
       return;
     }
-    
+
     loading.value = true;
-    
+
     try {
       // 使用 useApi$ 发送登录请求（$fetch：返回响应对象，失败会 throw）
       const res = await useApi$('/user/login', {
@@ -192,13 +194,16 @@ const handleLogin = async () => {
       if (res && res.code === 200) {
         // 处理成功响应，获取用户信息和token
         const { user } = res.data;
-        
+
         // 存储用户信息和token
         const authState = useAuthState();
         authState.setUser(user);
-        
+
+        // 连接 WebSocket
+        ws.connect();
+
         ElMessage.success('登录成功');
-        
+
         // 跳转到首页或其他页面
         navigateTo('/');
       } else {
@@ -215,9 +220,9 @@ const handleLogin = async () => {
       ElMessage('请输入手机号和验证码');
       return;
     }
-    
+
     loading.value = true;
-    
+
     try {
       // 使用 useApi$ 发送验证码登录请求
       const res = await useApi$('/user/loginByCode', {
@@ -231,13 +236,16 @@ const handleLogin = async () => {
       if (res && res.code === 200) {
         // 处理成功响应，获取用户信息和token
         const { user } = res.data;
-        
+
         // 存储用户信息和token
         const authState = useAuthState();
         authState.setUser(user);
-        
+
+        // 连接 WebSocket
+        ws.connect();
+
         ElMessage.success('登录成功');
-        
+
         // 跳转到首页或其他页面
         navigateTo('/');
       } else {

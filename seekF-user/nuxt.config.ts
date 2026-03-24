@@ -9,7 +9,8 @@ export default defineNuxtConfig({
   ],
   runtimeConfig:{
     public:{
-      apiBase:"http://localhost:8080/"
+      apiBase:"http://localhost:8080/",
+      wsBase:"ws://localhost:8080/",
     }
   },
 })

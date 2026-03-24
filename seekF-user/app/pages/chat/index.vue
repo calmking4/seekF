@@ -54,6 +54,16 @@
             {{ currentChat.name ? currentChat.name.charAt(0) : '?' }}
           </el-avatar>
           <h3 class="font-medium flex-1">{{ currentChat.name }}</h3>
+          <!-- WebSocket 连接状态 -->
+          <div class="flex items-center gap-2 text-xs mr-2">
+            <span
+              class="w-2 h-2 rounded-full"
+              :class="ws.isConnected ? 'bg-green-500' : 'bg-red-500'"
+            ></span>
+            <span :class="ws.isConnected ? 'text-green-600' : 'text-red-600'">
+              {{ ws.isConnected ? '已连接' : '未连接' }}
+            </span>
+          </div>
           <div class="flex gap-4 text-gray-500">
             <button><Icon name="uil:search" /></button>
             <button><Icon name="uil:ellipsis-h" /></button>
@@ -106,7 +116,8 @@
               @keydown.enter.prevent="sendMessage"
             ></textarea>
             <button
-              class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors"
+              class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="!ws.isConnected"
               @click="sendMessage"
             >
               发送
@@ -122,6 +133,9 @@
 // 获取路由和URL参数
 const route = useRoute()
 const router = useRouter()
+
+// WebSocket
+const ws = useWebSocket()
 
 // 当前用户信息
 const currentUserAvatar = ref('')
@@ -293,28 +307,78 @@ const sendMessage = async () => {
   const session = currentChat.value
   if (!session) return
 
-  // TODO: 实现发送消息接口
-  // 这里暂时只添加到本地列表
-  messageList.value.push({
-    messageId: Date.now().toString(),
-    content: inputMessage.value,
-    senderName: '我',
-    avatar: currentUserAvatar.value,
-    sendTime: new Date().toISOString(),
-    isSelf: true
-  })
+  // 使用 WebSocket 发送消息
+  const success = ws.sendTextMessage(
+    session.sessionId,
+    inputMessage.value.trim(),
+    session.id
+  )
 
-  // 更新会话列表的最后消息
-  session.lastMsg = inputMessage.value
-  session.time = '刚刚'
+  if (success) {
+    // 添加到本地消息列表
+    messageList.value.push({
+      messageId: Date.now().toString(),
+      content: inputMessage.value.trim(),
+      senderName: '我',
+      avatar: currentUserAvatar.value,
+      sendTime: new Date().toISOString(),
+      isSelf: true
+    })
 
-  inputMessage.value = ''
+    // 更新会话列表的最后消息
+    session.lastMsg = inputMessage.value.trim()
+    session.time = '刚刚'
+
+    inputMessage.value = ''
+  } else {
+    ElMessage.error('发送失败，请检查网络连接')
+  }
+}
+
+// 处理收到的 WebSocket 消息
+const handleWebSocketMessage = (data) => {
+  console.log('收到消息:', data)
+
+  // 处理不同类型的消息
+  if (typeof data === 'object') {
+    // 文本消息
+    if (data.type === 0) {
+      // 检查是否是当前会话的消息
+      const currentSession = currentChat.value
+      if (currentSession && data.session_id === currentSession.sessionId) {
+        messageList.value.push({
+          messageId: data.uuid || Date.now().toString(),
+          content: data.content,
+          senderName: data.send_name,
+          avatar: data.send_avatar,
+          sendTime: new Date().toISOString(),
+          isSelf: data.send_id === currentUserId.value
+        })
+      } else {
+        // 更新其他会话的未读消息数
+        const sessionIndex = chatList.value.findIndex(item => item.sessionId === data.session_id)
+        if (sessionIndex !== -1) {
+          chatList.value[sessionIndex].unread++
+          chatList.value[sessionIndex].lastMsg = data.content
+          chatList.value[sessionIndex].time = '刚刚'
+        }
+      }
+    }
+  }
 }
 
 // 页面加载时
-onMounted(() => {
-  getCurrentUserInfo()
-  loadSessionList()
+onMounted(async () => {
+  await getCurrentUserInfo()
+  await loadSessionList()
+
+  // 注册消息监听
+  ws.onMessage(handleWebSocketMessage)
+
+  // 如果 WebSocket 未连接，尝试连接
+  if (!ws.isConnected.value) {
+    ws.connect()
+  }
 })
 </script>
 
