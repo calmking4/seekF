@@ -3,6 +3,8 @@ package main
 import (
 	usercontroller "seekF-backend/internal/controllers/user"
 	userdao "seekF-backend/internal/dao/user_dao"
+	"seekF-backend/internal/pkg/kafka"
+	"seekF-backend/internal/pkg/websocket"
 	"seekF-backend/internal/router"
 	userservice "seekF-backend/internal/services/user_service"
 )
@@ -33,9 +35,14 @@ func main() {
 	sessionController := usercontroller.NewSessionController(sessionService)
 	messageController := usercontroller.NewMessageController(messageService)
 	fileController := usercontroller.NewFileController(fileService)
+	wsController := usercontroller.NewWsController()
+
+	// 初始化Kafka并启动WebSocket服务器
+	kafka.KafkaServiceInstance.Init()
+	go websocket.ChatServer.Start()
 
 	// 初始化路由器
-	r := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController)
+	r := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController, wsController)
 
 	//启动服务，监听 8080 端口
 	r.Run()

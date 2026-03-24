@@ -15,6 +15,7 @@ func SetupRouter(
 	sessionController *user.SessionController,
 	messageController *user.MessageController,
 	fileController *user.FileController,
+	wsController *user.WsController,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -76,7 +77,11 @@ func SetupRouter(
 			protectedGroup.POST("/message/getGroupMessageList", messageController.GetGroupMessageList)
 			// 文件上传
 			protectedGroup.POST("/file/upload", fileController.UploadFile)
+			// WebSocket
+			protectedGroup.GET("/ws/login", wsController.WsLogin)
+			protectedGroup.POST("/ws/logout", wsController.WsLogout)
 		}
+
 	}
 
 	return r
