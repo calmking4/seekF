@@ -20,7 +20,6 @@ type MessageBack struct {
 type Client struct {
 	Conn     *websocket.Conn
 	Uuid     string
-	SendTo   chan []byte       // 给server端
 	SendBack chan *MessageBack // 给前端
 }
 
@@ -83,7 +82,6 @@ func NewClientInit(c *gin.Context, clientId string) error {
 	client := &Client{
 		Conn:     conn,
 		Uuid:     clientId,
-		SendTo:   make(chan []byte, constants.CHANNEL_SIZE),
 		SendBack: make(chan *MessageBack, constants.CHANNEL_SIZE),
 	}
 
@@ -104,7 +102,6 @@ func ClientLogout(clientId string) error {
 			zlog.Error(err.Error())
 			return err
 		}
-		close(client.SendTo)
 		close(client.SendBack)
 	}
 	return nil
