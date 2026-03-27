@@ -7,8 +7,10 @@ import (
 
 // MessageDAO 消息DAO接口
 type MessageDAO interface {
-	GetMessagesBetweenUsers(userOneId string, userTwoId string) ([]models.Message, error)
-	GetMessagesByReceiverId(receiverId string) ([]models.Message, error)
+	GetMessagesBetweenUsers(userOneId string, userTwoId string, limit int, offset int) ([]models.Message, error)
+	GetMessagesByReceiverId(receiverId string, limit int, offset int) ([]models.Message, error)
+	CountMessagesBetweenUsers(userOneId string, userTwoId string) (int64, error)
+	CountMessagesByReceiverId(receiverId string) (int64, error)
 }
 
 // MessageDAOImpl 消息DAO实现
@@ -19,16 +21,30 @@ func NewMessageDAO() MessageDAO {
 	return &MessageDAOImpl{}
 }
 
-// GetMessagesBetweenUsers 获取两个用户之间的消息记录
-func (d *MessageDAOImpl) GetMessagesBetweenUsers(userOneId string, userTwoId string) ([]models.Message, error) {
+// GetMessagesBetweenUsers 获取两个用户之间的消息记录（分页，按时间倒序）
+func (d *MessageDAOImpl) GetMessagesBetweenUsers(userOneId string, userTwoId string, limit int, offset int) ([]models.Message, error) {
 	var messageList []models.Message
-	result := db.GormDB.Where("(send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?)", userOneId, userTwoId, userTwoId, userOneId).Order("created_at ASC").Find(&messageList)
+	result := db.GormDB.Where("(send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?)", userOneId, userTwoId, userTwoId, userOneId).Order("created_at DESC").Limit(limit).Offset(offset).Find(&messageList)
 	return messageList, result.Error
 }
 
-// GetMessagesByReceiverId 根据接收者ID获取消息记录
-func (d *MessageDAOImpl) GetMessagesByReceiverId(receiverId string) ([]models.Message, error) {
+// GetMessagesByReceiverId 根据接收者ID获取消息记录（分页，按时间倒序）
+func (d *MessageDAOImpl) GetMessagesByReceiverId(receiverId string, limit int, offset int) ([]models.Message, error) {
 	var messageList []models.Message
-	result := db.GormDB.Where("receive_id = ?", receiverId).Order("created_at ASC").Find(&messageList)
+	result := db.GormDB.Where("receive_id = ?", receiverId).Order("created_at DESC").Limit(limit).Offset(offset).Find(&messageList)
 	return messageList, result.Error
+}
+
+// CountMessagesBetweenUsers 统计两个用户之间的消息总数
+func (d *MessageDAOImpl) CountMessagesBetweenUsers(userOneId string, userTwoId string) (int64, error) {
+	var count int64
+	result := db.GormDB.Model(&models.Message{}).Where("(send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?)", userOneId, userTwoId, userTwoId, userOneId).Count(&count)
+	return count, result.Error
+}
+
+// CountMessagesByReceiverId 统计群聊消息总数
+func (d *MessageDAOImpl) CountMessagesByReceiverId(receiverId string) (int64, error) {
+	var count int64
+	result := db.GormDB.Model(&models.Message{}).Where("receive_id = ?", receiverId).Count(&count)
+	return count, result.Error
 }

@@ -52,12 +52,28 @@ func NewSessionService(
 
 // OpenSession 打开会话
 func (s *SessionServiceImpl) OpenSession(sendId string, receiveId string) (string, error) {
-	// 直接查询数据库
+	// 先查询是否存在正常会话
 	session, err := s.sessionDAO.GetSessionBySendAndReceiveId(sendId, receiveId)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// 会话不存在，创建新会话
-			return s.CreateSession(sendId, receiveId)
+			// 会话不存在，查找是否有已删除的会话
+			deletedSession, err := s.sessionDAO.GetDeletedSessionBySendAndReceiveId(sendId, receiveId)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					// 没有已删除的会话，创建新会话
+					return s.CreateSession(sendId, receiveId)
+				}
+				zlog.Error(err.Error())
+				return "", fmt.Errorf("系统错误")
+			}
+			// 恢复已删除的会话
+			if err := s.sessionDAO.RestoreSession(deletedSession.Uuid); err != nil {
+				zlog.Error(err.Error())
+				return "", fmt.Errorf("系统错误")
+			}
+			// 清除缓存
+			myredis.DelKeysWithPattern("session_list_" + sendId)
+			return deletedSession.Uuid, nil
 		}
 		zlog.Error(err.Error())
 		return "", fmt.Errorf("系统错误")
@@ -174,11 +190,18 @@ func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessio
 				}
 
 				// 构建会话响应
+				var lastMessageAt string
+				if session.LastMessageAt.Valid {
+					lastMessageAt = session.LastMessageAt.Time.Format("2006-01-02 15:04:05")
+				}
+
 				sessionRsp := userresp.GetSessionListRespond{
-					SessionId: session.Uuid,
-					Avatar:    avatar,
-					Id:        session.ReceiveId,
-					Name:      name,
+					SessionId:     session.Uuid,
+					Avatar:        avatar,
+					Id:            session.ReceiveId,
+					Name:          name,
+					LastMessage:   session.LastMessage,
+					LastMessageAt: lastMessageAt,
 				}
 				sessionListRsp = append(sessionListRsp, sessionRsp)
 			}

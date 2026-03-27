@@ -34,14 +34,17 @@ func (c *MessageController) GetUserMessageList(ctx *gin.Context) {
 	}
 
 	// 调用服务层方法
-	messageList, err := c.messageService.GetUserMessageList(req.UserOneId, req.UserTwoId)
+	messageList, total, err := c.messageService.GetUserMessageList(req.UserOneId, req.UserTwoId, req.Page, req.PageSize)
 	if err != nil {
 		zlog.Info("GetUserMessageList service err: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(ctx, "获取聊天记录成功", messageList)
+	resp.Success(ctx, "获取聊天记录成功", gin.H{
+		"list":  messageList,
+		"total": total,
+	})
 }
 
 // GetGroupMessageList 获取群聊消息记录
@@ -55,12 +58,15 @@ func (c *MessageController) GetGroupMessageList(ctx *gin.Context) {
 	}
 
 	// 调用服务层方法
-	messageList, err := c.messageService.GetGroupMessageList(req.GroupId)
+	messageList, total, err := c.messageService.GetGroupMessageList(req.GroupId, req.Page, req.PageSize)
 	if err != nil {
 		zlog.Info("GetGroupMessageList service err: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(ctx, "获取聊天记录成功", messageList)
+	resp.Success(ctx, "获取聊天记录成功", gin.H{
+		"list":  messageList,
+		"total": total,
+	})
 }

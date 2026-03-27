@@ -1,7 +1,7 @@
 <template>
-  <div class="flex min-h-screen bg-white">
+  <div class="flex h-screen bg-white">
     <!-- 左侧侧边栏 -->
-    <aside class="fixed top-0 left-0 bottom-0 w-[200px] bg-white border-r border-gray-100 p-0 flex flex-col">
+    <aside class="w-[200px] bg-white border-r border-gray-100 flex flex-col flex-shrink-0">
       <!-- 侧边栏头部 Logo -->
       <div class="px-5 py-4 mb-4">
         <div class="text-xl font-bold text-[#60a5fa]">seekF</div>
@@ -34,7 +34,7 @@
     </aside>
 
     <!-- 右侧主内容区 -->
-    <main class="ml-[200px] flex-1 p-6">
+    <main class="flex-1 h-full overflow-hidden">
       <slot />
     </main>
   </div>

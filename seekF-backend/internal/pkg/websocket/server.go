@@ -133,8 +133,12 @@ func (s *Server) handleTextMessage(chatMessageReq *userreq.ChatMessageRequest) {
 		return
 	}
 
+	// 更新会话的最后消息
+	s.updateSessionLastMessage(message.SessionId, message.Content)
+
 	// 构建响应消息
 	messageRsp := userresp.GetMessageListRespond{
+		SessionId:  message.SessionId,
 		SendId:     message.SendId,
 		SendName:   message.SendName,
 		SendAvatar: chatMessageReq.SendAvatar,
@@ -196,8 +200,12 @@ func (s *Server) handleFileMessage(chatMessageReq *userreq.ChatMessageRequest) {
 		return
 	}
 
+	// 更新会话的最后消息
+	s.updateSessionLastMessage(message.SessionId, "[文件]"+message.FileName)
+
 	// 构建响应消息
 	messageRsp := userresp.GetMessageListRespond{
+		SessionId:  message.SessionId,
 		SendId:     message.SendId,
 		SendName:   message.SendName,
 		SendAvatar: chatMessageReq.SendAvatar,
@@ -276,11 +284,15 @@ func (s *Server) handleAVCallMessage(chatMessageReq *userreq.ChatMessageRequest)
 			zlog.Error("保存音视频通话消息失败: " + err.Error())
 			return
 		}
+
+		// 更新会话的最后消息
+		s.updateSessionLastMessage(message.SessionId, "[音视频通话]")
 	}
 
 	// 只处理单聊音视频通话
 	if chatMessageReq.ReceiveId[0] == 'U' {
 		messageRsp := userresp.AVMessageRespond{
+			SessionId:  message.SessionId,
 			SendId:     message.SendId,
 			SendName:   message.SendName,
 			SendAvatar: message.SendAvatar,
@@ -479,4 +491,39 @@ func UpdateMessageStatus(uuid string) {
 	if err := db.GormDB.Model(&models.Message{}).Where("uuid = ?", uuid).Update("status", message_status_enum.Sent).Error; err != nil {
 		zlog.Error("更新消息状态失败: " + err.Error())
 	}
+}
+
+// updateSessionLastMessage 更新会话的最后消息（双向更新）
+func (s *Server) updateSessionLastMessage(sessionId string, lastMessage string) {
+	now := time.Now()
+
+	// 获取该会话信息
+	var session models.Session
+	if err := db.GormDB.Where("uuid = ?", sessionId).First(&session).Error; err != nil {
+		zlog.Error("获取会话信息失败: " + err.Error())
+		return
+	}
+
+	// 更新发送者的session
+	if err := db.GormDB.Model(&models.Session{}).Where("uuid = ?", sessionId).Updates(map[string]interface{}{
+		"last_message":    lastMessage,
+		"last_message_at": now,
+	}).Error; err != nil {
+		zlog.Error("更新发送者会话最后消息失败: " + err.Error())
+	}
+
+	// 查找接收者的session并更新
+	var receiverSession models.Session
+	if err := db.GormDB.Where("send_id = ? AND receive_id = ?", session.ReceiveId, session.SendId).First(&receiverSession).Error; err == nil {
+		if err := db.GormDB.Model(&models.Session{}).Where("uuid = ?", receiverSession.Uuid).Updates(map[string]interface{}{
+			"last_message":    lastMessage,
+			"last_message_at": now,
+		}).Error; err != nil {
+			zlog.Error("更新接收者会话最后消息失败: " + err.Error())
+		}
+	}
+
+	// 清除两人的会话列表缓存
+	myredis.DelKeysWithPattern("session_list_" + session.SendId)
+	myredis.DelKeysWithPattern("session_list_" + session.ReceiveId)
 }

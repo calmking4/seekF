@@ -10,6 +10,8 @@ type SessionDAO interface {
 	RemoveSessionBySendAndReceiveId(sendId string, receiveId string) error
 	RemoveSessionsByReceiveId(receiveId string) error
 	GetSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error)
+	GetDeletedSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error)
+	RestoreSession(sessionId string) error
 	CreateSession(session *models.Session) error
 	DeleteSession(sessionId string) error
 	GetSessionListBySendId(userId string) ([]models.Session, error)
@@ -47,6 +49,19 @@ func (d *SessionDAOImpl) GetSessionBySendAndReceiveId(sendId string, receiveId s
 	var session models.Session
 	result := db.GormDB.Where("send_id = ? and receive_id = ?", sendId, receiveId).First(&session)
 	return session, result.Error
+}
+
+// GetDeletedSessionBySendAndReceiveId 获取已删除的会话（软删除）
+func (d *SessionDAOImpl) GetDeletedSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error) {
+	var session models.Session
+	result := db.GormDB.Unscoped().Where("send_id = ? AND receive_id = ? AND deleted_at IS NOT NULL", sendId, receiveId).First(&session)
+	return session, result.Error
+}
+
+// RestoreSession 恢复已删除的会话
+func (d *SessionDAOImpl) RestoreSession(sessionId string) error {
+	result := db.GormDB.Unscoped().Model(&models.Session{}).Where("uuid = ?", sessionId).Update("deleted_at", nil)
+	return result.Error
 }
 
 // CreateSession 创建会话

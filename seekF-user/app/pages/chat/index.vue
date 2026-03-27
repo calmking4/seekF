@@ -38,7 +38,7 @@
     </aside>
 
     <!-- 右侧：聊天窗口 -->
-    <main class="flex-1 flex flex-col bg-[#f3f4f6] overflow-hidden">
+    <main class="flex-1 flex flex-col bg-[#f3f4f6] h-full overflow-hidden">
       <!-- 未选择会话时的占位 -->
       <div v-if="activeIndex === -1" class="flex-1 flex flex-col items-center justify-center text-gray-400">
         <Icon name="uil:comment-alt" class="text-6xl mb-4" />
@@ -47,13 +47,16 @@
       </div>
 
       <!-- 已选择会话的聊天界面 -->
-      <div v-else class="flex flex-col h-full">
+      <template v-else>
         <!-- 聊天头部 -->
-        <div class="bg-white border-b border-gray-200 p-3 flex items-center gap-3">
-          <el-avatar :size="40" :src="currentChat.avatar">
-            {{ currentChat.name ? currentChat.name.charAt(0) : '?' }}
-          </el-avatar>
-          <h3 class="font-medium flex-1">{{ currentChat.name }}</h3>
+        <div class="bg-white border-b border-gray-200 p-3 flex items-center gap-3 flex-shrink-0">
+          <div class="flex flex-col items-center">
+            <span class="text-xs mb-1">{{ currentChat.name }}</span>
+            <el-avatar :size="40" :src="currentChat.avatar">
+              {{ currentChat.name ? currentChat.name.charAt(0) : '?' }}
+            </el-avatar>
+          </div>
+          <div class="flex-1"></div>
           <!-- WebSocket 连接状态 -->
           <div class="flex items-center gap-2 text-xs mr-2">
             <span
@@ -70,38 +73,62 @@
           </div>
         </div>
 
-        <!-- 聊天内容区 -->
-        <div class="flex-1 p-6 overflow-y-auto space-y-4">
-          <div v-if="messageList.length === 0" class="flex items-center justify-center h-full text-gray-400">
-            <p>暂无消息</p>
-          </div>
-          <div
-            v-for="msg in messageList"
-            :key="msg.messageId"
-            class="flex items-start gap-3"
-            :class="{ 'justify-end': msg.isSelf }"
+        <!-- 聊天内容区 - 固定高度 -->
+        <div class="flex-1 min-h-0 overflow-hidden">
+          <el-scrollbar
+            ref="scrollbarRef"
+            class="h-full"
+            @end-reached="handleEndReached"
           >
-            <!-- 对方头像 -->
-            <el-avatar v-if="!msg.isSelf" :size="32" :src="msg.avatar" class="flex-shrink-0">
-              {{ msg.senderName ? msg.senderName.charAt(0) : '?' }}
-            </el-avatar>
-            <!-- 消息内容 -->
-            <div
-              class="rounded-lg px-4 py-2 max-w-[60%] shadow-sm"
-              :class="msg.isSelf ? 'bg-[#D9FDD3]' : 'bg-white'"
-            >
-              <p class="text-sm">{{ msg.content }}</p>
-              <p class="text-xs text-gray-400 text-right mt-1">{{ formatTime(msg.sendTime) }}</p>
+            <div class="p-4 space-y-3">
+              <div v-if="messageList.length === 0" class="flex items-center justify-center py-20 text-gray-400">
+                <p>暂无消息</p>
+              </div>
+
+              <!-- 加载更多 - 放在顶部 -->
+              <div v-if="hasMore && messageList.length > 0" class="text-center py-2">
+                <span v-if="loadingMore" class="text-gray-400 text-sm">加载中...</span>
+                <button v-else class="text-blue-500 text-sm hover:underline" @click="loadMoreMessages">
+                  加载更多消息
+                </button>
+              </div>
+
+              <!-- 消息列表 - 倒序显示，最新消息在底部 -->
+              <div
+                v-for="msg in messageList"
+                :key="msg.messageId"
+                class="flex items-start gap-3"
+                :class="{ 'justify-end': msg.isSelf }"
+              >
+                <!-- 对方消息 -->
+                <div v-if="!msg.isSelf" class="flex flex-col items-center flex-shrink-0">
+                  <span class="text-xs mb-1 text-gray-500">{{ msg.senderName }}</span>
+                  <el-avatar :size="48" :src="msg.avatar">
+                    {{ msg.senderName ? msg.senderName.charAt(0) : '?' }}
+                  </el-avatar>
+                </div>
+                <!-- 消息内容 -->
+                <div
+                  class="rounded-lg px-4 py-2 max-w-[60%] shadow-sm"
+                  :class="msg.isSelf ? 'bg-[#D9FDD3]' : 'bg-white'"
+                >
+                  <p class="text-sm">{{ msg.content }}</p>
+                  <p class="text-xs text-gray-400 text-right mt-1">{{ formatTime(msg.sendTime) }}</p>
+                </div>
+                <!-- 自己消息 -->
+                <div v-if="msg.isSelf" class="flex flex-col items-center flex-shrink-0">
+                  <span class="text-xs mb-1 text-gray-500">我</span>
+                  <el-avatar :size="48" :src="currentUserAvatar">
+                    我
+                  </el-avatar>
+                </div>
+              </div>
             </div>
-            <!-- 自己头像 -->
-            <el-avatar v-if="msg.isSelf" :size="32" :src="currentUserAvatar" class="flex-shrink-0">
-              我
-            </el-avatar>
-          </div>
+          </el-scrollbar>
         </div>
 
         <!-- 输入框区域 -->
-        <div class="bg-white p-3 border-t border-gray-200">
+        <div class="bg-white p-3 border-t border-gray-200 flex-shrink-0">
           <div class="flex items-center gap-3 mb-3">
             <button class="text-gray-500"><Icon name="uil:smile" /></button>
             <button class="text-gray-500"><Icon name="uil:paperclip" /></button>
@@ -124,39 +151,54 @@
             </button>
           </div>
         </div>
-      </div>
+      </template>
     </main>
   </div>
 </template>
 
 <script setup>
-// 获取路由和URL参数
 const route = useRoute()
 const router = useRouter()
 
-// WebSocket
 const ws = useWebSocket()
 
-// 当前用户信息
 const currentUserAvatar = ref('')
 const currentUserId = ref('')
 
-// 会话列表
 const chatList = ref([])
-// 当前选中的会话索引
 const activeIndex = ref(-1)
-// 消息列表
 const messageList = ref([])
-// 输入的消息
 const inputMessage = ref('')
 
-// 当前选中的聊天对象
 const currentChat = computed(() => {
   if (activeIndex.value === -1) return {}
   return chatList.value[activeIndex.value]
 })
 
-// 格式化时间
+const creatingSessions = ref(new Set())
+
+const scrollbarRef = ref()
+const hasMore = ref(true)
+const loadingMore = ref(false)
+const currentPage = ref(1)
+const pageSize = 20
+const totalMessages = ref(0)
+
+const scrollToBottom = () => {
+  nextTick(() => {
+    if (scrollbarRef.value?.wrapRef) {
+      const wrap = scrollbarRef.value.wrapRef
+      scrollbarRef.value.setScrollTop(wrap.scrollHeight)
+    }
+  })
+}
+
+const handleEndReached = (direction) => {
+  if (direction === 'top') {
+    loadMoreMessages()
+  }
+}
+
 const formatTime = (time) => {
   if (!time) return ''
   const date = new Date(time)
@@ -170,13 +212,10 @@ const formatTime = (time) => {
   }
 }
 
-// 获取当前用户信息
 const getCurrentUserInfo = async () => {
   try {
-    const data = await useApi$('/user/userinfo/getMyInfo', {
-      method: 'POST'
-    })
-    if (data && data.code === 200) {
+    const data = await useApi$('/user/userinfo/getMyInfo', { method: 'POST' })
+    if (data?.code === 200) {
       currentUserAvatar.value = data.data.avatar
       currentUserId.value = data.data.uuid
     }
@@ -185,77 +224,65 @@ const getCurrentUserInfo = async () => {
   }
 }
 
-// 加载会话列表
 const loadSessionList = async () => {
   try {
-    const data = await useApi$('/user/session/getSessionList', {
-      method: 'POST'
-    })
-    if (data && data.code === 200) {
+    const data = await useApi$('/user/session/getSessionList', { method: 'POST' })
+    if (data?.code === 200) {
       const sessions = data.data || []
       chatList.value = sessions.map(session => ({
-        sessionId: session.sessionId,
+        sessionId: session.session_id,
         id: session.id,
         name: session.name,
         avatar: session.avatar,
-        lastMsg: '点击开始聊天',
-        time: '',
+        lastMsg: session.last_message || '点击开始聊天',
+        time: session.last_message_at || '',
         unread: 0
       }))
 
-      // 如果有URL参数，尝试选中对应会话
       const { session_id, receive_id } = route.query
       if (session_id || receive_id) {
         selectSessionByParams(session_id, receive_id)
       }
-    } else {
-      ElMessage.error(data?.message || '获取会话列表失败')
     }
   } catch (error) {
     console.error('获取会话列表失败:', error)
-    ElMessage.error('获取会话列表失败')
   }
 }
 
-// 根据参数选中会话
 const selectSessionByParams = (sessionId, receiveId) => {
   let index = -1
-
   if (sessionId) {
-    // 根据sessionId查找
     index = chatList.value.findIndex(item => item.sessionId === sessionId)
   }
-
   if (index === -1 && receiveId) {
-    // 根据receiveId查找
     index = chatList.value.findIndex(item => item.id === receiveId)
   }
-
   if (index !== -1) {
     selectSession(index)
   } else if (receiveId) {
-    // 如果找不到对应会话，但传了receiveId，说明是新创建的会话，需要刷新列表
     loadSessionList()
   }
 }
 
-// 选择会话
 const selectSession = async (index) => {
   activeIndex.value = index
   const session = chatList.value[index]
   if (!session) return
 
-  // 加载消息列表
-  await loadMessageList(session.id)
+  currentPage.value = 1
+  hasMore.value = true
+  loadingMore.value = false
+  messageList.value = []
 
-  // 清除URL参数
+  await loadMessageList(session.id)
+  scrollToBottom()
+
   if (route.query.session_id || route.query.receive_id) {
     router.replace({ path: '/chat' })
   }
 }
 
-// 加载消息列表
-const loadMessageList = async (receiveId) => {
+const loadMessageList = async (receiveId, page = 1) => {
   try {
     if (!receiveId) return
 
@@ -265,49 +292,63 @@ const loadMessageList = async (receiveId) => {
       : '/user/message/getUserMessageList'
 
     const body = isGroup
-      ? { group_id: receiveId }
-      : { user_one_id: currentUserId.value, user_two_id: receiveId }
+      ? { group_id: receiveId, page, page_size: pageSize }
+      : { user_one_id: currentUserId.value, user_two_id: receiveId, page, page_size: pageSize }
 
-    const data = await useApi$(url, {
-      method: 'POST',
-      body
-    })
+    const data = await useApi$(url, { method: 'POST', body })
 
-    if (data && data.code === 200) {
-      const messages = data.data || []
-      messageList.value = messages.map(msg => ({
-        messageId: msg.messageId || msg.uuid,
+    if (data?.code === 200) {
+      const list = data.data?.list || []
+      totalMessages.value = data.data?.total || 0
+
+      const messages = list.map(msg => ({
+        messageId: msg.uuid || msg.messageId,
         content: msg.content,
-        senderName: msg.senderName,
-        avatar: msg.avatar,
-        sendTime: msg.sendTime || msg.createdAt,
-        isSelf: msg.senderId === currentUserId.value || msg.isSelf
+        senderName: msg.send_name || msg.senderName,
+        avatar: msg.send_avatar || msg.avatar,
+        sendTime: msg.created_at || msg.createdAt,
+        isSelf: msg.send_id === currentUserId.value
       }))
-    } else {
-      ElMessage.error(data?.message || '获取消息列表失败')
+
+      if (page === 1) {
+        messageList.value = messages.reverse()
+      } else {
+        messageList.value = [...messages.reverse(), ...messageList.value]
+      }
+
+      hasMore.value = messageList.value.length < totalMessages.value
     }
   } catch (error) {
     console.error('获取消息列表失败:', error)
-    ElMessage.error('获取消息列表失败')
   }
 }
 
-// 发送消息
-const sendMessage = async () => {
-  if (!inputMessage.value.trim()) {
-    ElMessage.warning('请输入消息内容')
-    return
-  }
+const loadMoreMessages = async () => {
+  if (loadingMore.value || !hasMore.value) return
+  loadingMore.value = true
 
-  if (activeIndex.value === -1) {
-    ElMessage.warning('请先选择一个会话')
-    return
-  }
+  const oldScrollHeight = scrollbarRef.value?.wrapRef?.scrollHeight || 0
+
+  currentPage.value++
+  await loadMessageList(currentChat.value.id, currentPage.value)
+
+  nextTick(() => {
+    if (scrollbarRef.value?.wrapRef) {
+      const newScrollHeight = scrollbarRef.value.wrapRef.scrollHeight
+      scrollbarRef.value.setScrollTop(newScrollHeight - oldScrollHeight)
+    }
+  })
+
+  loadingMore.value = false
+}
+
+const sendMessage = async () => {
+  if (!inputMessage.value.trim()) return
+  if (activeIndex.value === -1) return
 
   const session = currentChat.value
   if (!session) return
 
-  // 使用 WebSocket 发送消息
   const success = ws.sendTextMessage(
     session.sessionId,
     inputMessage.value.trim(),
@@ -315,9 +356,9 @@ const sendMessage = async () => {
   )
 
   if (success) {
-    // 添加到本地消息列表
+    const tempId = 'temp_' + Date.now()
     messageList.value.push({
-      messageId: Date.now().toString(),
+      messageId: tempId,
       content: inputMessage.value.trim(),
       senderName: '我',
       avatar: currentUserAvatar.value,
@@ -325,65 +366,144 @@ const sendMessage = async () => {
       isSelf: true
     })
 
-    // 更新会话列表的最后消息
     session.lastMsg = inputMessage.value.trim()
     session.time = '刚刚'
-
     inputMessage.value = ''
-  } else {
-    ElMessage.error('发送失败，请检查网络连接')
+
+    scrollToBottom()
   }
 }
 
-// 处理收到的 WebSocket 消息
-const handleWebSocketMessage = (data) => {
-  console.log('收到消息:', data)
+const createNewSession = async (data) => {
+  const isGroup = data.receive_id.startsWith('G')
+  const contactId = isGroup ? data.receive_id : data.send_id
 
-  // 处理不同类型的消息
-  if (typeof data === 'object') {
-    // 文本消息
-    if (data.type === 0) {
-      // 检查是否是当前会话的消息
-      const currentSession = currentChat.value
-      if (currentSession && data.session_id === currentSession.sessionId) {
-        messageList.value.push({
-          messageId: data.uuid || Date.now().toString(),
-          content: data.content,
-          senderName: data.send_name,
-          avatar: data.send_avatar,
-          sendTime: new Date().toISOString(),
-          isSelf: data.send_id === currentUserId.value
-        })
+  if (creatingSessions.value.has(contactId)) return null
+  creatingSessions.value.add(contactId)
+
+  try {
+    const result = await useApi$('/user/session/openSession', {
+      method: 'POST',
+      body: { receive_id: contactId }
+    })
+
+    if (result?.code === 200) {
+      const session = result.data
+      const newSession = {
+        sessionId: session.sessionId,
+        id: contactId,
+        name: data.send_name,
+        avatar: data.send_avatar,
+        lastMsg: data.content,
+        time: '刚刚',
+        unread: 1
+      }
+      chatList.value.unshift(newSession)
+      return newSession
+    }
+  } catch (error) {
+    console.error('创建会话失败:', error)
+  } finally {
+    creatingSessions.value.delete(contactId)
+  }
+  return null
+}
+
+const handleWebSocketMessage = (data) => {
+  console.log('handleWebSocketMessage 收到数据:', data)
+  
+  if (typeof data !== 'object') {
+    console.log('数据不是对象，跳过')
+    return
+  }
+  
+  if (data.type !== 0) {
+    console.log('数据类型不是文本消息(type !== 0):', data.type)
+    return
+  }
+
+  const currentSession = currentChat.value
+  const isSelf = data.send_id === currentUserId.value
+
+  // 判断是否是当前会话：通过发送者和接收者ID匹配
+  let isCurrentSession = false
+  if (currentSession) {
+    if (isSelf) {
+      // 自己发的消息，检查接收者是否是当前聊天对象
+      isCurrentSession = data.receive_id === currentSession.id
+    } else {
+      // 别人发的消息，检查发送者是否是当前聊天对象
+      isCurrentSession = data.send_id === currentSession.id
+    }
+  }
+
+  console.log('当前会话:', currentSession?.id, '发送者:', data.send_id, '接收者:', data.receive_id, '是否当前会话:', isCurrentSession)
+
+  if (isCurrentSession) {
+    const realMessage = {
+      messageId: data.uuid,
+      content: data.content,
+      senderName: data.send_name,
+      avatar: data.send_avatar,
+      sendTime: new Date().toISOString(),
+      isSelf: isSelf
+    }
+
+    if (isSelf) {
+      const tempIndex = messageList.value.findIndex(m => m.messageId.startsWith('temp_') && m.content === data.content)
+      if (tempIndex !== -1) {
+        messageList.value[tempIndex] = realMessage
       } else {
-        // 更新其他会话的未读消息数
-        const sessionIndex = chatList.value.findIndex(item => item.sessionId === data.session_id)
-        if (sessionIndex !== -1) {
-          chatList.value[sessionIndex].unread++
-          chatList.value[sessionIndex].lastMsg = data.content
-          chatList.value[sessionIndex].time = '刚刚'
-        }
+        messageList.value.push(realMessage)
+      }
+    } else {
+      messageList.value.push(realMessage)
+    }
+
+    scrollToBottom()
+  } else {
+    console.log('不是当前会话，更新会话列表')
+    const sessionIndex = chatList.value.findIndex(item => item.sessionId === data.session_id)
+
+    if (sessionIndex !== -1) {
+      chatList.value[sessionIndex].unread++
+      chatList.value[sessionIndex].lastMsg = data.content
+      chatList.value[sessionIndex].time = '刚刚'
+    } else {
+      // 通过发送者/接收者ID查找会话
+      const contactId = isSelf ? data.receive_id : data.send_id
+      const existIndex = chatList.value.findIndex(item => item.id === contactId)
+      if (existIndex !== -1) {
+        chatList.value[existIndex].unread++
+        chatList.value[existIndex].lastMsg = data.content
+        chatList.value[existIndex].time = '刚刚'
+      } else {
+        createNewSession(data)
       }
     }
   }
 }
 
-// 页面加载时
 onMounted(async () => {
   await getCurrentUserInfo()
   await loadSessionList()
 
-  // 注册消息监听
   ws.onMessage(handleWebSocketMessage)
 
-  // 如果 WebSocket 未连接，尝试连接
+  console.log('WebSocket 连接状态:', ws.isConnected.value)
+  
   if (!ws.isConnected.value) {
+    console.log('WebSocket 未连接，尝试连接...')
     ws.connect()
   }
+})
+
+onUnmounted(() => {
+  ws.clearCallbacks()
 })
 </script>
 
 <style scoped>
-/* 滚动条美化，模拟微信风格 */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
