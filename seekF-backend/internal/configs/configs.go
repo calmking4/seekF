@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/joho/godotenv"
 )
 
 type MainConfig struct {
@@ -127,6 +128,9 @@ func loadEnvConfig(cfg *Config) {
 
 func LoadConfig() error {
 	config = new(Config)
+
+	// 加载 .env 文件
+	_ = godotenv.Load()
 
 	if _, err := toml.DecodeFile("./config/config.toml", config); err != nil {
 		log.Fatal(err.Error())
