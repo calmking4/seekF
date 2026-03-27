@@ -2,6 +2,7 @@ package configs
 
 import (
 	"log"
+	"os"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -90,29 +91,56 @@ type Config struct {
 
 var config *Config
 
+// loadEnvConfig 从环境变量加载敏感配置
+func loadEnvConfig(cfg *Config) {
+	// MySQL Password
+	if v := os.Getenv("MYSQL_PASSWORD"); v != "" {
+		cfg.MysqlConfig.Password = v
+	}
+
+	// Redis Password
+	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
+		cfg.RedisConfig.Password = v
+	}
+
+	// JWT Secret
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		cfg.JWTConfig.Secret = v
+	}
+
+	// SMS Access Key
+	if v := os.Getenv("SMS_ACCESS_KEY_ID"); v != "" {
+		cfg.AuthCodeConfig.AccessKeyID = v
+	}
+	if v := os.Getenv("SMS_ACCESS_KEY_SECRET"); v != "" {
+		cfg.AuthCodeConfig.AccessKeySecret = v
+	}
+
+	// OSS Access Key
+	if v := os.Getenv("OSS_ACCESS_KEY_ID"); v != "" {
+		cfg.OSSConfig.AccessKeyID = v
+	}
+	if v := os.Getenv("OSS_ACCESS_KEY_SECRET"); v != "" {
+		cfg.OSSConfig.AccessKeySecret = v
+	}
+}
+
 func LoadConfig() error {
-	// 本地部署
-	// if _, err := toml.DecodeFile("F:\\go\\kama-chat-server\\configs\\config_local.toml", config); err != nil {
-	// 	log.Fatal(err.Error())
-	// 	return err
-	// }
-	// Ubuntu22.04云服务器部署
-	// if _, err := toml.DecodeFile("/root/project/KamaChat/configs/config_local.toml", config); err != nil {
-	// 	log.Fatal(err.Error())
-	// 	return err
-	// }
-	// return nil
+	config = new(Config)
 
 	if _, err := toml.DecodeFile("./config/config.toml", config); err != nil {
 		log.Fatal(err.Error())
 		return err
 	}
+
+	// 从环境变量加载敏感配置（覆盖配置文件中的值）
+	loadEnvConfig(config)
+
 	return nil
 }
 
 func GetConfig() *Config {
 	if config == nil {
-		config = new(Config)
 		_ = LoadConfig()
 	}
 	return config
