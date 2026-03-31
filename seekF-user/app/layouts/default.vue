@@ -45,6 +45,9 @@
 // 引入路由对象，用于判断当前激活的导航项
 const route = useRoute()
 
+// 引入WebSocket
+const { disconnect } = useWebSocket()
+
 // 侧边栏导航数据
 const navItems = [
   { path: '/chat', label: '消息', icon: 'uil:comment-alt' },
@@ -56,6 +59,13 @@ const navItems = [
 
 const logout = async () => {
   try {
+    // 先断开WebSocket连接
+    try {
+      await disconnect();
+    } catch (wsErr) {
+      console.error('WebSocket断开失败:', wsErr);
+    }
+    
     // 向后端发送退出登录请求
     const res = await useApi$('/user/logout', {
       method: 'POST'

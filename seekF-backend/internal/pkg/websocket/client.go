@@ -46,13 +46,13 @@ func (c *Client) Read() {
 			if err := json.Unmarshal(jsonMessage, &message); err != nil {
 				zlog.Error(err.Error())
 			}
-			zlog.Info("接受到消息为: " + string(jsonMessage))
+			// zlog.Info("接受到消息为: " + string(jsonMessage))
 
 			// 发送消息到Kafka
 			if err := SendMessageToKafka(jsonMessage); err != nil {
 				zlog.Error(err.Error())
 			}
-			zlog.Info("已发送消息到Kafka: " + string(jsonMessage))
+			// zlog.Info("已发送消息到Kafka: " + string(jsonMessage))
 		}
 	}
 }

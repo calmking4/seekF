@@ -4,7 +4,6 @@ let messageCallbacks = []
 let reconnectAttempts = 0
 const maxReconnectAttempts = 5
 const reconnectInterval = 3000
-
 export const useWebSocket = () => {
     const config = useRuntimeConfig()
     const isConnected = ref(false)
@@ -95,12 +94,22 @@ export const useWebSocket = () => {
     }
 
     // 断开连接
-    const disconnect = () => {
+    const disconnect = async () => {
         if (wsInstance) {
             wsInstance.close()
             wsInstance = null
             isConnected.value = false
             console.log('WebSocket 已断开')
+            
+            // 调用WebSocket登出接口
+            try {
+                await useApi$('/user/ws/logout', {
+                    method: 'POST'
+                })
+                console.log('WebSocket登出接口调用成功')
+            } catch (error) {
+                console.error('WebSocket登出接口调用异常:', error)
+            }
         }
     }
 

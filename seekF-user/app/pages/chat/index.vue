@@ -204,14 +204,13 @@ const handleEndReached = (direction) => {
 const formatTime = (time) => {
   if (!time) return ''
   const date = new Date(time)
-  const now = new Date()
-  const isToday = date.toDateString() === now.toDateString()
-
-  if (isToday) {
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  } else {
-    return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
-  }
+  return date.toLocaleString('zh-CN', { 
+    year: 'numeric', 
+    month: '2-digit', 
+    day: '2-digit', 
+    hour: '2-digit', 
+    minute: '2-digit' 
+  })
 }
 
 const getCurrentUserInfo = async () => {

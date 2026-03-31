@@ -484,9 +484,6 @@ func (s *Server) handleLogout(client *Client) {
 	delete(s.Clients, client.Uuid)
 	s.mutex.Unlock()
 	zlog.Info(fmt.Sprintf("用户 %s 已断开连接", client.Uuid))
-	if err := client.Conn.WriteMessage(websocket.TextMessage, []byte("已退出登录")); err != nil {
-		zlog.Error(err.Error())
-	}
 }
 
 // SendClientToLogin 发送客户端登录信号
