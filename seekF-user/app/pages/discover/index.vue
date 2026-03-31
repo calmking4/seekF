@@ -29,7 +29,7 @@
           <div
             v-for="item in column.items"
             :key="item.uid"
-            class="waterfall-item bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow"
+            class="waterfall-item fade-in bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow"
             @click="handleItemClick(item)"
             :data-id="item.uid"
           >
@@ -92,7 +92,7 @@ const noMore = ref(false)
 const page = ref(1)
 const pageSize = 12
 const waterfallContainer = ref(null)
-let sr = null // ScrollReveal 实例
+let observer = null
 let orderCounter = 0
 
 // 原始模拟数据（你提供的数组）
@@ -111,48 +111,48 @@ const originalItems = [
   { id: '12', src: 'https://images.pexels.com/photos/34950/pexels-photo.jpg', type: 'image', title: 'Waterfall Scene', height: 300 },
   { id: '13', src: 'https://images.pexels.com/photos/1565982/pexels-photo-1565982.jpeg', type: 'image', title: 'Food Plate', height: 320 },
   { id: '14', src: 'https://images.pexels.com/photos/531880/pexels-photo-531880.jpeg', type: 'image', title: 'Wooden Texture', height: 290 },
-  { id: '1', src: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e', type: 'image', title: 'Tropical Beach', height: 300 },
-  { id: '2', src: 'https://images.unsplash.com/photo-1519681393784-d120267933ba', type: 'image', title: 'Mountain Peak', height: 400 },
-  { id: '3', src: 'https://images.pexels.com/photos/417074/pexels-photo-417074.jpeg', type: 'image', title: 'Lake Reflection', height: 250 },
-  { id: '4', src: 'https://images.unsplash.com/photo-1472214103451-9374bd1c798e', type: 'image', title: 'Forest Path', height: 350 },
-  { id: '5', src: 'https://images.pexels.com/photos/443446/pexels-photo-443446.jpeg', type: 'image', title: 'Snowy Mountains', height: 280 },
-  { id: '6', src: 'https://images.pexels.com/photos/462118/pexels-photo-462118.jpeg', type: 'image', title: 'Flower Close-up', height: 260 },
-  { id: '7', src: 'https://images.pexels.com/photos/735911/pexels-photo-735911.jpeg', type: 'image', title: 'Laptop Workspace', height: 290 },
-  { id: '8', src: 'https://images.unsplash.com/photo-1493246507139-91e8fad9978e', type: 'image', title: 'River Valley', height: 340 },
-  { id: '9', src: 'https://images.unsplash.com/photo-1519046904884-53103b34b206', type: 'image', title: 'Ocean Waves', height: 310 },
-  { id: '10', src: 'https://images.pexels.com/photos/1323550/pexels-photo-1323550.jpeg', type: 'image', title: 'Sunset Horizon', height: 330 },
-  { id: '11', src: 'https://images.unsplash.com/photo-1506748686214-e9df14d4d9d0', type: 'image', title: 'Urban Street', height: 360 },
-  { id: '12', src: 'https://images.pexels.com/photos/34950/pexels-photo.jpg', type: 'image', title: 'Waterfall Scene', height: 300 },
-  { id: '13', src: 'https://images.pexels.com/photos/1565982/pexels-photo-1565982.jpeg', type: 'image', title: 'Food Plate', height: 320 },
-  { id: '14', src: 'https://images.pexels.com/photos/531880/pexels-photo-531880.jpeg', type: 'image', title: 'Wooden Texture', height: 290 },
-  { id: '1', src: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e', type: 'image', title: 'Tropical Beach', height: 300 },
-  { id: '2', src: 'https://images.unsplash.com/photo-1519681393784-d120267933ba', type: 'image', title: 'Mountain Peak', height: 400 },
-  { id: '3', src: 'https://images.pexels.com/photos/417074/pexels-photo-417074.jpeg', type: 'image', title: 'Lake Reflection', height: 250 },
-  { id: '4', src: 'https://images.unsplash.com/photo-1472214103451-9374bd1c798e', type: 'image', title: 'Forest Path', height: 350 },
-  { id: '5', src: 'https://images.pexels.com/photos/443446/pexels-photo-443446.jpeg', type: 'image', title: 'Snowy Mountains', height: 280 },
-  { id: '6', src: 'https://images.pexels.com/photos/462118/pexels-photo-462118.jpeg', type: 'image', title: 'Flower Close-up', height: 260 },
-  { id: '7', src: 'https://images.pexels.com/photos/735911/pexels-photo-735911.jpeg', type: 'image', title: 'Laptop Workspace', height: 290 },
-  { id: '8', src: 'https://images.unsplash.com/photo-1493246507139-91e8fad9978e', type: 'image', title: 'River Valley', height: 340 },
-  { id: '9', src: 'https://images.unsplash.com/photo-1519046904884-53103b34b206', type: 'image', title: 'Ocean Waves', height: 310 },
-  { id: '10', src: 'https://images.pexels.com/photos/1323550/pexels-photo-1323550.jpeg', type: 'image', title: 'Sunset Horizon', height: 330 },
-  { id: '11', src: 'https://images.unsplash.com/photo-1506748686214-e9df14d4d9d0', type: 'image', title: 'Urban Street', height: 360 },
-  { id: '12', src: 'https://images.pexels.com/photos/34950/pexels-photo.jpg', type: 'image', title: 'Waterfall Scene', height: 300 },
-  { id: '13', src: 'https://images.pexels.com/photos/1565982/pexels-photo-1565982.jpeg', type: 'image', title: 'Food Plate', height: 320 },
-  { id: '14', src: 'https://images.pexels.com/photos/531880/pexels-photo-531880.jpeg', type: 'image', title: 'Wooden Texture', height: 290 },
-  { id: '1', src: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e', type: 'image', title: 'Tropical Beach', height: 300 },
-  { id: '2', src: 'https://images.unsplash.com/photo-1519681393784-d120267933ba', type: 'image', title: 'Mountain Peak', height: 400 },
-  { id: '3', src: 'https://images.pexels.com/photos/417074/pexels-photo-417074.jpeg', type: 'image', title: 'Lake Reflection', height: 250 },
-  { id: '4', src: 'https://images.unsplash.com/photo-1472214103451-9374bd1c798e', type: 'image', title: 'Forest Path', height: 350 },
-  { id: '5', src: 'https://images.pexels.com/photos/443446/pexels-photo-443446.jpeg', type: 'image', title: 'Snowy Mountains', height: 280 },
-  { id: '6', src: 'https://images.pexels.com/photos/462118/pexels-photo-462118.jpeg', type: 'image', title: 'Flower Close-up', height: 260 },
-  { id: '7', src: 'https://images.pexels.com/photos/735911/pexels-photo-735911.jpeg', type: 'image', title: 'Laptop Workspace', height: 290 },
-  { id: '8', src: 'https://images.unsplash.com/photo-1493246507139-91e8fad9978e', type: 'image', title: 'River Valley', height: 340 },
-  { id: '9', src: 'https://images.unsplash.com/photo-1519046904884-53103b34b206', type: 'image', title: 'Ocean Waves', height: 310 },
-  { id: '10', src: 'https://images.pexels.com/photos/1323550/pexels-photo-1323550.jpeg', type: 'image', title: 'Sunset Horizon', height: 330 },
-  { id: '11', src: 'https://images.unsplash.com/photo-1506748686214-e9df14d4d9d0', type: 'image', title: 'Urban Street', height: 360 },
-  { id: '12', src: 'https://images.pexels.com/photos/34950/pexels-photo.jpg', type: 'image', title: 'Waterfall Scene', height: 300 },
-  { id: '13', src: 'https://images.pexels.com/photos/1565982/pexels-photo-1565982.jpeg', type: 'image', title: 'Food Plate', height: 320 },
-  { id: '14', src: 'https://images.pexels.com/photos/531880/pexels-photo-531880.jpeg', type: 'image', title: 'Wooden Texture', height: 290 },
+  { id: '15', src: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e', type: 'image', title: 'Tropical Beach', height: 300 },
+  { id: '16', src: 'https://images.unsplash.com/photo-1519681393784-d120267933ba', type: 'image', title: 'Mountain Peak', height: 400 },
+  { id: '17', src: 'https://images.pexels.com/photos/417074/pexels-photo-417074.jpeg', type: 'image', title: 'Lake Reflection', height: 250 },
+  { id: '18', src: 'https://images.unsplash.com/photo-1472214103451-9374bd1c798e', type: 'image', title: 'Forest Path', height: 350 },
+  { id: '19', src: 'https://images.pexels.com/photos/443446/pexels-photo-443446.jpeg', type: 'image', title: 'Snowy Mountains', height: 280 },
+  { id: '20', src: 'https://images.pexels.com/photos/462118/pexels-photo-462118.jpeg', type: 'image', title: 'Flower Close-up', height: 260 },
+  { id: '21', src: 'https://images.pexels.com/photos/735911/pexels-photo-735911.jpeg', type: 'image', title: 'Laptop Workspace', height: 290 },
+  { id: '22', src: 'https://images.unsplash.com/photo-1493246507139-91e8fad9978e', type: 'image', title: 'River Valley', height: 340 },
+  { id: '23', src: 'https://images.unsplash.com/photo-1519046904884-53103b34b206', type: 'image', title: 'Ocean Waves', height: 310 },
+  { id: '24', src: 'https://images.pexels.com/photos/1323550/pexels-photo-1323550.jpeg', type: 'image', title: 'Sunset Horizon', height: 330 },
+  { id: '25', src: 'https://images.unsplash.com/photo-1506748686214-e9df14d4d9d0', type: 'image', title: 'Urban Street', height: 360 },
+  { id: '26', src: 'https://images.pexels.com/photos/34950/pexels-photo.jpg', type: 'image', title: 'Waterfall Scene', height: 300 },
+  { id: '27', src: 'https://images.pexels.com/photos/1565982/pexels-photo-1565982.jpeg', type: 'image', title: 'Food Plate', height: 320 },
+  { id: '28', src: 'https://images.pexels.com/photos/531880/pexels-photo-531880.jpeg', type: 'image', title: 'Wooden Texture', height: 290 },
+  { id: '29', src: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e', type: 'image', title: 'Tropical Beach', height: 300 },
+  { id: '30', src: 'https://images.unsplash.com/photo-1519681393784-d120267933ba', type: 'image', title: 'Mountain Peak', height: 400 },
+  { id: '31', src: 'https://images.pexels.com/photos/417074/pexels-photo-417074.jpeg', type: 'image', title: 'Lake Reflection', height: 250 },
+  { id: '32', src: 'https://images.unsplash.com/photo-1472214103451-9374bd1c798e', type: 'image', title: 'Forest Path', height: 350 },
+  { id: '33', src: 'https://images.pexels.com/photos/443446/pexels-photo-443446.jpeg', type: 'image', title: 'Snowy Mountains', height: 280 },
+  { id: '34', src: 'https://images.pexels.com/photos/462118/pexels-photo-462118.jpeg', type: 'image', title: 'Flower Close-up', height: 260 },
+  { id: '35', src: 'https://images.pexels.com/photos/735911/pexels-photo-735911.jpeg', type: 'image', title: 'Laptop Workspace', height: 290 },
+  { id: '36', src: 'https://images.unsplash.com/photo-1493246507139-91e8fad9978e', type: 'image', title: 'River Valley', height: 340 },
+  { id: '37', src: 'https://images.unsplash.com/photo-1519046904884-53103b34b206', type: 'image', title: 'Ocean Waves', height: 310 },
+  { id: '38', src: 'https://images.pexels.com/photos/1323550/pexels-photo-1323550.jpeg', type: 'image', title: 'Sunset Horizon', height: 330 },
+  { id: '39', src: 'https://images.unsplash.com/photo-1506748686214-e9df14d4d9d0', type: 'image', title: 'Urban Street', height: 360 },
+  { id: '40', src: 'https://images.pexels.com/photos/34950/pexels-photo.jpg', type: 'image', title: 'Waterfall Scene', height: 300 },
+  { id: '41', src: 'https://images.pexels.com/photos/1565982/pexels-photo-1565982.jpeg', type: 'image', title: 'Food Plate', height: 320 },
+  { id: '42', src: 'https://images.pexels.com/photos/531880/pexels-photo-531880.jpeg', type: 'image', title: 'Wooden Texture', height: 290 },
+  { id: '43', src: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e', type: 'image', title: 'Tropical Beach', height: 300 },
+  { id: '44', src: 'https://images.unsplash.com/photo-1519681393784-d120267933ba', type: 'image', title: 'Mountain Peak', height: 400 },
+  { id: '45', src: 'https://images.pexels.com/photos/417074/pexels-photo-417074.jpeg', type: 'image', title: 'Lake Reflection', height: 250 },
+  { id: '46', src: 'https://images.unsplash.com/photo-1472214103451-9374bd1c798e', type: 'image', title: 'Forest Path', height: 350 },
+  { id: '47', src: 'https://images.pexels.com/photos/443446/pexels-photo-443446.jpeg', type: 'image', title: 'Snowy Mountains', height: 280 },
+  { id: '48', src: 'https://images.pexels.com/photos/462118/pexels-photo-462118.jpeg', type: 'image', title: 'Flower Close-up', height: 260 },
+  { id: '49', src: 'https://images.pexels.com/photos/735911/pexels-photo-735911.jpeg', type: 'image', title: 'Laptop Workspace', height: 290 },
+  { id: '50', src: 'https://images.unsplash.com/photo-1493246507139-91e8fad9978e', type: 'image', title: 'River Valley', height: 340 },
+  { id: '51', src: 'https://images.unsplash.com/photo-1519046904884-53103b34b206', type: 'image', title: 'Ocean Waves', height: 310 },
+  { id: '52', src: 'https://images.pexels.com/photos/1323550/pexels-photo-1323550.jpeg', type: 'image', title: 'Sunset Horizon', height: 330 },
+  { id: '53', src: 'https://images.unsplash.com/photo-1506748686214-e9df14d4d9d0', type: 'image', title: 'Urban Street', height: 360 },
+  { id: '54', src: 'https://images.pexels.com/photos/34950/pexels-photo.jpg', type: 'image', title: 'Waterfall Scene', height: 300 },
+  { id: '55', src: 'https://images.pexels.com/photos/1565982/pexels-photo-1565982.jpeg', type: 'image', title: 'Food Plate', height: 320 },
+  { id: '56', src: 'https://images.pexels.com/photos/531880/pexels-photo-531880.jpeg', type: 'image', title: 'Wooden Texture', height: 290 },
 ]
 
 // 头像颜色数组
@@ -284,18 +284,21 @@ const loadMore = async () => {
     noMore.value = true
   }
 
-  // 数据加载后重新初始化动画
+  // 数据加载后观察新元素
   if (process.client) {
     await nextTick()
-    await initScrollReveal()
+    observeNewItems()
   }
 }
 
 // 滚动到底部监听
-const handleScroll = () => {
-  const scrollTop = document.documentElement.scrollTop || document.body.scrollTop
-  const scrollHeight = document.documentElement.scrollHeight || document.body.scrollHeight
-  const clientHeight = document.documentElement.clientHeight || window.innerHeight
+const handleScroll = (e) => {
+  const target = e?.target
+  if (!target) return
+  
+  const scrollTop = target.scrollTop
+  const scrollHeight = target.scrollHeight
+  const clientHeight = target.clientHeight
 
   if (scrollTop + clientHeight >= scrollHeight - 200) {
     loadMore()
@@ -307,82 +310,88 @@ const handleResize = () => {
   rebuildColumns()
 }
 
-// 初始化 ScrollReveal 动画（仅客户端）
-const initScrollReveal = async () => {
-  if (!process.client || !waterfallContainer.value) return
+// 使用 IntersectionObserver 观察新元素，添加可见类
+const observeNewItems = () => {
+  if (!waterfallContainer.value) return
 
-  const ScrollReveal = (await import('scrollreveal')).default
-
-  // 复用单例，避免重复创建
-  if (!sr) {
-    sr = ScrollReveal({
-      origin: 'bottom',
-      distance: '20px',
-      duration: 600,
-      delay: 80,
-      interval: 60,
-      opacity: 0,
-      scale: 0.95,
-      reset: false,
-      disable: !process.client
-    })
-
-    // 只注册一次 reveal；后续新增节点用 sync()，避免旧节点重复动画
-    sr.reveal('.waterfall-item')
-    return
-  }
-
-  sr.sync?.()
+  const items = waterfallContainer.value.querySelectorAll('.fade-in:not(.visible)')
+  items.forEach((item, index) => {
+    // 添加延迟，实现依次出现的效果
+    item.style.transitionDelay = `${index * 50}ms`
+    observer?.observe(item)
+  })
 }
 
-// 卡片点击
-const handleItemClick = (item) => {
-  console.log('点击了笔记:', item)
-  // 可跳转到详情页：navigateTo(`/note/${item.id}`)
+// 滚动事件监听的元素
+let scrollEl = null
+
+// 获取最近的可滚动父元素
+const getScrollParent = () => {
+  if (!process.client) return null
+  let el = waterfallContainer.value?.parentElement
+  while (el) {
+    const style = window.getComputedStyle(el)
+    if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+      return el
+    }
+    el = el.parentElement
+  }
+  return window
 }
 
 // 仅在客户端执行的生命周期
 onMounted(() => {
   if (process.client) {
     initColumns()
+    
+    // 创建 IntersectionObserver
+    observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible')
+          observer?.unobserve(entry.target)
+        }
+      })
+    }, {
+      threshold: 0.1
+    })
+
     loadMore()
-    window.addEventListener('scroll', handleScroll)
+    
+    nextTick(() => {
+      scrollEl = getScrollParent()
+      scrollEl?.addEventListener('scroll', handleScroll)
+    })
+    
     window.addEventListener('resize', handleResize)
   }
 })
 
 onUnmounted(() => {
   if (process.client) {
-    window.removeEventListener('scroll', handleScroll)
+    scrollEl?.removeEventListener('scroll', handleScroll)
     window.removeEventListener('resize', handleResize)
-    sr?.destroy?.()
-    sr = null
+    observer?.disconnect()
+    observer = null
   }
 })
+
+// 卡片点击
+const handleItemClick = (item) => {
+  console.log('点击了笔记:', item)
+  // 可跳转到详情页：navigateTo(`/note/${item.id}`)
+}
 </script>
 
 <style scoped>
-/* 瀑布流卡片动画 */
-.waterfall-item {
+.fade-in {
+  opacity: 0;
+  transform: translateY(20px);
   transition: opacity 0.6s ease, transform 0.6s ease;
 }
-.waterfall-item:not(.opacity-0) {
+
+.fade-in.visible {
   opacity: 1;
   transform: translateY(0);
-}
-
-/* 图片加载失败兜底样式 */
-img {
-  object-fit: cover;
-}
-img::after {
-  content: '图片加载失败';
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  background-color: #f5f5f5;
-  color: #999;
 }
 </style>

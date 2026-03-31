@@ -34,7 +34,7 @@
     </aside>
 
     <!-- 右侧主内容区 -->
-    <main class="flex-1 h-full overflow-hidden">
+    <main class="flex-1 h-full overflow-y-auto">
       <slot />
     </main>
   </div>
