@@ -39,6 +39,7 @@ func main() {
 
 	// 初始化Kafka并启动WebSocket服务器
 	kafka.KafkaServiceInstance.Init()
+	websocket.ChatServer = websocket.NewServer(sessionService, messageDAO, sessionDAO, groupDAO)
 	go websocket.ChatServer.Start()
 
 	// 初始化路由器

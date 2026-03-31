@@ -11,6 +11,8 @@ type MessageDAO interface {
 	GetMessagesByReceiverId(receiverId string, limit int, offset int) ([]models.Message, error)
 	CountMessagesBetweenUsers(userOneId string, userTwoId string) (int64, error)
 	CountMessagesByReceiverId(receiverId string) (int64, error)
+	CreateMessage(message *models.Message) error
+	UpdateMessageStatus(uuid string, status int8) error
 }
 
 // MessageDAOImpl 消息DAO实现
@@ -47,4 +49,14 @@ func (d *MessageDAOImpl) CountMessagesByReceiverId(receiverId string) (int64, er
 	var count int64
 	result := db.GormDB.Model(&models.Message{}).Where("receive_id = ?", receiverId).Count(&count)
 	return count, result.Error
+}
+
+// CreateMessage 创建消息
+func (d *MessageDAOImpl) CreateMessage(message *models.Message) error {
+	return db.GormDB.Create(message).Error
+}
+
+// UpdateMessageStatus 更新消息状态
+func (d *MessageDAOImpl) UpdateMessageStatus(uuid string, status int8) error {
+	return db.GormDB.Model(&models.Message{}).Where("uuid = ?", uuid).Update("status", status).Error
 }

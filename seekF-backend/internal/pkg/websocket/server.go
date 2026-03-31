@@ -7,7 +7,6 @@ import (
 	"seekF-backend/internal/configs"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
-	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/enum/message_enum/message_status_enum"
 	"seekF-backend/internal/pkg/enum/message_enum/message_type_enum"
 	"seekF-backend/internal/pkg/kafka"
@@ -23,40 +22,37 @@ import (
 	segmentioKafka "github.com/segmentio/kafka-go"
 
 	userdao "seekF-backend/internal/dao/user_dao"
-	userservice "seekF-backend/internal/services/user_service"
 	userreq "seekF-backend/internal/dto/user/user_req"
 	userresp "seekF-backend/internal/dto/user/user_resp"
+	userservice "seekF-backend/internal/services/user_service"
 )
 
 // ChatServer 是全局的WebSocket服务器实例
-var ChatServer = NewServer()
+var ChatServer *Server
 
 // Server 管理所有WebSocket客户端
 type Server struct {
-	Clients      map[string]*Client
-	mutex        *sync.Mutex
-	Login        chan *Client // 登录通道
-	Logout       chan *Client // 退出登录通道
+	Clients        map[string]*Client
+	mutex          *sync.Mutex
+	Login          chan *Client // 登录通道
+	Logout         chan *Client // 退出登录通道
 	sessionService userservice.SessionService
+	messageDAO     userdao.MessageDAO
+	sessionDAO     userdao.SessionDAO
+	groupDAO       userdao.GroupDAO
 }
 
 // NewServer 创建新的WebSocket服务器
-func NewServer() *Server {
-	// 初始化DAO
-	sessionDAO := userdao.NewSessionDAO()
-	userInfoDAO := userdao.NewUserInfoDAO()
-	groupDAO := userdao.NewGroupDAO()
-	contactDAO := userdao.NewContactDAO()
-	
-	// 初始化Service
-	sessionService := userservice.NewSessionService(sessionDAO, userInfoDAO, groupDAO, contactDAO)
-	
+func NewServer(sessionService userservice.SessionService, messageDAO userdao.MessageDAO, sessionDAO userdao.SessionDAO, groupDAO userdao.GroupDAO) *Server {
 	return &Server{
 		Clients:        make(map[string]*Client),
 		mutex:          &sync.Mutex{},
 		Login:          make(chan *Client, constants.CHANNEL_SIZE),
 		Logout:         make(chan *Client, constants.CHANNEL_SIZE),
 		sessionService: sessionService,
+		messageDAO:     messageDAO,
+		sessionDAO:     sessionDAO,
+		groupDAO:       groupDAO,
 	}
 }
 
@@ -96,8 +92,8 @@ func (s *Server) readKafkaMessages() {
 			zlog.Error(err.Error())
 			continue
 		}
-		zlog.Info(fmt.Sprintf("收到Kafka消息: topic=%s, partition=%d, offset=%d",
-			kafkaMessage.Topic, kafkaMessage.Partition, kafkaMessage.Offset))
+		// zlog.Info(fmt.Sprintf("收到Kafka消息: topic=%s, partition=%d, offset=%d",
+		// 	kafkaMessage.Topic, kafkaMessage.Partition, kafkaMessage.Offset))
 
 		data := kafkaMessage.Value
 		var chatMessageReq userreq.ChatMessageRequest
@@ -105,7 +101,7 @@ func (s *Server) readKafkaMessages() {
 			zlog.Error("解析消息失败: " + err.Error())
 			continue
 		}
-		zlog.Info("原消息反序列化后: " + fmt.Sprintf("%+v", chatMessageReq))
+		// zlog.Info("原消息反序列化后: " + fmt.Sprintf("%+v", chatMessageReq))
 
 		// 根据消息类型处理
 		switch chatMessageReq.Type {
@@ -141,7 +137,7 @@ func (s *Server) handleTextMessage(chatMessageReq *userreq.ChatMessageRequest) {
 	}
 
 	// 保存消息到数据库
-	if err := db.GormDB.Create(message).Error; err != nil {
+	if err := s.messageDAO.CreateMessage(message); err != nil {
 		zlog.Error("保存消息失败: " + err.Error())
 		return
 	}
@@ -205,7 +201,7 @@ func (s *Server) handleFileMessage(chatMessageReq *userreq.ChatMessageRequest) {
 	}
 
 	// 保存消息到数据库
-	if err := db.GormDB.Create(message).Error; err != nil {
+	if err := s.messageDAO.CreateMessage(message); err != nil {
 		zlog.Error("保存消息失败: " + err.Error())
 		return
 	}
@@ -287,7 +283,7 @@ func (s *Server) handleAVCallMessage(chatMessageReq *userreq.ChatMessageRequest)
 
 	// 特定类型的音视频通话消息需要存储
 	if avData.MessageId == "PROXY" && (avData.Type == "start_call" || avData.Type == "receive_call" || avData.Type == "reject_call") {
-		if err := db.GormDB.Create(message).Error; err != nil {
+		if err := s.messageDAO.CreateMessage(message); err != nil {
 			zlog.Error("保存音视频通话消息失败: " + err.Error())
 			return
 		}
@@ -370,8 +366,8 @@ func (s *Server) sendToUser(message *models.Message, messageBack *MessageBack, m
 // sendToGroup 发送消息给群组
 func (s *Server) sendToGroup(message *models.Message, messageBack *MessageBack, messageRsp *userresp.GetMessageListRespond) {
 	// 获取群组信息
-	var group models.GroupInfo
-	if err := db.GormDB.Where("uuid = ?", message.ReceiveId).First(&group).Error; err != nil {
+	group, err := s.groupDAO.GetGroupInfoByUuid(message.ReceiveId)
+	if err != nil {
 		zlog.Error("获取群组信息失败: " + err.Error())
 		return
 	}
@@ -398,12 +394,9 @@ func (s *Server) sendToGroup(message *models.Message, messageBack *MessageBack, 
 	} else if message.Type == message_type_enum.AVCall {
 		lastMessage = "[音视频通话]"
 	}
-	
+
 	// 批量更新会话最后消息
-	if err := db.GormDB.Model(&models.Session{}).Where("receive_id = ?", message.ReceiveId).Updates(map[string]interface{}{
-		"last_message":    lastMessage,
-		"last_message_at": time.Now(),
-	}).Error; err != nil {
+	if err := s.sessionDAO.UpdateSessionLastMessageByReceiveId(message.ReceiveId, lastMessage, time.Now()); err != nil {
 		zlog.Error("批量更新群聊会话最后消息失败: " + err.Error())
 	} else {
 		// 清除所有群成员的会话列表缓存
@@ -479,7 +472,7 @@ func (s *Server) handleLogin(client *Client) {
 	s.mutex.Lock()
 	s.Clients[client.Uuid] = client
 	s.mutex.Unlock()
-	zlog.Info(fmt.Sprintf("用户 %s 已连接", client.Uuid))
+	// zlog.Info(fmt.Sprintf("用户 %s 已连接", client.Uuid))
 	if err := client.Conn.WriteMessage(websocket.TextMessage, []byte("欢迎来到seekF聊天服务器")); err != nil {
 		zlog.Error(err.Error())
 	}
@@ -538,8 +531,8 @@ func SendMessageToKafka(jsonMessage []byte) error {
 }
 
 // UpdateMessageStatus 更新消息状态为已发送
-func UpdateMessageStatus(uuid string) {
-	if err := db.GormDB.Model(&models.Message{}).Where("uuid = ?", uuid).Update("status", message_status_enum.Sent).Error; err != nil {
+func (s *Server) UpdateMessageStatus(uuid string) {
+	if err := s.messageDAO.UpdateMessageStatus(uuid, message_status_enum.Sent); err != nil {
 		zlog.Error("更新消息状态失败: " + err.Error())
 	}
 }
@@ -549,17 +542,14 @@ func (s *Server) updateSessionLastMessage(sessionId string, lastMessage string) 
 	now := time.Now()
 
 	// 更新会话最后消息
-	if err := db.GormDB.Model(&models.Session{}).Where("uuid = ?", sessionId).Updates(map[string]interface{}{
-		"last_message":    lastMessage,
-		"last_message_at": now,
-	}).Error; err != nil {
+	if err := s.sessionDAO.UpdateSessionLastMessage(sessionId, lastMessage, now); err != nil {
 		zlog.Error("更新会话最后消息失败: " + err.Error())
 		return
 	}
 
 	// 清除会话列表缓存
-	var session models.Session
-	if err := db.GormDB.Where("uuid = ?", sessionId).First(&session).Error; err == nil {
+	session, err := s.sessionDAO.GetSessionByUuid(sessionId)
+	if err == nil {
 		myredis.DelKeysWithPattern("session_list_" + session.SendId)
 	}
 }

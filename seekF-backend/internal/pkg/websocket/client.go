@@ -68,7 +68,7 @@ func (c *Client) Write() {
 			return // 直接断开websocket
 		}
 		// 说明顺利发送，修改状态为已发送
-		UpdateMessageStatus(messageBack.Uuid)
+		ChatServer.UpdateMessageStatus(messageBack.Uuid)
 	}
 }
 

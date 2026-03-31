@@ -3,6 +3,7 @@ package userdao
 import (
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/db"
+	"time"
 )
 
 type SessionDAO interface {
@@ -15,6 +16,9 @@ type SessionDAO interface {
 	CreateSession(session *models.Session) error
 	DeleteSession(sessionId string) error
 	GetSessionListBySendId(userId string) ([]models.Session, error)
+	GetSessionByUuid(uuid string) (models.Session, error)
+	UpdateSessionLastMessage(sessionId string, lastMessage string, lastMessageAt time.Time) error
+	UpdateSessionLastMessageByReceiveId(receiveId string, lastMessage string, lastMessageAt time.Time) error
 }
 
 type SessionDAOImpl struct{}
@@ -81,4 +85,27 @@ func (d *SessionDAOImpl) GetSessionListBySendId(userId string) ([]models.Session
 	var sessionList []models.Session
 	result := db.GormDB.Order("created_at DESC").Where("send_id = ?", userId).Find(&sessionList)
 	return sessionList, result.Error
+}
+
+// GetSessionByUuid 根据UUID获取会话
+func (d *SessionDAOImpl) GetSessionByUuid(uuid string) (models.Session, error) {
+	var session models.Session
+	result := db.GormDB.Where("uuid = ?", uuid).First(&session)
+	return session, result.Error
+}
+
+// UpdateSessionLastMessage 根据会话ID更新最后消息
+func (d *SessionDAOImpl) UpdateSessionLastMessage(sessionId string, lastMessage string, lastMessageAt time.Time) error {
+	return db.GormDB.Model(&models.Session{}).Where("uuid = ?", sessionId).Updates(map[string]interface{}{
+		"last_message":    lastMessage,
+		"last_message_at": lastMessageAt,
+	}).Error
+}
+
+// UpdateSessionLastMessageByReceiveId 根据接收者ID更新最后消息（用于群聊）
+func (d *SessionDAOImpl) UpdateSessionLastMessageByReceiveId(receiveId string, lastMessage string, lastMessageAt time.Time) error {
+	return db.GormDB.Model(&models.Session{}).Where("receive_id = ?", receiveId).Updates(map[string]interface{}{
+		"last_message":    lastMessage,
+		"last_message_at": lastMessageAt,
+	}).Error
 }
