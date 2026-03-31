@@ -97,30 +97,34 @@
               <div
                 v-for="msg in messageList"
                 :key="msg.messageId"
-                class="flex items-start gap-3"
+                class="flex items-center gap-3"
                 :class="{ 'justify-end': msg.isSelf }"
               >
                 <!-- 对方消息 -->
-                <div v-if="!msg.isSelf" class="flex flex-col items-center flex-shrink-0">
-                  <span class="text-xs mb-1 text-gray-500">{{ msg.senderName }}</span>
-                  <el-avatar :size="48" :src="msg.avatar">
-                    {{ msg.senderName ? msg.senderName.charAt(0) : '?' }}
-                  </el-avatar>
+                <div v-if="!msg.isSelf" class="flex-shrink-0">
+                  <div class="flex flex-col items-center">
+                    <span class="text-xs mb-1 text-gray-500">{{ msg.senderName }}</span>
+                    <el-avatar :size="48" :src="msg.avatar">
+                      {{ msg.senderName ? msg.senderName.charAt(0) : '?' }}
+                    </el-avatar>
+                  </div>
                 </div>
                 <!-- 消息内容 -->
                 <div
-                  class="rounded-lg px-4 py-2 max-w-[60%] shadow-sm"
+                  class="rounded-lg px-4 py-2 max-w-[60%] shadow-sm flex-shrink-0"
                   :class="msg.isSelf ? 'bg-[#D9FDD3]' : 'bg-white'"
                 >
                   <p class="text-sm">{{ msg.content }}</p>
                   <p class="text-xs text-gray-400 text-right mt-1">{{ formatTime(msg.sendTime) }}</p>
                 </div>
                 <!-- 自己消息 -->
-                <div v-if="msg.isSelf" class="flex flex-col items-center flex-shrink-0">
-                  <span class="text-xs mb-1 text-gray-500">我</span>
-                  <el-avatar :size="48" :src="currentUserAvatar">
-                    我
-                  </el-avatar>
+                <div v-if="msg.isSelf" class="flex-shrink-0">
+                  <div class="flex flex-col items-center">
+                    <span class="text-xs mb-1 text-gray-500">我</span>
+                    <el-avatar :size="48" :src="currentUserAvatar">
+                      我
+                    </el-avatar>
+                  </div>
                 </div>
               </div>
             </div>
@@ -174,8 +178,6 @@ const currentChat = computed(() => {
   if (activeIndex.value === -1) return {}
   return chatList.value[activeIndex.value]
 })
-
-const creatingSessions = ref(new Set())
 
 const scrollbarRef = ref()
 const hasMore = ref(true)
@@ -374,41 +376,6 @@ const sendMessage = async () => {
   }
 }
 
-const createNewSession = async (data) => {
-  const isGroup = data.receive_id.startsWith('G')
-  const contactId = isGroup ? data.receive_id : data.send_id
-
-  if (creatingSessions.value.has(contactId)) return null
-  creatingSessions.value.add(contactId)
-
-  try {
-    const result = await useApi$('/user/session/openSession', {
-      method: 'POST',
-      body: { receive_id: contactId }
-    })
-
-    if (result?.code === 200) {
-      const session = result.data
-      const newSession = {
-        sessionId: session.sessionId,
-        id: contactId,
-        name: data.send_name,
-        avatar: data.send_avatar,
-        lastMsg: data.content,
-        time: '刚刚',
-        unread: 1
-      }
-      chatList.value.unshift(newSession)
-      return newSession
-    }
-  } catch (error) {
-    console.error('创建会话失败:', error)
-  } finally {
-    creatingSessions.value.delete(contactId)
-  }
-  return null
-}
-
 const handleWebSocketMessage = (data) => {
   console.log('handleWebSocketMessage 收到数据:', data)
   
@@ -424,20 +391,29 @@ const handleWebSocketMessage = (data) => {
 
   const currentSession = currentChat.value
   const isSelf = data.send_id === currentUserId.value
+  
+  // 判断是否是群聊消息
+  const isGroupMessage = data.receive_id.startsWith('G')
 
-  // 判断是否是当前会话：通过发送者和接收者ID匹配
+  // 判断是否是当前会话
   let isCurrentSession = false
   if (currentSession) {
-    if (isSelf) {
-      // 自己发的消息，检查接收者是否是当前聊天对象
+    if (isGroupMessage) {
+      // 群聊消息：检查当前会话是否是该群聊
       isCurrentSession = data.receive_id === currentSession.id
     } else {
-      // 别人发的消息，检查发送者是否是当前聊天对象
-      isCurrentSession = data.send_id === currentSession.id
+      // 单聊消息：检查发送者/接收者是否匹配当前会话
+      if (isSelf) {
+        // 自己发的消息，检查接收者是否是当前聊天对象
+        isCurrentSession = data.receive_id === currentSession.id
+      } else {
+        // 别人发的消息，检查发送者是否是当前聊天对象
+        isCurrentSession = data.send_id === currentSession.id
+      }
     }
   }
 
-  console.log('当前会话:', currentSession?.id, '发送者:', data.send_id, '接收者:', data.receive_id, '是否当前会话:', isCurrentSession)
+  console.log('当前会话:', currentSession?.id, '发送者:', data.send_id, '接收者:', data.receive_id, '是否群聊:', isGroupMessage, '是否当前会话:', isCurrentSession)
 
   if (isCurrentSession) {
     const realMessage = {
@@ -469,17 +445,14 @@ const handleWebSocketMessage = (data) => {
       chatList.value[sessionIndex].unread++
       chatList.value[sessionIndex].lastMsg = data.content
       chatList.value[sessionIndex].time = '刚刚'
+      // 将会话移到顶部
+      const updatedSession = chatList.value[sessionIndex]
+      chatList.value.splice(sessionIndex, 1)
+      chatList.value.unshift(updatedSession)
     } else {
-      // 通过发送者/接收者ID查找会话
-      const contactId = isSelf ? data.receive_id : data.send_id
-      const existIndex = chatList.value.findIndex(item => item.id === contactId)
-      if (existIndex !== -1) {
-        chatList.value[existIndex].unread++
-        chatList.value[existIndex].lastMsg = data.content
-        chatList.value[existIndex].time = '刚刚'
-      } else {
-        createNewSession(data)
-      }
+      // 会话不存在，重新加载会话列表
+      console.log('会话不存在，重新加载会话列表')
+      loadSessionList()
     }
   }
 }

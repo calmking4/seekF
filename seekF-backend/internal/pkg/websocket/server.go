@@ -22,6 +22,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	segmentioKafka "github.com/segmentio/kafka-go"
 
+	userdao "seekF-backend/internal/dao/user_dao"
+	userservice "seekF-backend/internal/services/user_service"
 	userreq "seekF-backend/internal/dto/user/user_req"
 	userresp "seekF-backend/internal/dto/user/user_resp"
 )
@@ -31,19 +33,30 @@ var ChatServer = NewServer()
 
 // Server 管理所有WebSocket客户端
 type Server struct {
-	Clients map[string]*Client
-	mutex   *sync.Mutex
-	Login   chan *Client // 登录通道
-	Logout  chan *Client // 退出登录通道
+	Clients      map[string]*Client
+	mutex        *sync.Mutex
+	Login        chan *Client // 登录通道
+	Logout       chan *Client // 退出登录通道
+	sessionService userservice.SessionService
 }
 
 // NewServer 创建新的WebSocket服务器
 func NewServer() *Server {
+	// 初始化DAO
+	sessionDAO := userdao.NewSessionDAO()
+	userInfoDAO := userdao.NewUserInfoDAO()
+	groupDAO := userdao.NewGroupDAO()
+	contactDAO := userdao.NewContactDAO()
+	
+	// 初始化Service
+	sessionService := userservice.NewSessionService(sessionDAO, userInfoDAO, groupDAO, contactDAO)
+	
 	return &Server{
-		Clients: make(map[string]*Client),
-		mutex:   &sync.Mutex{},
-		Login:   make(chan *Client, constants.CHANNEL_SIZE),
-		Logout:  make(chan *Client, constants.CHANNEL_SIZE),
+		Clients:        make(map[string]*Client),
+		mutex:          &sync.Mutex{},
+		Login:          make(chan *Client, constants.CHANNEL_SIZE),
+		Logout:         make(chan *Client, constants.CHANNEL_SIZE),
+		sessionService: sessionService,
 	}
 }
 
@@ -133,9 +146,6 @@ func (s *Server) handleTextMessage(chatMessageReq *userreq.ChatMessageRequest) {
 		return
 	}
 
-	// 更新会话的最后消息
-	s.updateSessionLastMessage(message.SessionId, message.Content)
-
 	// 构建响应消息
 	messageRsp := userresp.GetMessageListRespond{
 		SessionId:  message.SessionId,
@@ -199,9 +209,6 @@ func (s *Server) handleFileMessage(chatMessageReq *userreq.ChatMessageRequest) {
 		zlog.Error("保存消息失败: " + err.Error())
 		return
 	}
-
-	// 更新会话的最后消息
-	s.updateSessionLastMessage(message.SessionId, "[文件]"+message.FileName)
 
 	// 构建响应消息
 	messageRsp := userresp.GetMessageListRespond{
@@ -284,9 +291,6 @@ func (s *Server) handleAVCallMessage(chatMessageReq *userreq.ChatMessageRequest)
 			zlog.Error("保存音视频通话消息失败: " + err.Error())
 			return
 		}
-
-		// 更新会话的最后消息
-		s.updateSessionLastMessage(message.SessionId, "[音视频通话]")
 	}
 
 	// 只处理单聊音视频通话
@@ -330,6 +334,24 @@ func (s *Server) handleAVCallMessage(chatMessageReq *userreq.ChatMessageRequest)
 
 // sendToUser 发送消息给单个用户
 func (s *Server) sendToUser(message *models.Message, messageBack *MessageBack, messageRsp *userresp.GetMessageListRespond) {
+	// 为接收者创建会话（如果不存在）
+	sessionId, err := s.sessionService.OpenSession(message.ReceiveId, message.SendId)
+	if err != nil {
+		zlog.Error("为接收者创建会话失败: " + err.Error())
+	} else {
+		// 更新接收者的会话最后消息
+		lastMessage := message.Content
+		if message.Type == message_type_enum.File {
+			lastMessage = "[文件]" + message.FileName
+		} else if message.Type == message_type_enum.AVCall {
+			lastMessage = "[音视频通话]"
+		}
+		s.updateSessionLastMessage(sessionId, lastMessage)
+	}
+
+	// 更新发送者的会话最后消息
+	s.updateSessionLastMessage(message.SessionId, message.Content)
+
 	s.mutex.Lock()
 	// 发送给接收者
 	if receiveClient, ok := s.Clients[message.ReceiveId]; ok {
@@ -359,6 +381,35 @@ func (s *Server) sendToGroup(message *models.Message, messageBack *MessageBack, 
 	if err := json.Unmarshal(group.Members, &members); err != nil {
 		zlog.Error("解析群成员失败: " + err.Error())
 		return
+	}
+
+	// 为所有群成员创建会话（如果不存在）
+	for _, member := range members {
+		_, err := s.sessionService.OpenSession(member, message.ReceiveId)
+		if err != nil {
+			zlog.Error(fmt.Sprintf("为群成员 %s 创建会话失败: %v", member, err))
+		}
+	}
+
+	// 批量更新所有群成员的会话最后消息
+	lastMessage := message.Content
+	if message.Type == message_type_enum.File {
+		lastMessage = "[文件]" + message.FileName
+	} else if message.Type == message_type_enum.AVCall {
+		lastMessage = "[音视频通话]"
+	}
+	
+	// 批量更新会话最后消息
+	if err := db.GormDB.Model(&models.Session{}).Where("receive_id = ?", message.ReceiveId).Updates(map[string]interface{}{
+		"last_message":    lastMessage,
+		"last_message_at": time.Now(),
+	}).Error; err != nil {
+		zlog.Error("批量更新群聊会话最后消息失败: " + err.Error())
+	} else {
+		// 清除所有群成员的会话列表缓存
+		for _, member := range members {
+			myredis.DelKeysWithPattern("session_list_" + member)
+		}
 	}
 
 	s.mutex.Lock()
@@ -493,37 +544,22 @@ func UpdateMessageStatus(uuid string) {
 	}
 }
 
-// updateSessionLastMessage 更新会话的最后消息（双向更新）
+// updateSessionLastMessage 更新会话的最后消息
 func (s *Server) updateSessionLastMessage(sessionId string, lastMessage string) {
 	now := time.Now()
 
-	// 获取该会话信息
-	var session models.Session
-	if err := db.GormDB.Where("uuid = ?", sessionId).First(&session).Error; err != nil {
-		zlog.Error("获取会话信息失败: " + err.Error())
-		return
-	}
-
-	// 更新发送者的session
+	// 更新会话最后消息
 	if err := db.GormDB.Model(&models.Session{}).Where("uuid = ?", sessionId).Updates(map[string]interface{}{
 		"last_message":    lastMessage,
 		"last_message_at": now,
 	}).Error; err != nil {
-		zlog.Error("更新发送者会话最后消息失败: " + err.Error())
+		zlog.Error("更新会话最后消息失败: " + err.Error())
+		return
 	}
 
-	// 查找接收者的session并更新
-	var receiverSession models.Session
-	if err := db.GormDB.Where("send_id = ? AND receive_id = ?", session.ReceiveId, session.SendId).First(&receiverSession).Error; err == nil {
-		if err := db.GormDB.Model(&models.Session{}).Where("uuid = ?", receiverSession.Uuid).Updates(map[string]interface{}{
-			"last_message":    lastMessage,
-			"last_message_at": now,
-		}).Error; err != nil {
-			zlog.Error("更新接收者会话最后消息失败: " + err.Error())
-		}
+	// 清除会话列表缓存
+	var session models.Session
+	if err := db.GormDB.Where("uuid = ?", sessionId).First(&session).Error; err == nil {
+		myredis.DelKeysWithPattern("session_list_" + session.SendId)
 	}
-
-	// 清除两人的会话列表缓存
-	myredis.DelKeysWithPattern("session_list_" + session.SendId)
-	myredis.DelKeysWithPattern("session_list_" + session.ReceiveId)
 }
