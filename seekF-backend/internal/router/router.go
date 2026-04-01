@@ -4,6 +4,7 @@ import (
 	"seekF-backend/internal/controllers/user"
 	"seekF-backend/internal/middlewares"
 
+	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 )
 
@@ -18,6 +19,9 @@ func SetupRouter(
 	wsController *user.WsController,
 ) *gin.Engine {
 	r := gin.Default()
+
+	// 访问路径http://localhost:8080/debug/pprof/
+	pprof.Register(r)
 
 	// 添加CORS中间件
 	r.Use(middlewares.CORSMiddleware())
