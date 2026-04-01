@@ -1,6 +1,7 @@
 // WebSocket 连接管理
 let wsInstance = null
 let messageCallbacks = []
+let avCallCallbacks = [] // 音视频通话回调
 let reconnectAttempts = 0
 const maxReconnectAttempts = 5
 const reconnectInterval = 3000
@@ -50,6 +51,10 @@ export const useWebSocket = () => {
                     const data = JSON.parse(event.data)
                     // 调用所有注册的回调函数
                     messageCallbacks.forEach(callback => callback(data))
+                    // 如果是音视频消息，调用音视频回调
+                    if (data.type === 3) {
+                        avCallCallbacks.forEach(callback => callback(data))
+                    }
                 } catch (e) {
                     console.log('WebSocket 收到非 JSON 消息:', event.data)
                     messageCallbacks.forEach(callback => callback(event.data))
@@ -141,6 +146,19 @@ export const useWebSocket = () => {
     // 清除所有回调
     const clearCallbacks = () => {
         messageCallbacks = []
+        avCallCallbacks = []
+    }
+
+    // 注册音视频通话回调
+    const onAVCall = (callback) => {
+        avCallCallbacks.push(callback)
+        // 返回取消注册的函数
+        return () => {
+            const index = avCallCallbacks.indexOf(callback)
+            if (index > -1) {
+                avCallCallbacks.splice(index, 1)
+            }
+        }
     }
 
     // 发送文本消息
@@ -221,6 +239,7 @@ export const useWebSocket = () => {
         disconnect,
         send,
         onMessage,
+        onAVCall,
         clearCallbacks,
         sendTextMessage,
         sendFileMessage,

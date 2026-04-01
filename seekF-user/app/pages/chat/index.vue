@@ -136,7 +136,13 @@
           <div class="flex items-center gap-3 mb-3">
             <button class="text-gray-500"><Icon name="uil:smile" /></button>
             <button class="text-gray-500"><Icon name="uil:paperclip" /></button>
-            <button class="text-gray-500"><Icon name="fluent:call-24-regular" /></button>
+            <button
+              v-if="currentChat && !currentChat.id?.startsWith('G')"
+              class="text-gray-500 hover:text-green-500 transition-colors"
+              @click="startCall"
+            >
+              <Icon name="fluent:call-24-regular" />
+            </button>
           </div>
           <div class="flex gap-3">
             <textarea
@@ -157,6 +163,29 @@
         </div>
       </template>
     </main>
+
+    <!-- 来电弹窗 -->
+    <AVCallDialog
+      :visible="avCall.callStatus.value === 'ringing' && avCall.isIncoming.value"
+      :caller-info="avCall.callerInfo.value || { id: '', name: '', avatar: '' }"
+      @accept="acceptCall"
+      @reject="rejectCall"
+    />
+
+    <!-- 通话界面 -->
+    <AVCallOverlay
+      :visible="avCall.callStatus.value === 'calling' || avCall.callStatus.value === 'connected'"
+      :local-stream="avCall.localStream.value"
+      :remote-stream="avCall.remoteStream.value"
+      :remote-name="avCall.callerInfo.value?.name || currentChat?.name || ''"
+      :remote-avatar="avCall.callerInfo.value?.avatar || currentChat?.avatar || ''"
+      :format-duration="avCall.formatDuration.value"
+      :is-muted="avCall.isMuted.value"
+      :is-camera-off="avCall.isCameraOff.value"
+      @end-call="endCall"
+      @toggle-mute="avCall.toggleMute"
+      @toggle-camera="avCall.toggleCamera"
+    />
   </div>
 </template>
 
@@ -165,6 +194,7 @@ const route = useRoute()
 const router = useRouter()
 
 const ws = useWebSocket()
+const avCall = useAVCall()
 
 const currentUserAvatar = ref('')
 const currentUserId = ref('')
@@ -375,6 +405,46 @@ const sendMessage = async () => {
   }
 }
 
+// 发起通话
+const startCall = () => {
+  if (activeIndex.value === -1) return
+  
+  const session = currentChat.value
+  if (!session) return
+  
+  // 只有单聊才能发起通话
+  if (session.id.startsWith('G')) {
+    alert('暂不支持群聊通话')
+    return
+  }
+  
+  avCall.startCall(session.sessionId, session.id, {
+    name: session.name,
+    avatar: session.avatar
+  })
+}
+
+// 接受通话
+const acceptCall = () => {
+  avCall.acceptCall()
+}
+
+// 拒绝通话
+const rejectCall = () => {
+  avCall.rejectCall()
+}
+
+// 挂断通话
+const endCall = () => {
+  avCall.endCall()
+}
+
+// 处理音视频通话消息
+const handleAVCallMessage = (data) => {
+  console.log('收到音视频通话消息:', data)
+  avCall.handleSignal(data)
+}
+
 const handleWebSocketMessage = (data) => {
   console.log('handleWebSocketMessage 收到数据:', data)
   
@@ -461,6 +531,7 @@ onMounted(async () => {
   await loadSessionList()
 
   ws.onMessage(handleWebSocketMessage)
+  ws.onAVCall(handleAVCallMessage)
 
   console.log('WebSocket 连接状态:', ws.isConnected.value)
   
@@ -472,6 +543,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   ws.clearCallbacks()
+  avCall.endCall()
 })
 </script>
 
