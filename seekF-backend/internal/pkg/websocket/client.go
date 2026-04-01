@@ -32,7 +32,7 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-// 读取websocket消息并发送给send通道
+// 读取websocket消息并发送给kafka
 func (c *Client) Read() {
 	zlog.Info("ws read goroutine start")
 	for {

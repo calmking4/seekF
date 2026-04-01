@@ -136,7 +136,7 @@
           <div class="flex items-center gap-3 mb-3">
             <button class="text-gray-500"><Icon name="uil:smile" /></button>
             <button class="text-gray-500"><Icon name="uil:paperclip" /></button>
-            <button class="text-gray-500"><Icon name="uil:mic" /></button>
+            <button class="text-gray-500"><Icon name="fluent:call-24-regular" /></button>
           </div>
           <div class="flex gap-3">
             <textarea

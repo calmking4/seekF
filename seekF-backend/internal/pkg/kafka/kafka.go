@@ -21,6 +21,7 @@ var KafkaServiceInstance = new(KafkaService)
 
 // Init 初始化kafka
 func (k *KafkaService) Init() {
+	//k.CreateTopic()  只运行一次
 	kafkaConfig := configs.GetConfig().KafkaConfig
 	k.ChatWriter = &kafka.Writer{
 		Addr:                   kafka.TCP(kafkaConfig.HostPort),
