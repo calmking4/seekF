@@ -170,8 +170,6 @@ const getVerifyCode = async () => {
   }
 };
 
-const ws = useWebSocket();
-
 const handleLogin = async () => {
   if (loginType.value === 'password') {
     if (!loginForm.value.username || !loginForm.value.password) {
@@ -198,9 +196,6 @@ const handleLogin = async () => {
         // 存储用户信息和token
         const authState = useAuthState();
         authState.setUser(user);
-
-        // 连接 WebSocket
-        ws.connect();
 
         ElMessage.success('登录成功');
 
@@ -240,9 +235,6 @@ const handleLogin = async () => {
         // 存储用户信息和token
         const authState = useAuthState();
         authState.setUser(user);
-
-        // 连接 WebSocket
-        ws.connect();
 
         ElMessage.success('登录成功');
 

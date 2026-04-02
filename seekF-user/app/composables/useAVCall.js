@@ -1,29 +1,22 @@
-// 音视频通话管理
+// 音视频通话管理 - 使用模块级变量实现单例
+let peerConnection = null
+let callTimer = null
+
 export const useAVCall = () => {
-  // 通话状态
-  const callStatus = ref('idle') // idle, calling, ringing, connected
-  const isIncoming = ref(false)
-  const callerInfo = ref(null)
-  const sessionInfo = ref(null)
-
-  // 媒体流
-  const localStream = ref(null)
-  const remoteStream = ref(null)
-
-  // WebRTC连接
-  let peerConnection = null
+  // 使用 useState 实现全局共享的响应式状态
+  const callStatus = useState('avCallStatus', () => 'idle') // idle, calling, ringing, connected
+  const isIncoming = useState('avCallIsIncoming', () => false)
+  const callerInfo = useState('avCallCallerInfo', () => null)
+  const sessionInfo = useState('avCallSessionInfo', () => null)
+  const localStream = useState('avCallLocalStream', () => null)
+  const remoteStream = useState('avCallRemoteStream', () => null)
+  const callDuration = useState('avCallDuration', () => 0)
+  const isMuted = useState('avCallIsMuted', () => false)
+  const isCameraOff = useState('avCallIsCameraOff', () => false)
 
   // WebSocket
   const ws = useWebSocket()
   const user = useAuthState()
-
-  // 通话计时
-  const callDuration = ref(0)
-  let callTimer = null
-
-  // 静音和摄像头状态
-  const isMuted = ref(false)
-  const isCameraOff = ref(false)
 
   // ICE服务器配置（使用免费STUN服务器）
   const iceServers = {

@@ -175,29 +175,6 @@
         </div>
       </template>
     </main>
-
-    <!-- 来电弹窗 -->
-    <AVCallDialog
-      :visible="avCall.callStatus.value === 'ringing' && avCall.isIncoming.value"
-      :caller-info="avCall.callerInfo.value || { id: '', name: '', avatar: '' }"
-      @accept="acceptCall"
-      @reject="rejectCall"
-    />
-
-    <!-- 通话界面 -->
-    <AVCallOverlay
-      :visible="avCall.callStatus.value === 'calling' || avCall.callStatus.value === 'connected'"
-      :local-stream="avCall.localStream.value"
-      :remote-stream="avCall.remoteStream.value"
-      :remote-name="avCall.callerInfo.value?.name || currentChat?.name || ''"
-      :remote-avatar="avCall.callerInfo.value?.avatar || currentChat?.avatar || ''"
-      :format-duration="avCall.formatDuration.value"
-      :is-muted="avCall.isMuted.value"
-      :is-camera-off="avCall.isCameraOff.value"
-      @end-call="endCall"
-      @toggle-mute="avCall.toggleMute"
-      @toggle-camera="avCall.toggleCamera"
-    />
   </div>
 </template>
 
@@ -537,27 +514,6 @@ const startCall = () => {
   })
 }
 
-// 接受通话
-const acceptCall = () => {
-  avCall.acceptCall()
-}
-
-// 拒绝通话
-const rejectCall = () => {
-  avCall.rejectCall()
-}
-
-// 挂断通话
-const endCall = () => {
-  avCall.endCall()
-}
-
-// 处理音视频通话消息
-const handleAVCallMessage = (data) => {
-  console.log('收到音视频通话消息:', data)
-  avCall.handleSignal(data)
-}
-
 const handleWebSocketMessage = (data) => {
   console.log('handleWebSocketMessage 收到数据:', data)
   
@@ -651,19 +607,10 @@ onMounted(async () => {
   await loadSessionList()
 
   ws.onMessage(handleWebSocketMessage)
-  ws.onAVCall(handleAVCallMessage)
-
-  console.log('WebSocket 连接状态:', ws.isConnected.value)
-  
-  if (!ws.isConnected.value) {
-    console.log('WebSocket 未连接，尝试连接...')
-    ws.connect()
-  }
 })
 
 onUnmounted(() => {
-  ws.clearCallbacks()
-  avCall.endCall()
+  ws.removeMessageCallback(handleWebSocketMessage)
 })
 </script>
 

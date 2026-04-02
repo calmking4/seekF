@@ -149,6 +149,14 @@ export const useWebSocket = () => {
         avCallCallbacks = []
     }
 
+    // 移除指定的消息回调
+    const removeMessageCallback = (callback) => {
+        const index = messageCallbacks.indexOf(callback)
+        if (index > -1) {
+            messageCallbacks.splice(index, 1)
+        }
+    }
+
     // 注册音视频通话回调
     const onAVCall = (callback) => {
         avCallCallbacks.push(callback)
@@ -241,6 +249,7 @@ export const useWebSocket = () => {
         onMessage,
         onAVCall,
         clearCallbacks,
+        removeMessageCallback,
         sendTextMessage,
         sendFileMessage,
         sendAVCallMessage
