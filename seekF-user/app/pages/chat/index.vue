@@ -114,7 +114,10 @@
                   class="rounded-lg px-4 py-2 max-w-[60%] shadow-sm flex-shrink-0"
                   :class="msg.isSelf ? 'bg-[#D9FDD3]' : 'bg-white'"
                 >
-                  <p class="text-sm">{{ msg.content }}</p>
+                  <div v-if="msg.isImage || isImageUrl(msg.content)">
+                    <img :src="msg.content" class="max-w-full rounded cursor-pointer hover:opacity-90" style="max-height: 200px;" @click="previewImage(msg.content)" />
+                  </div>
+                  <p v-else class="text-sm">{{ msg.content }}</p>
                   <p class="text-xs text-gray-400 text-right mt-1">{{ formatTime(msg.sendTime) }}</p>
                 </div>
                 <!-- 自己消息 -->
@@ -135,7 +138,16 @@
         <div class="bg-white p-3 border-t border-gray-200 flex-shrink-0">
           <div class="flex items-center gap-3 mb-3">
             <button class="text-gray-500"><Icon name="uil:smile" /></button>
-            <button class="text-gray-500"><Icon name="uil:paperclip" /></button>
+            <button class="text-gray-500 hover:text-blue-500 transition-colors" @click="triggerImageUpload">
+              <Icon name="tabler:photo" />
+            </button>
+            <input
+              ref="imageInputRef"
+              type="file"
+              accept="image/*"
+              class="hidden"
+              @change="handleImageUpload"
+            />
             <button
               v-if="currentChat && !currentChat.id?.startsWith('G')"
               class="text-gray-500 hover:text-green-500 transition-colors"
@@ -210,6 +222,7 @@ const currentChat = computed(() => {
 })
 
 const scrollbarRef = ref()
+const imageInputRef = ref()
 const hasMore = ref(true)
 const loadingMore = ref(false)
 const currentPage = ref(1)
@@ -332,14 +345,20 @@ const loadMessageList = async (receiveId, page = 1) => {
       const list = data.data?.list || []
       totalMessages.value = data.data?.total || 0
 
-      const messages = list.map(msg => ({
-        messageId: msg.uuid || msg.messageId,
-        content: msg.content,
-        senderName: msg.send_name || msg.senderName,
-        avatar: msg.send_avatar || msg.avatar,
-        sendTime: msg.created_at || msg.createdAt,
-        isSelf: msg.send_id === currentUserId.value
-      }))
+      const messages = list.map(msg => {
+        // 文件消息(type=2)使用 url 作为内容，文本消息使用 content
+        const isFileMsg = msg.type === 2
+        const messageContent = isFileMsg ? (msg.url || msg.content) : msg.content
+        return {
+          messageId: msg.uuid || msg.messageId,
+          content: messageContent,
+          senderName: msg.send_name || msg.senderName,
+          avatar: msg.send_avatar || msg.avatar,
+          sendTime: msg.created_at || msg.createdAt,
+          isSelf: msg.send_id === currentUserId.value,
+          isImage: isFileMsg && isImageUrl(messageContent)
+        }
+      })
 
       if (page === 1) {
         messageList.value = messages.reverse()
@@ -405,6 +424,100 @@ const sendMessage = async () => {
   }
 }
 
+// 触发图片上传
+const triggerImageUpload = () => {
+  imageInputRef.value?.click()
+}
+
+// 判断是否是图片URL
+const isImageUrl = (url) => {
+  if (!url || typeof url !== 'string') return false
+  return /\.(jpg|jpeg|png|gif|webp)$/i.test(url) || url.includes('message_image')
+}
+
+// 预览图片
+const previewImage = (url) => {
+  window.open(url, '_blank')
+}
+
+// 处理图片上传
+const handleImageUpload = async (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+
+  // 验证文件类型
+  const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+  if (!validTypes.includes(file.type)) {
+    ElMessage.error('只支持 JPG、PNG、GIF、WebP 格式的图片')
+    return
+  }
+
+  // 验证文件大小 (5MB)
+  if (file.size > 5 * 1024 * 1024) {
+    ElMessage.error('图片大小不能超过 5MB')
+    return
+  }
+
+  if (activeIndex.value === -1) return
+
+  const session = currentChat.value
+  if (!session) return
+
+  try {
+    // 上传文件到服务器
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('fileType', 'message_image')
+
+    const data = await useApi$('/user/file/upload', {
+      method: 'POST',
+      body: formData
+    })
+
+    if (data?.code === 200) {
+      const imageUrl = typeof data.data === 'object' ? data.data.url : data.data
+
+      // 发送图片消息
+      const success = ws.sendFileMessage(
+        session.sessionId,
+        imageUrl,
+        file.name,
+        file.size.toString(),
+        file.type,
+        session.id
+      )
+
+      if (success) {
+        // 添加临时消息到列表
+        const tempId = 'temp_' + Date.now()
+        messageList.value.push({
+          messageId: tempId,
+          content: imageUrl,
+          senderName: '我',
+          avatar: currentUserAvatar.value,
+          sendTime: new Date().toISOString(),
+          isSelf: true,
+          isImage: true
+        })
+
+        session.lastMsg = '[图片]'
+        session.time = '刚刚'
+
+        scrollToBottom()
+        ElMessage.success('图片发送成功')
+      }
+    } else {
+      ElMessage.error(data?.message || '图片上传失败')
+    }
+  } catch (error) {
+    console.error('图片上传失败:', error)
+    ElMessage.error('图片上传失败')
+  }
+
+  // 清空文件输入框，允许重复选择同一文件
+  event.target.value = ''
+}
+
 // 发起通话
 const startCall = () => {
   if (activeIndex.value === -1) return
@@ -453,8 +566,9 @@ const handleWebSocketMessage = (data) => {
     return
   }
   
-  if (data.type !== 0) {
-    console.log('数据类型不是文本消息(type !== 0):', data.type)
+  // 处理文本消息(type=0)和文件消息(type=2)
+  if (data.type !== 0 && data.type !== 2) {
+    console.log('数据类型不是文本或文件消息:', data.type)
     return
   }
 
@@ -485,17 +599,20 @@ const handleWebSocketMessage = (data) => {
   console.log('当前会话:', currentSession?.id, '发送者:', data.send_id, '接收者:', data.receive_id, '是否群聊:', isGroupMessage, '是否当前会话:', isCurrentSession)
 
   if (isCurrentSession) {
+    // 文件消息使用 url 作为内容，文本消息使用 content
+    const messageContent = data.type === 2 ? data.url : data.content
     const realMessage = {
       messageId: data.uuid,
-      content: data.content,
+      content: messageContent,
       senderName: data.send_name,
       avatar: data.send_avatar,
       sendTime: new Date().toISOString(),
-      isSelf: isSelf
+      isSelf: isSelf,
+      isImage: data.type === 2 && isImageUrl(data.url)
     }
 
     if (isSelf) {
-      const tempIndex = messageList.value.findIndex(m => m.messageId.startsWith('temp_') && m.content === data.content)
+      const tempIndex = messageList.value.findIndex(m => m.messageId.startsWith('temp_') && m.content === messageContent)
       if (tempIndex !== -1) {
         messageList.value[tempIndex] = realMessage
       } else {
@@ -510,9 +627,12 @@ const handleWebSocketMessage = (data) => {
     console.log('不是当前会话，更新会话列表')
     const sessionIndex = chatList.value.findIndex(item => item.sessionId === data.session_id)
 
+    // 文件消息显示[图片]，文本消息显示内容
+    const lastMsg = data.type === 2 ? '[图片]' : data.content
+
     if (sessionIndex !== -1) {
       chatList.value[sessionIndex].unread++
-      chatList.value[sessionIndex].lastMsg = data.content
+      chatList.value[sessionIndex].lastMsg = lastMsg
       chatList.value[sessionIndex].time = '刚刚'
       // 将会话移到顶部
       const updatedSession = chatList.value[sessionIndex]
