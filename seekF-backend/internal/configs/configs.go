@@ -53,8 +53,9 @@ type KafkaConfig struct {
 	MessageMode string        `toml:"messageMode"`
 	HostPort    string        `toml:"hostPort"`
 	LoginTopic  string        `toml:"loginTopic"`
-	LogoutTopic string        `toml:"logoutTopic"`
 	ChatTopic   string        `toml:"chatTopic"`
+	AIChatTopic string        `toml:"aiChatTopic"`
+	LogoutTopic string        `toml:"logoutTopic"`
 	Partition   int           `toml:"partition"`
 	Timeout     time.Duration `toml:"timeout"`
 }
@@ -62,6 +63,18 @@ type KafkaConfig struct {
 type StaticSrcConfig struct {
 	StaticAvatarPath string `toml:"staticAvatarPath"`
 	StaticFilePath   string `toml:"staticFilePath"`
+}
+
+type AIModelConfig struct {
+	DeepseekApiKey string `toml:"deepseekApiKey"`
+	DeepseekModel  string `toml:"deepseekModel"`
+	DeepseekUrl    string `toml:"deepseekBaseUrl"`
+	QwenApiKey     string `toml:"qwenApiKey"`
+	QwenModel      string `toml:"qwenModel"`
+	QwenBaseUrl    string `toml:"qwenBaseUrl"`
+	GlmApiKey      string `toml:"glmApiKey"`
+	GlmModel       string `toml:"glmModel"`
+	GlmBaseUrl     string `toml:"glmBaseUrl"`
 }
 
 type JWTConfig struct {
@@ -88,6 +101,7 @@ type Config struct {
 	StaticSrcConfig `toml:"staticSrcConfig"`
 	JWTConfig       `toml:"jwtConfig"`
 	AuthConfig      `toml:"authConfig"`
+	AIModelConfig   `toml:"aiModelConfig"`
 }
 
 var config *Config

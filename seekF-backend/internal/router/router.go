@@ -17,6 +17,7 @@ func SetupRouter(
 	messageController *user.MessageController,
 	fileController *user.FileController,
 	wsController *user.WsController,
+	aichatController *user.AIChatController,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -84,6 +85,11 @@ func SetupRouter(
 			// WebSocket
 			protectedGroup.GET("/ws/login", wsController.WsLogin)
 			protectedGroup.POST("/ws/logout", wsController.WsLogout)
+			// AI Chat
+			protectedGroup.POST("/aichat/createSession", aichatController.CreateSession)
+			protectedGroup.POST("/aichat/getSessionList", aichatController.GetSessionList)
+			protectedGroup.POST("/aichat/getMessageHistory", aichatController.GetMessageHistory)
+			protectedGroup.GET("/aichat/sendMessage", aichatController.SendMessage)
 		}
 
 	}

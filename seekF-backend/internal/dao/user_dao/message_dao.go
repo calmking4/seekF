@@ -13,6 +13,9 @@ type MessageDAO interface {
 	CountMessagesByReceiverId(receiverId string) (int64, error)
 	CreateMessage(message *models.Message) error
 	UpdateMessageStatus(uuid string, status int8) error
+	// AI消息相关方法
+	GetMessagesBySessionId(sessionId string, limit int, offset int) ([]models.Message, error)
+	CountMessagesBySessionId(sessionId string) (int64, error)
 }
 
 // MessageDAOImpl 消息DAO实现
@@ -59,4 +62,22 @@ func (d *MessageDAOImpl) CreateMessage(message *models.Message) error {
 // UpdateMessageStatus 更新消息状态
 func (d *MessageDAOImpl) UpdateMessageStatus(uuid string, status int8) error {
 	return db.GormDB.Model(&models.Message{}).Where("uuid = ?", uuid).Update("status", status).Error
+}
+
+// GetMessagesBySessionId 根据会话ID获取消息记录（分页，按时间正序）
+func (d *MessageDAOImpl) GetMessagesBySessionId(sessionId string, limit int, offset int) ([]models.Message, error) {
+	var messageList []models.Message
+	result := db.GormDB.Where("session_id = ?", sessionId).
+		Order("created_at ASC").
+		Limit(limit).
+		Offset(offset).
+		Find(&messageList)
+	return messageList, result.Error
+}
+
+// CountMessagesBySessionId 统计指定会话的消息总数
+func (d *MessageDAOImpl) CountMessagesBySessionId(sessionId string) (int64, error) {
+	var count int64
+	result := db.GormDB.Model(&models.Message{}).Where("session_id = ?", sessionId).Count(&count)
+	return count, result.Error
 }
