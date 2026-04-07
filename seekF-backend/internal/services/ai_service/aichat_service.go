@@ -252,32 +252,16 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		}
 	}
 
-	// 保存AI响应到DB
-	aiMsgId := "M" + util.GetNowAndLenRandomString(11)
+	// 发送AI响应到Kafka异步持久化
 	aiSendId := "A" + util.GetNowAndLenRandomString(11)
-	aiMessage := &models.Message{
-		Uuid:       aiMsgId,
-		SessionId:  req.SessionId,
-		Type:       0,
-		Content:    finalContent,
-		SendId:     aiSendId,
-		SendName:   req.ModelType,
-		SendAvatar: "/static/avatars/ai_default.png",
-		ReceiveId:  userId,
-		Status:     1,
-	}
-
-	if err := s.messageDAO.CreateMessage(aiMessage); err != nil {
-		zlog.Error("save AI message to DB failed, fallback to kafka: " + err.Error())
-		aipkg.SendAIMessage(aipkg.AIMessagePayload{
-			SessionId: req.SessionId,
-			SendId:    aiSendId,
-			SendName:  req.ModelType,
-			ReceiveId: userId,
-			Content:   finalContent,
-			ModelType: req.ModelType,
-		})
-	}
+	aipkg.SendAIMessage(aipkg.AIMessagePayload{
+		SessionId: req.SessionId,
+		SendId:    aiSendId,
+		SendName:  req.ModelType,
+		ReceiveId: userId,
+		Content:   finalContent,
+		ModelType: req.ModelType,
+	})
 
 	// 更新会话最后一条消息
 	s.sessionDAO.UpdateSessionLastMessage(req.SessionId, finalContent, userMessage.CreatedAt)

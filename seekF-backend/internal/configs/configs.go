@@ -138,6 +138,35 @@ func loadEnvConfig(cfg *Config) {
 	if v := os.Getenv("OSS_ACCESS_KEY_SECRET"); v != "" {
 		cfg.OSSConfig.AccessKeySecret = v
 	}
+
+	// AI Model Configuration
+	if v := os.Getenv("DEEPSEEK_API_KEY"); v != "" {
+		cfg.AIModelConfig.DeepseekApiKey = v
+	}
+	if v := os.Getenv("DEEPSEEK_MODEL"); v != "" {
+		cfg.AIModelConfig.DeepseekModel = v
+	}
+	if v := os.Getenv("DEEPSEEK_BASE_URL"); v != "" {
+		cfg.AIModelConfig.DeepseekUrl = v
+	}
+	if v := os.Getenv("QWEN_API_KEY"); v != "" {
+		cfg.AIModelConfig.QwenApiKey = v
+	}
+	if v := os.Getenv("QWEN_MODEL"); v != "" {
+		cfg.AIModelConfig.QwenModel = v
+	}
+	if v := os.Getenv("QWEN_BASE_URL"); v != "" {
+		cfg.AIModelConfig.QwenBaseUrl = v
+	}
+	if v := os.Getenv("GLM_API_KEY"); v != "" {
+		cfg.AIModelConfig.GlmApiKey = v
+	}
+	if v := os.Getenv("GLM_MODEL"); v != "" {
+		cfg.AIModelConfig.GlmModel = v
+	}
+	if v := os.Getenv("GLM_BASE_URL"); v != "" {
+		cfg.AIModelConfig.GlmBaseUrl = v
+	}
 }
 
 func LoadConfig() error {
