@@ -94,7 +94,7 @@ func (s *AIChatServiceImpl) GetSessionList(userId string, page int, pageSize int
 	for _, session := range sessions[offset:end] {
 		items = append(items, userresp.AISessionItem{
 			SessionId:   session.Uuid,
-			ModelType:   session.LastMessage,
+			ModelType:   "AI助手",
 			LastMessage: session.LastMessage,
 			CreatedAt:   session.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
@@ -257,7 +257,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	aipkg.SendAIMessage(aipkg.AIMessagePayload{
 		SessionId: req.SessionId,
 		SendId:    aiSendId,
-		SendName:  req.ModelType,
+		SendName:  "AI助手",
 		ReceiveId: userId,
 		Content:   finalContent,
 		ModelType: req.ModelType,
