@@ -26,6 +26,7 @@ type SessionDAO interface {
 	GetAISessionList(userId string) ([]models.Session, error)
 	GetAISessionByUuid(uuid string) (*models.Session, error)
 	DeleteAISession(uuid string) error
+	UpdateSessionFirstMessage(sessionId string, firstMessage string) error
 }
 
 type SessionDAOImpl struct{}
@@ -123,11 +124,10 @@ func (d *SessionDAOImpl) CreateAISession(userId string, modelType string) (*mode
 	aiId := "A" + util.GetNowAndLenRandomString(11)
 
 	session := &models.Session{
-		Uuid:        sessionId,
-		SendId:      userId,
-		ReceiveId:   aiId,
-		LastMessage: modelType,
-		CreatedAt:   time.Now(),
+		Uuid:      sessionId,
+		SendId:    userId,
+		ReceiveId: aiId,
+		CreatedAt: time.Now(),
 	}
 
 	result := db.GormDB.Create(session)
@@ -138,11 +138,11 @@ func (d *SessionDAOImpl) CreateAISession(userId string, modelType string) (*mode
 	return session, nil
 }
 
-// GetAISessionList 获取用户的AI会话列表（按最后消息时间倒序）
+// GetAISessionList 获取用户的AI会话列表（按创建时间倒序）
 func (d *SessionDAOImpl) GetAISessionList(userId string) ([]models.Session, error) {
 	var sessions []models.Session
 	result := db.GormDB.Where("send_id = ? AND receive_id LIKE ?", userId, "A%").
-		Order("last_message_at DESC, created_at DESC").
+		Order("created_at DESC").
 		Find(&sessions)
 	return sessions, result.Error
 }
@@ -160,4 +160,11 @@ func (d *SessionDAOImpl) GetAISessionByUuid(uuid string) (*models.Session, error
 // DeleteAISession 删除AI会话
 func (d *SessionDAOImpl) DeleteAISession(uuid string) error {
 	return db.GormDB.Where("uuid = ? AND receive_id LIKE ?", uuid, "A%").Delete(&models.Session{}).Error
+}
+
+// UpdateSessionFirstMessage 更新会话的第一条消息
+func (d *SessionDAOImpl) UpdateSessionFirstMessage(sessionId string, firstMessage string) error {
+	return db.GormDB.Model(&models.Session{}).Where("uuid = ? AND first_message = ''", sessionId).Updates(map[string]interface{}{
+		"first_message": firstMessage,
+	}).Error
 }

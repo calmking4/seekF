@@ -4,7 +4,7 @@
         <aside class="w-80 bg-white border-r border-gray-200 h-full flex flex-col flex-shrink-0 pr-3">
             <!-- 顶部：新建会话按钮 -->
             <div class="p-3 border-b border-gray-200">
-                <el-button type="primary" class="w-full" @click="showCreateDialog = true">
+                <el-button type="primary" class="w-full" @click="handleCreateSession">
                     <Icon name="uil:plus" class="mr-1" />
                     新建 AI 对话
                 </el-button>
@@ -31,10 +31,10 @@
                     <!-- 会话信息 -->
                     <div class="flex-1 min-w-0">
                         <div class="flex justify-between items-start">
-                            <h3 class="font-medium text-sm truncate">{{ getModelName(item.modelType) }}</h3>
+                            <h3 class="font-medium text-sm truncate">AI 助手</h3>
                             <span class="text-xs text-gray-400">{{ item.createdAt }}</span>
                         </div>
-                        <p class="text-xs text-gray-500 truncate">{{ item.lastMessage || '点击开始对话' }}</p>
+                        <p class="text-xs text-gray-500 truncate">{{ item.firstMessage || '点击开始对话' }}</p>
                     </div>
                 </div>
             </div>
@@ -52,13 +52,17 @@
             <!-- 已选择会话的聊天界面 -->
             <template v-else>
                 <!-- 聊天头部 -->
-                <div class="bg-white border-b border-gray-200 p-3 flex items-center gap-3 flex-shrink-0">
+                <div class="bg-white border-b border-gray-200 p-3 flex items-center gap-2 flex-shrink-0">
                     <el-avatar :size="40" :style="{ backgroundColor: getModelColor(currentSession?.modelType) }">
                         <Icon :name="getModelIcon(currentSession?.modelType)" class="text-white" />
                     </el-avatar>
-                    <div class="flex flex-col">
-                        <span class="text-sm font-medium">{{ getModelName(currentSession?.modelType) }}</span>
-                        <span class="text-xs text-gray-400">{{ currentSession?.modelType }}</span>
+                    <div class="flex items-center gap-2">
+                        <span class="text-base font-medium">AI 助手</span>
+                        <el-select v-model="currentSession.modelType" size="small" class="!w-24" @change="handleModelChange">
+                            <el-option label="DeepSeek" value="deepseek" />
+                            <el-option label="Qwen" value="qwen" />
+                            <el-option label="GLM" value="glm" />
+                        </el-select>
                     </div>
                     <div class="flex-1"></div>
                     <!-- 流式状态指示 -->
@@ -146,29 +150,6 @@
             </template>
         </main>
 
-        <!-- 新建会话对话框 -->
-        <el-dialog
-            v-model="showCreateDialog"
-            title="新建 AI 对话"
-            width="400px"
-            :close-on-click-modal="false"
-        >
-            <el-form label-width="80px">
-                <el-form-item label="选择模型">
-                    <el-select v-model="selectedModel" placeholder="请选择 AI 模型" class="w-full">
-                        <el-option label="DeepSeek" value="deepseek" />
-                        <el-option label="Qwen（通义千问）" value="qwen" />
-                        <el-option label="GLM（智谱）" value="glm" />
-                    </el-select>
-                </el-form-item>
-            </el-form>
-            <template #footer>
-                <el-button @click="showCreateDialog = false">取消</el-button>
-                <el-button type="primary" :disabled="!selectedModel" @click="handleCreateSession">
-                    创建
-                </el-button>
-            </template>
-        </el-dialog>
     </div>
 </template>
 
@@ -181,8 +162,6 @@ const activeIndex = ref(-1)
 const messageList = ref([])
 const inputMessage = ref('')
 const isStreaming = ref(false)
-const showCreateDialog = ref(false)
-const selectedModel = ref('deepseek')
 
 const scrollbarRef = ref()
 const hasMore = ref(true)
@@ -197,34 +176,14 @@ const currentSession = computed(() => {
     return sessionList.value[activeIndex.value]
 })
 
-// 模型显示名称
-const getModelName = (modelType) => {
-    const names = {
-        deepseek: 'DeepSeek',
-        qwen: '通义千问',
-        glm: '智谱 GLM'
-    }
-    return names[modelType] || 'AI 助手'
+// 模型图标（统一机器人头像）
+const getModelIcon = () => {
+    return 'uil:robot'
 }
 
-// 模型图标
-const getModelIcon = (modelType) => {
-    const icons = {
-        deepseek: 'uil:rocket',
-        qwen: 'uil:bolt',
-        glm: 'uil:brain'
-    }
-    return icons[modelType] || 'uil:robot'
-}
-
-// 模型颜色
-const getModelColor = (modelType) => {
-    const colors = {
-        deepseek: '#4F46E5',
-        qwen: '#059669',
-        glm: '#DC2626'
-    }
-    return colors[modelType] || '#6B7280'
+// 模型颜色（统一颜色）
+const getModelColor = () => {
+    return '#6B7280'
 }
 
 // 滚动到底部
@@ -262,8 +221,8 @@ const loadSessionList = async () => {
         const data = await aiChat.getSessionList()
         sessionList.value = (data.list || []).map(item => ({
             sessionId: item.session_id,
-            modelType: item.model_type,
-            lastMessage: item.last_message || '',
+            modelType: 'deepseek',
+            firstMessage: item.first_message || '',
             createdAt: item.created_at || ''
         }))
     } catch (error) {
@@ -365,7 +324,7 @@ const sendMessage = async () => {
     messageList.value.push({
         messageId: 'ai_' + Date.now(),
         content: '',
-        senderName: getModelName(session.modelType),
+        senderName: 'AI 助手',
         sendTime: '',
         isSelf: false,
         isStreaming: true
@@ -421,11 +380,8 @@ const sendMessage = async () => {
 
 // 创建新会话
 const handleCreateSession = async () => {
-    if (!selectedModel.value) return
-
-    const result = await aiChat.createSession(selectedModel.value)
+    const result = await aiChat.createSession('deepseek')
     if (result) {
-        showCreateDialog.value = false
         await loadSessionList()
         // 自动选中新创建的会话
         const idx = sessionList.value.findIndex(s => s.sessionId === result.session_id)
@@ -436,6 +392,13 @@ const handleCreateSession = async () => {
     } else {
         ElMessage.error('创建会话失败')
     }
+}
+
+// 切换模型
+const handleModelChange = (newModel) => {
+    const session = currentSession.value
+    if (!session) return
+    session.modelType = newModel
 }
 
 onMounted(async () => {

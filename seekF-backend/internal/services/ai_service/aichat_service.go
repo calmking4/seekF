@@ -93,10 +93,9 @@ func (s *AIChatServiceImpl) GetSessionList(userId string, page int, pageSize int
 	var items []userresp.AISessionItem
 	for _, session := range sessions[offset:end] {
 		items = append(items, userresp.AISessionItem{
-			SessionId:   session.Uuid,
-			ModelType:   "AI助手",
-			LastMessage: session.LastMessage,
-			CreatedAt:   session.CreatedAt.Format("2006-01-02 15:04:05"),
+			SessionId:    session.Uuid,
+			FirstMessage: session.FirstMessage,
+			CreatedAt:    session.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
 
@@ -189,6 +188,10 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 
 	// 更新会话最后一条消息
 	s.sessionDAO.UpdateSessionLastMessage(req.SessionId, req.Content, userMessage.CreatedAt)
+	// 如果是第一消息，更新会话第一条消息
+	if session.FirstMessage == "" {
+		s.sessionDAO.UpdateSessionFirstMessage(req.SessionId, req.Content)
+	}
 
 	// 从DB读取历史消息构建上下文（最近100条）
 	messages, err := s.messageDAO.GetMessagesBySessionId(req.SessionId, 100, 0)
