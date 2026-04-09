@@ -94,7 +94,7 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 		resp.Error(ctx, "消息内容不能为空", http.StatusBadRequest)
 		return
 	}
-
+	// 设置SSE响应头，启用服务器发送事件
 	ctx.Header("Content-Type", "text/event-stream")
 	ctx.Header("Cache-Control", "no-cache")
 	ctx.Header("Connection", "keep-alive")
@@ -104,12 +104,15 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 	userId := ctx.GetString("Uuid")
 
 	onChunk := func(chunk string) error {
+		// 对内容进行转义处理，防止换行符和引号破坏JSON格式
 		escaped := strings.ReplaceAll(chunk, "\n", "\\n")
 		escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
+		// 将数据块以SSE格式写入响应流  \n\n（两个连续的换行符）是SSE协议中消息边界标记
 		_, err := fmt.Fprintf(ctx.Writer, "data: {\"content\": \"%s\"}\n\n", escaped)
 		if err != nil {
 			return err
 		}
+		// 立即刷新响应缓冲区，确保数据实时发送到前端
 		ctx.Writer.Flush()
 		return nil
 	}

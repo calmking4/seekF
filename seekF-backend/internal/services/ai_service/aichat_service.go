@@ -226,7 +226,9 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	// 聚合流式响应，逐块推送
 	var fullContent strings.Builder
 	for {
+		// 从AI模型流中接收下一个数据块，此操作会阻塞直到模型生成新内容
 		chunk, err := stream.Recv()
+		// 检查是否已到达流的末尾，如果是则退出循环
 		if errors.Is(err, io.EOF) {
 			break
 		}

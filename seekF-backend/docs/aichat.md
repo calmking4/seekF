@@ -114,7 +114,18 @@ data: {"content": "可以帮你的？"}
 data: {"done": true}
 ```
 
-每一行以 `data: ` 开头，空行表示一条消息结束。前端用 `EventSource` 接收：
+**为什么要转义？**
+
+如果 AI 返回的内容包含换行符或引号，需要转义：
+- `\n` → `\\n`
+- `"` → `\"`
+
+例如 AI 返回 `"你好\nWorld"`，转义后变成：
+```
+data: {"content": "你好\\nWorld"}
+```
+
+每一行以 `data: ` 开头，空行（`\n\n`）表示一条消息结束。前端用 `EventSource` 接收：
 
 ```javascript
 const evtSource = new EventSource('/user/aichat/sendMessage?session_id=xxx&content=你好&model_type=deepseek');
@@ -125,6 +136,11 @@ evtSource.onmessage = (event) => {
         aiText += data.content;
     }
     if (data.done) {
+        evtSource.close();
+    }
+    if (data.error) {
+        // 处理错误
+        console.error('AI 响应错误:', data.error);
         evtSource.close();
     }
 };
@@ -237,7 +253,7 @@ type ModelPool struct {
 
 #### 3.2.3 SendMessageStream —— 核心流式对话
 
-这是整个项目最复杂的方法，分 6 步：
+这是整个项目最复杂的方法，分 7 步：
 
 **Step 1：校验会话**
 ```go
@@ -245,12 +261,22 @@ session, err := s.sessionDAO.GetAISessionByUuid(req.SessionId)
 // 确认会话存在且是 AI 会话（receive_id 以 'A' 开头）
 ```
 
-**Step 2：保存用户消息**
+**Step 2：获取用户信息**
+```go
+user, err := s.userInfoDAO.FindUserByUuid(userId)
+// 用于保存消息时带上用户昵称和头像
+userName := user.Nickname
+userAvatar := user.Avatar
+```
+
+**Step 3：保存用户消息**
 ```go
 userMessage := &models.Message{
     Uuid:       "M" + 随机字符串,
     SessionId:  req.SessionId,
     SendId:     userId,        // 用户 ID（U开头）
+    SendName:   userName,      // 用户昵称
+    SendAvatar: userAvatar,    // 用户头像
     ReceiveId:  session.ReceiveId,  // AI ID（A开头）
     Content:    req.Content,
     Status:     1,  // 已发送
@@ -258,7 +284,7 @@ userMessage := &models.Message{
 s.messageDAO.CreateMessage(userMessage)
 ```
 
-**Step 3：构建上下文**
+**Step 4：构建上下文**
 ```go
 // 从 DB 读取最近 100 条消息
 messages, _ := s.messageDAO.GetMessagesBySessionId(req.SessionId, 100, 0)
@@ -278,7 +304,7 @@ for _, msg := range messages {
 - `SendId == userId` → 这是用户说的 → `UserMessage`
 - `SendId != userId`（即 AI 发的）→ `AssistantMessage`
 
-**Step 4：调用模型流式推理**
+**Step 5：调用模型流式推理**
 ```go
 pool := aipkg.GetModelPool()
 model := pool.GetModel(req.ModelType)
@@ -286,46 +312,58 @@ stream, _ := model.Stream(ctx, chatMessages)
 defer stream.Close()  // 必须关闭，否则连接泄漏
 ```
 
-**Step 5：逐块推送 SSE**
+**Step 6：逐块推送 SSE**
 ```go
 var fullContent strings.Builder
 for {
     chunk, err := stream.Recv()
     if errors.Is(err, io.EOF) { break }
+    if err != nil { break }
     
-    fullContent.WriteString(chunk.Content)
-    onChunk(chunk.Content)  // 回调函数，通过 SSE 推送给前端
+    if chunk != nil && len(chunk.Content) > 0 {
+        fullContent.WriteString(chunk.Content)
+        onChunk(chunk.Content)  // 回调函数，通过 SSE 推送给前端
+    }
+}
+
+// 如果 AI 没有返回任何内容，发送默认回复
+if finalContent := fullContent.String(); finalContent == "" {
+    finalContent = "抱歉，我暂时无法回答这个问题。"
+    onChunk(finalContent)
 }
 ```
 
-`onChunk` 是 Controller 层传入的回调：
-```go
-onChunk := func(chunk string) error {
-    fmt.Fprintf(ctx.Writer, "data: {\"content\": \"%s\"}\n\n", escaped)
-    ctx.Writer.Flush()  // 立即推送到客户端
-    return nil
-}
-```
+**为什么要转义？**
+- AI 可能返回换行符 `\n`，会破坏 SSE 消息边界
+- AI 可能返回引号 `"`，会破坏 JSON 格式
 
-**Step 6：保存 AI 响应**
+**Step 7：保存 AI 响应**
 ```go
-aiMessage := &models.Message{
-    SendId:     "A" + 随机字符串,  // AI 作为发送者
-    ReceiveId:  userId,            // 用户作为接收者
+// 发送 AI 响应到 Kafka 异步持久化
+aiSendId := "A" + 随机字符串
+aipkg.SendAIMessage(aipkg.AIMessagePayload{
+    SessionId:  req.SessionId,
+    SendId:     aiSendId,      // AI 作为发送者
+    SendName:   "AI助手",
+    ReceiveId:  userId,        // 用户作为接收者
     Content:    finalContent,
-}
+    ModelType:  req.ModelType,
+})
 
-if err := s.messageDAO.CreateMessage(aiMessage); err != nil {
-    // DB 写入失败，降级为 Kafka 异步持久化
-    aipkg.SendAIMessage(aipkg.AIMessagePayload{...})
+// 更新会话最后一条消息
+s.sessionDAO.UpdateSessionLastMessage(req.SessionId, finalContent, userMessage.CreatedAt)
+
+// 发送完成信号
+if onComplete != nil {
+    onComplete(finalContent)
 }
 ```
 
-**为什么不把 AI 响应也通过 Kafka 异步化？**
+**为什么要用 Kafka 异步持久化？**
 
-- AI 响应已经通过 SSE 实时推送给用户了，用户不需要等 DB 写入
-- 但 DB 写入是"最终一致性"需求，即使失败也可以通过 Kafka 补救
-- 如果同步等待 Kafka，反而增加复杂度
+- AI 响应已经通过 SSE 实时推送给用户了
+- 如果同步写 DB 慢，会阻塞后续的 AI 调用
+- Kafka 保证消息不丢失，最终一致性由消费者保障
 
 ---
 
@@ -417,20 +455,50 @@ func (c *AIChatController) CreateSession(ctx *gin.Context) {
 
 ```go
 func (c *AIChatController) SendMessage(ctx *gin.Context) {
-    // 1. 设置 SSE 响应头
+    // 1. 解析 Query 参数（SSE 必须用 GET）
+    var req userreq.SendAIMessageRequest
+    if err := ctx.ShouldBindQuery(&req); err != nil {
+        resp.Error(ctx, "参数错误", http.StatusBadRequest)
+        return
+    }
+
+    // 2. 空内容校验
+    if req.Content == "" {
+        resp.Error(ctx, "消息内容不能为空", http.StatusBadRequest)
+        return
+    }
+
+    // 3. 设置 SSE 响应头
     ctx.Header("Content-Type", "text/event-stream")
     ctx.Header("Cache-Control", "no-cache")
     ctx.Header("Connection", "keep-alive")
-    
-    // 2. 定义推送回调
+    ctx.Status(http.StatusOK)
+    ctx.Writer.Flush()
+
+    // 4. 定义推送回调
     onChunk := func(chunk string) error {
+        // 转义特殊字符，防止破坏 JSON 格式
+        escaped := strings.ReplaceAll(chunk, "\n", "\\n")
+        escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
+        
         fmt.Fprintf(ctx.Writer, "data: {\"content\": \"%s\"}\n\n", escaped)
         ctx.Writer.Flush()  // 关键：立即推送
         return nil
     }
-    
-    // 3. 调用 Service（阻塞直到流结束）
-    c.aiChatService.SendMessageStream(ctx.Request.Context(), userId, req, onChunk, onComplete)
+
+    onComplete := func(fullContent string) error {
+        fmt.Fprintf(ctx.Writer, "data: {\"done\": true}\n\n")
+        ctx.Writer.Flush()
+        return nil
+    }
+
+    // 5. 调用 Service（阻塞直到流结束）
+    err := c.aiChatService.SendMessageStream(ctx.Request.Context(), userId, req, onChunk, onComplete)
+    if err != nil {
+        // 发送错误信号给前端
+        fmt.Fprintf(ctx.Writer, "data: {\"error\": \"%s\"}\n\n", err.Error())
+        ctx.Writer.Flush()
+    }
 }
 ```
 
@@ -438,6 +506,7 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 - 不返回 JSON，而是持续写入 `ctx.Writer`
 - 每次写入后必须 `Flush()`，否则数据会缓存在缓冲区
 - 连接保持打开，直到流结束或客户端断开
+- 错误时发送 `data: {"error": "xxx"}` 信号
 
 ---
 
@@ -474,17 +543,23 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
    }
 
 5. 流结束后
-   a. 保存 AI 响应到 DB
-   b. 如果 DB 写入失败 → 发到 Kafka 异步持久化
-   c. 更新会话最后消息
-   d. 发送 done 信号给前端
+   a. 发送 AI 响应到 Kafka 异步持久化
+   b. 更新会话最后消息
+   c. 发送 done 信号给前端
 
 6. 前端接收
    data: {"content": "你"}
+   
    data: {"content": "好"}
+   
    data: {"content": "！有什么可以帮"}
+   
    data: {"content": "你的？"}
+   
    data: {"done": true}
+   
+   // 或错误情况
+   data: {"error": "AI响应失败"}
 ```
 
 ---
@@ -598,6 +673,9 @@ data: {"content": "好"}
 data: {"content": "！"}
 
 data: {"done": true}
+
+或者错误情况：
+data: {"error": "会话不存在"}
 ```
 
 ---
@@ -653,22 +731,30 @@ export GLM_BASE_URL="https://open.bigmodel.cn/api/paas/v4/"
 
 因为 SSE 通过 `EventSource` 发起，浏览器 `EventSource` API 只支持 GET 请求。如果要用 POST，前端需要手写 `fetch` + `ReadableStream`，复杂度更高。
 
-### Q2: 上下文窗口有限制吗？
+### Q2: 为什么需要转义？
+
+AI 返回的内容可能包含换行符和引号：
+- 换行符 `\n` 会破坏 SSE 消息边界
+- 引号 `"` 会破坏 JSON 格式
+
+所以要先转义再发送：`\n` → `\\n`，`"` → `\"`
+
+### Q3: 上下文窗口有限制吗？
 
 有。当前限制读取最近 100 条消息。如果对话很长，可以：
 1. 增加条数限制
 2. 使用消息摘要/总结（把早期对话压缩成一段摘要）
 3. 使用 Token 计数，按 Token 数量截断
 
-### Q3: 如果 AI 模型调用超时怎么办？
+### Q4: 如果 AI 模型调用超时怎么办？
 
 `model.Stream()` 会使用 `ctx`（请求上下文），如果客户端断开连接，context 会被取消，流式调用会自动终止。
 
-### Q4: 多个用户同时调用会冲突吗？
+### Q5: 多个用户同时调用会冲突吗？
 
 不会。模型实例是无状态的（类似 HTTP Client），多个 goroutine 可以安全并发调用。每个请求的会话数据都从 DB 独立读取。
 
-### Q5: 和 WebSocket 人聊的区别？
+### Q6: 和 WebSocket 人聊的区别？
 
 | 特性 | 人聊（WebSocket） | AI 聊（SSE） |
 |------|-------------------|-------------|
