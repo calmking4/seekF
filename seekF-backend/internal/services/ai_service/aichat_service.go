@@ -200,8 +200,9 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		messages = []models.Message{}
 	}
 
-	// 将DB消息转换为eino消息格式
+	// 将DB消息转换为eino消息格式，添加系统提示
 	var chatMessages []*schema.Message
+	chatMessages = append(chatMessages, schema.SystemMessage("你是一个专业的AI助手，当前使用的模型是"+req.ModelType+"。请根据这个身份回答用户的问题。"))
 	for _, msg := range messages {
 		if msg.SendId == userId {
 			chatMessages = append(chatMessages, schema.UserMessage(msg.Content))
