@@ -18,7 +18,7 @@
                 <div
                     v-for="(item, index) in sessionList"
                     :key="item.sessionId"
-                    class="flex items-center gap-3 px-3 py-3 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100"
+                    class="flex items-center gap-3 px-3 py-3 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100 group"
                     :class="{ 'bg-gray-100': activeIndex === index }"
                     @click="selectSession(index)"
                 >
@@ -32,7 +32,15 @@
                     <div class="flex-1 min-w-0">
                         <div class="flex justify-between items-start">
                             <h3 class="font-medium text-sm truncate">AI 助手</h3>
-                            <span class="text-xs text-gray-400">{{ item.createdAt }}</span>
+                            <div class="flex items-center gap-1">
+                                <span class="text-xs text-gray-400">{{ item.createdAt }}</span>
+                                <button
+                                    class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity p-1"
+                                    @click.stop="handleDeleteSession(item, index)"
+                                >
+                                    <Icon name="tabler:trash" class="text-sm" />
+                                </button>
+                            </div>
                         </div>
                         <p class="text-xs text-gray-500 truncate">{{ item.firstMessage || '点击开始对话' }}</p>
                     </div>
@@ -399,6 +407,33 @@ const handleModelChange = (newModel) => {
     const session = currentSession.value
     if (!session) return
     session.modelType = newModel
+}
+
+// 删除会话
+const handleDeleteSession = async (item, index) => {
+    try {
+        await ElMessageBox.confirm('确定要删除这个会话吗？', '提示', {
+            confirmButtonText: '确定',
+            cancelButtonText: '取消',
+            type: 'warning'
+        })
+
+        const success = await aiChat.deleteSession(item.sessionId)
+        if (success) {
+            sessionList.value.splice(index, 1)
+            if (activeIndex.value === index) {
+                activeIndex.value = -1
+                messageList.value = []
+            } else if (activeIndex.value > index) {
+                activeIndex.value--
+            }
+            ElMessage.success('删除成功')
+        } else {
+            ElMessage.error('删除失败')
+        }
+    } catch {
+        // 用户取消
+    }
 }
 
 onMounted(async () => {

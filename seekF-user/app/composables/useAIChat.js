@@ -108,10 +108,30 @@ export const useAIChat = () => {
         return evtSource
     }
 
+    /**
+     * 删除 AI 会话
+     */
+    const deleteSession = async (sessionId) => {
+        try {
+            const res = await useApi$('/user/aichat/deleteSession', {
+                method: 'POST',
+                body: { session_id: sessionId }
+            })
+            if (res?.code === 200) {
+                return true
+            }
+            return false
+        } catch (error) {
+            console.error('删除会话失败:', error)
+            return false
+        }
+    }
+
     return {
         createSession,
         getSessionList,
         getMessageHistory,
-        sendMessage
+        sendMessage,
+        deleteSession
     }
 }

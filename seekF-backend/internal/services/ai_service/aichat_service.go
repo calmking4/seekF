@@ -28,6 +28,8 @@ type AIChatService interface {
 	GetMessageHistory(sessionId string, page int, pageSize int) ([]userresp.GetAIMessageHistoryRespond, int64, error)
 	// SendMessageStream 流式发送消息，通过SSE推送实时响应
 	SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onComplete func(fullContent string) error) error
+	// DeleteSession 删除AI会话
+	DeleteSession(sessionId string) error
 }
 
 // AIChatServiceImpl AI聊天服务实现
@@ -276,5 +278,21 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		onComplete(finalContent)
 	}
 
+	return nil
+}
+
+// DeleteSession 删除AI会话及其所有消息
+func (s *AIChatServiceImpl) DeleteSession(sessionId string) error {
+	if err := s.messageDAO.DeleteMessagesBySessionId(sessionId); err != nil {
+		zlog.Error("delete AI session messages failed: " + err.Error())
+		return fmt.Errorf("删除会话消息失败")
+	}
+
+	if err := s.sessionDAO.DeleteAISession(sessionId); err != nil {
+		zlog.Error("delete AI session failed: " + err.Error())
+		return fmt.Errorf("删除会话失败")
+	}
+
+	zlog.Info("delete AI session success: " + sessionId)
 	return nil
 }

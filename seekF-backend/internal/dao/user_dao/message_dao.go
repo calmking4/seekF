@@ -16,6 +16,7 @@ type MessageDAO interface {
 	// AI消息相关方法
 	GetMessagesBySessionId(sessionId string, limit int, offset int) ([]models.Message, error)
 	CountMessagesBySessionId(sessionId string) (int64, error)
+	DeleteMessagesBySessionId(sessionId string) error
 }
 
 // MessageDAOImpl 消息DAO实现
@@ -80,4 +81,10 @@ func (d *MessageDAOImpl) CountMessagesBySessionId(sessionId string) (int64, erro
 	var count int64
 	result := db.GormDB.Model(&models.Message{}).Where("session_id = ?", sessionId).Count(&count)
 	return count, result.Error
+}
+
+// DeleteMessagesBySessionId 删除指定会话的所有消息
+func (d *MessageDAOImpl) DeleteMessagesBySessionId(sessionId string) error {
+	result := db.GormDB.Where("session_id = ?", sessionId).Delete(&models.Message{})
+	return result.Error
 }

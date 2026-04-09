@@ -133,3 +133,19 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 		ctx.Writer.Flush()
 	}
 }
+
+func (c *AIChatController) DeleteSession(ctx *gin.Context) {
+	var req userreq.DeleteAISessionRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "参数错误", http.StatusBadRequest)
+		return
+	}
+
+	if err := c.aiChatService.DeleteSession(req.SessionId); err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "删除会话成功", nil)
+}
