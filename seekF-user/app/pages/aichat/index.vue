@@ -70,6 +70,7 @@
                             <el-option label="DeepSeek" value="deepseek" />
                             <el-option label="Qwen" value="qwen" />
                             <el-option label="GLM" value="glm" />
+                            <el-option label="GLM-4.6V(图片识别)" value="glm-4v" />
                         </el-select>
                     </div>
                     <div class="flex-1"></div>
@@ -119,9 +120,15 @@
                                     class="rounded-lg px-4 py-2 max-w-[60%] shadow-sm flex-shrink-0"
                                     :class="msg.isSelf ? 'bg-[#D9FDD3]' : 'bg-white'"
                                 >
-                                    <!-- 流式 AI 消息显示光标 -->
-                                    <p v-if="msg.isStreaming" class="text-sm whitespace-pre-wrap">{{ msg.content }}<span class="inline-block w-0.5 h-4 bg-gray-400 ml-0.5 animate-pulse">|</span></p>
-                                    <p v-else class="text-sm whitespace-pre-wrap">{{ msg.content }}</p>
+                                    <!-- 用户图片消息 -->
+                                    <div v-if="msg.isSelf && msg.type === 2 && msg.url && isImageUrl(msg.url)">
+                                        <img :src="msg.url" class="max-w-full rounded cursor-pointer mb-1" @click="previewImage(msg.url)" />
+                                    </div>
+                                    <!-- 文本消息 -->
+                                    <p v-if="msg.content && msg.content !== '图片'" class="text-sm whitespace-pre-wrap">
+                                        <span v-if="!msg.isSelf && msg.isStreaming">{{ msg.content }}<span class="inline-block w-0.5 h-4 bg-gray-400 ml-0.5 animate-pulse">|</span></span>
+                                        <span v-else>{{ msg.content }}</span>
+                                    </p>
                                     <p class="text-xs text-gray-400 text-right mt-1">{{ msg.sendTime }}</p>
                                 </div>
 
@@ -138,7 +145,32 @@
 
                 <!-- 输入框区域 -->
                 <div class="bg-white p-3 border-t border-gray-200 flex-shrink-0">
+                    <!-- 图片预览 -->
+                    <div v-if="selectedImage" class="mb-2 flex items-center gap-2">
+                        <div class="relative inline-block">
+                            <img :src="selectedImagePreview" class="h-16 w-16 object-cover rounded border" />
+                            <button
+                                class="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs hover:bg-red-600"
+                                @click="removeImage"
+                            >
+                                ×
+                            </button>
+                        </div>
+                    </div>
                     <div class="flex gap-3">
+                        <!-- 图片上传按钮：仅 GLM-4.6V 模型显示 -->
+                        <el-upload
+                            v-if="currentSession?.modelType === 'glm-4v'"
+                            :show-file-list="false"
+                            :auto-upload="false"
+                            accept="image/*"
+                            :limit="1"
+                            @change="handleImageChange"
+                        >
+                            <el-button slot="trigger" size="small" type="text" class="!text-gray-500 !hover:text-blue-500">
+                                <Icon name="uil:image" class="text-xl" />
+                            </el-button>
+                        </el-upload>
                         <textarea
                             v-model="inputMessage"
                             placeholder="输入消息，按 Enter 发送..."
@@ -148,7 +180,7 @@
                         ></textarea>
                         <button
                             class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            :disabled="isStreaming || !inputMessage.trim()"
+                            :disabled="isStreaming || (!inputMessage.trim() && !selectedImage)"
                             @click="sendMessage"
                         >
                             发送
@@ -170,6 +202,7 @@ const activeIndex = ref(-1)
 const messageList = ref([])
 const inputMessage = ref('')
 const isStreaming = ref(false)
+const selectedImage = ref(null)
 
 const scrollbarRef = ref()
 const hasMore = ref(true)
@@ -183,6 +216,42 @@ const currentSession = computed(() => {
     if (activeIndex.value === -1) return null
     return sessionList.value[activeIndex.value]
 })
+
+const selectedImagePreview = computed(() => {
+    if (!selectedImage.value) return ''
+    return URL.createObjectURL(selectedImage.value)
+})
+
+// 图片选择
+const handleImageChange = (file) => {
+    if (file.raw) {
+        selectedImage.value = file.raw
+    }
+}
+
+// 移除图片
+const removeImage = () => {
+    if (selectedImage.value) {
+        URL.revokeObjectURL(selectedImagePreview.value)
+        selectedImage.value = null
+    }
+}
+
+// 判断 URL 是否为图片（支持 blob、data、http URL）
+const isImageUrl = (url) => {
+    if (!url) return false
+    // blob URL
+    if (url.startsWith('blob:')) return true
+    // base64 数据 URL
+    if (url.startsWith('data:image/')) return true
+    // http/https 图片 URL
+    return /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(url)
+}
+
+// 图片预览
+const previewImage = (url) => {
+    window.open(url, '_blank')
+}
 
 // 模型图标（统一机器人头像）
 const getModelIcon = () => {
@@ -273,13 +342,17 @@ const loadMessageList = async (sessionId, page = 1) => {
             content: msg.content,
             senderName: msg.send_name,
             sendTime: msg.created_at,
-            isSelf: msg.send_id && !msg.send_id.startsWith('A')
+            isSelf: msg.send_id && !msg.send_id.startsWith('A'),
+            type: msg.type,
+            url: msg.url || ''
         }))
 
         if (page === 1) {
-            messageList.value = messages
+            // 后端返回倒序（最新在前），反转后最新在最后
+            messageList.value = messages.reverse()
         } else {
-            messageList.value = [...messages, ...messageList.value]
+            // 加载更多时，反转后追加到前面
+            messageList.value = [...messages.reverse(), ...messageList.value]
         }
 
         hasMore.value = messageList.value.length < totalMessages.value
@@ -310,22 +383,34 @@ const loadMoreMessages = async () => {
 
 // 发送消息
 const sendMessage = async () => {
-    if (!inputMessage.value.trim() || activeIndex.value === -1 || isStreaming.value) return
+    if (activeIndex.value === -1 || isStreaming.value) return
 
     const session = currentSession.value
     if (!session) return
 
     const content = inputMessage.value.trim()
-    inputMessage.value = ''
+    const imageFile = selectedImage.value
 
-    // 添加用户消息
-    messageList.value.push({
+    if (!content && !imageFile) return
+
+    // 添加用户消息（如果是图片消息，保存图片 URL 用于显示）
+    const userMsgData = {
         messageId: 'user_' + Date.now(),
-        content: content,
+        content: content || '图片',
         senderName: '我',
         sendTime: new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
-        isSelf: true
-    })
+        isSelf: true,
+        type: imageFile ? 2 : 0,
+        url: imageFile ? URL.createObjectURL(imageFile) : ''
+    }
+    messageList.value.push(userMsgData)
+
+    // 清除已选择的图片
+    if (imageFile) {
+        removeImage()
+    }
+
+    inputMessage.value = ''
 
     // 添加 AI 流式消息占位
     const aiMsgIndex = messageList.value.length
@@ -350,6 +435,7 @@ const sendMessage = async () => {
         session.sessionId,
         content,
         session.modelType,
+        imageFile,
         // onChunk
         (chunk) => {
             const aiMsg = messageList.value[aiMsgIndex]

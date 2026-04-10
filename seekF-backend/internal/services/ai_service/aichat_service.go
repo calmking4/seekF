@@ -123,7 +123,7 @@ func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, page int, pageSi
 		return nil, 0, fmt.Errorf("获取消息历史失败")
 	}
 
-	messages, err := s.messageDAO.GetMessagesBySessionId(sessionId, pageSize, offset)
+	messages, err := s.messageDAO.GetMessagesBySessionIdDesc(sessionId, pageSize, offset)
 	if err != nil {
 		zlog.Error("get AI messages failed: " + err.Error())
 		return nil, 0, fmt.Errorf("获取消息历史失败")
@@ -137,6 +137,7 @@ func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, page int, pageSi
 			SendName:  msg.SendName,
 			Content:   msg.Content,
 			Type:      msg.Type,
+			Url:       msg.Url,
 			CreatedAt: msg.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
@@ -169,13 +170,26 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		userAvatar = user.Avatar
 	}
 
+	// 处理content：如果有图片但没有文本，content设为"图片"
+	content := req.Content
+	if req.ImageURL != "" && content == "" {
+		content = "图片"
+	}
+
+	// 判断消息类型：有图片时为文件类型(Type=2)，否则为文本(Type=0)
+	msgType := int8(0)
+	if req.ImageURL != "" {
+		msgType = 2
+	}
+
 	// 同步保存用户消息到DB
 	userMsgId := "M" + util.GetNowAndLenRandomString(11)
 	userMessage := &models.Message{
 		Uuid:       userMsgId,
 		SessionId:  req.SessionId,
-		Type:       0,
-		Content:    req.Content,
+		Type:       msgType,
+		Content:    content,
+		Url:        req.ImageURL,
 		SendId:     userId,
 		SendName:   userName,
 		SendAvatar: userAvatar,
@@ -189,10 +203,10 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	}
 
 	// 更新会话最后一条消息
-	s.sessionDAO.UpdateSessionLastMessage(req.SessionId, req.Content, userMessage.CreatedAt)
+	s.sessionDAO.UpdateSessionLastMessage(req.SessionId, content, userMessage.CreatedAt)
 	// 如果是第一消息，更新会话第一条消息
 	if session.FirstMessage == "" {
-		s.sessionDAO.UpdateSessionFirstMessage(req.SessionId, req.Content)
+		s.sessionDAO.UpdateSessionFirstMessage(req.SessionId, content)
 	}
 
 	// 从DB读取历史消息构建上下文（最近100条）
@@ -202,15 +216,59 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		messages = []models.Message{}
 	}
 
+	// 判断是否为多模态模型
+	isMultiModalModel := req.ModelType == "glm-4v"
+
 	// 将DB消息转换为eino消息格式，添加系统提示
 	var chatMessages []*schema.Message
 	chatMessages = append(chatMessages, schema.SystemMessage("你是一个专业的AI助手，当前使用的模型是"+req.ModelType+"。请根据这个身份回答用户的问题。"))
 	for _, msg := range messages {
 		if msg.SendId == userId {
-			chatMessages = append(chatMessages, schema.UserMessage(msg.Content))
+			// 只有多模态模型才处理图片
+			if isMultiModalModel && msg.Url != "" {
+				imageURL := msg.Url
+				multiMsg := &schema.Message{
+					Role: schema.User,
+					UserInputMultiContent: []schema.MessageInputPart{
+						{Type: schema.ChatMessagePartTypeText, Text: msg.Content},
+						{Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{
+							MessagePartCommon: schema.MessagePartCommon{URL: &imageURL},
+						}},
+					},
+				}
+				chatMessages = append(chatMessages, multiMsg)
+			} else {
+				// 非多模态模型或无图片，只发送文本
+				chatMessages = append(chatMessages, schema.UserMessage(msg.Content))
+			}
 		} else {
 			chatMessages = append(chatMessages, schema.AssistantMessage(msg.Content, nil))
 		}
+	}
+
+	// 如果有图片，且是多模态模型，追加当前用户消息为多模态
+	if isMultiModalModel && req.ImageURL != "" {
+		imageURL := req.ImageURL
+		var currentMsgContent []schema.MessageInputPart
+		if content != "" && content != "图片" {
+			currentMsgContent = []schema.MessageInputPart{
+				{Type: schema.ChatMessagePartTypeText, Text: content},
+				{Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{
+					MessagePartCommon: schema.MessagePartCommon{URL: &imageURL},
+				}},
+			}
+		} else {
+			currentMsgContent = []schema.MessageInputPart{
+				{Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{
+					MessagePartCommon: schema.MessagePartCommon{URL: &imageURL},
+				}},
+			}
+		}
+		multiMsg := &schema.Message{
+			Role:                  schema.User,
+			UserInputMultiContent: currentMsgContent,
+		}
+		chatMessages = append(chatMessages, multiMsg)
 	}
 
 	// 获取对应模型的单例

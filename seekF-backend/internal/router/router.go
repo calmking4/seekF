@@ -89,7 +89,7 @@ func SetupRouter(
 			protectedGroup.POST("/aichat/createSession", aichatController.CreateSession)
 			protectedGroup.POST("/aichat/getSessionList", aichatController.GetSessionList)
 			protectedGroup.POST("/aichat/getMessageHistory", aichatController.GetMessageHistory)
-			protectedGroup.GET("/aichat/sendMessage", aichatController.SendMessage)
+			protectedGroup.POST("/aichat/sendMessage", aichatController.SendMessage)
 			protectedGroup.POST("/aichat/deleteSession", aichatController.DeleteSession)
 		}
 

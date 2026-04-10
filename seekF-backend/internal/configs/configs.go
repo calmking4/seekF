@@ -75,6 +75,7 @@ type AIModelConfig struct {
 	GlmApiKey      string `toml:"glmApiKey"`
 	GlmModel       string `toml:"glmModel"`
 	GlmBaseUrl     string `toml:"glmBaseUrl"`
+	Glm4vModel     string `toml:"glm4vModel"`
 }
 
 type JWTConfig struct {
@@ -166,6 +167,9 @@ func loadEnvConfig(cfg *Config) {
 	}
 	if v := os.Getenv("GLM_BASE_URL"); v != "" {
 		cfg.AIModelConfig.GlmBaseUrl = v
+	}
+	if v := os.Getenv("GLM4V_MODEL"); v != "" {
+		cfg.AIModelConfig.Glm4vModel = v
 	}
 }
 

@@ -7,19 +7,23 @@ import (
 
 	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/pkg/resp"
+	"seekF-backend/internal/pkg/upload/oss"
 	"seekF-backend/internal/pkg/zlog"
 	aiservice "seekF-backend/internal/services/ai_service"
+	userservice "seekF-backend/internal/services/user_service"
 
 	"github.com/gin-gonic/gin"
 )
 
 type AIChatController struct {
 	aiChatService aiservice.AIChatService
+	fileService   userservice.FileService
 }
 
-func NewAIChatController(aiChatService aiservice.AIChatService) *AIChatController {
+func NewAIChatController(aiChatService aiservice.AIChatService, fileService userservice.FileService) *AIChatController {
 	return &AIChatController{
 		aiChatService: aiChatService,
+		fileService:   fileService,
 	}
 }
 
@@ -84,16 +88,23 @@ func (c *AIChatController) GetMessageHistory(ctx *gin.Context) {
 
 func (c *AIChatController) SendMessage(ctx *gin.Context) {
 	var req userreq.SendAIMessageRequest
-	if err := ctx.ShouldBindQuery(&req); err != nil {
+	if err := ctx.ShouldBind(&req); err != nil {
 		zlog.Error(err.Error())
 		resp.Error(ctx, "参数错误", http.StatusBadRequest)
 		return
 	}
 
-	if req.Content == "" {
-		resp.Error(ctx, "消息内容不能为空", http.StatusBadRequest)
-		return
+	// 如果有图片文件，上传到 OSS
+	if file, err := ctx.FormFile("image"); err == nil {
+		result, err := c.fileService.UploadFile(ctx.Request.Context(), file, oss.MessageImage)
+		if err != nil {
+			zlog.Error("upload image failed: " + err.Error())
+			resp.Error(ctx, "图片上传失败", http.StatusInternalServerError)
+			return
+		}
+		req.ImageURL = result.URL
 	}
+
 	// 设置SSE响应头，启用服务器发送事件
 	ctx.Header("Content-Type", "text/event-stream")
 	ctx.Header("Cache-Control", "no-cache")

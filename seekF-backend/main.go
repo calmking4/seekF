@@ -41,7 +41,7 @@ func main() {
 	messageController := usercontroller.NewMessageController(messageService)
 	fileController := usercontroller.NewFileController(fileService)
 	wsController := usercontroller.NewWsController()
-	aichatController := usercontroller.NewAIChatController(aiChatService)
+	aichatController := usercontroller.NewAIChatController(aiChatService, fileService)
 
 	// 初始化Kafka并启动WebSocket服务器
 	kafka.KafkaServiceInstance.Init()

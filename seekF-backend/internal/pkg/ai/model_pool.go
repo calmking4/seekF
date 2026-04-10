@@ -15,6 +15,7 @@ type ModelPool struct {
 	DeepSeek model.BaseChatModel
 	Qwen     model.BaseChatModel
 	GLM      model.BaseChatModel
+	GLM4V    model.BaseChatModel
 }
 
 var (
@@ -71,6 +72,20 @@ func GetModelPool() *ModelPool {
 			}
 		}
 
+		if cfg.GlmApiKey != "" && cfg.Glm4vModel != "" {
+			g4v, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
+				APIKey:  cfg.GlmApiKey,
+				Model:   cfg.Glm4vModel,
+				BaseURL: cfg.GlmBaseUrl,
+			})
+			if err != nil {
+				zlog.Error("init glm-4.6v model failed: " + err.Error())
+			} else {
+				modelPool.GLM4V = g4v
+				zlog.Info("glm-4.6v model initialized successfully")
+			}
+		}
+
 		zlog.Info("model pool initialization completed")
 	})
 	return modelPool
@@ -84,6 +99,8 @@ func (p *ModelPool) GetModel(modelType string) model.BaseChatModel {
 		return p.Qwen
 	case "glm":
 		return p.GLM
+	case "glm-4v":
+		return p.GLM4V
 	default:
 		return p.DeepSeek
 	}
