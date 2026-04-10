@@ -74,14 +74,31 @@ data: {"done": true}
 
 ```go
 func (c *AIChatController) SendMessage(ctx *gin.Context) {
-    // 1. 设置 SSE 响应头（关键！）
+    // 1. 解析 Query 参数（SSE 必须用 GET）
+    var req userreq.SendAIMessageRequest
+    if err := ctx.ShouldBind(&req); err != nil {
+        resp.Error(ctx, "参数错误", http.StatusBadRequest)
+        return
+    }
+
+    // 2. 如果有图片文件，上传到 OSS（支持 form-data 上传）
+    if file, err := ctx.FormFile("image"); err == nil {
+        result, err := c.fileService.UploadFile(ctx.Request.Context(), file, oss.MessageImage)
+        if err != nil {
+            resp.Error(ctx, "图片上传失败", http.StatusInternalServerError)
+            return
+        }
+        req.ImageURL = result.URL
+    }
+
+    // 3. 设置 SSE 响应头（关键！）
     ctx.Header("Content-Type", "text/event-stream")
     ctx.Header("Cache-Control", "no-cache")
     ctx.Header("Connection", "keep-alive")
     ctx.Status(http.StatusOK)
     ctx.Writer.Flush()
 
-    // 2. 定义 onChunk 回调：每收到一块数据就推送给客户端
+    // 4. 定义 onChunk 回调：每收到一块数据就推送给客户端
     onChunk := func(chunk string) error {
         // 转义特殊字符，避免破坏 JSON 格式
         escaped := strings.ReplaceAll(chunk, "\n", "\\n")
@@ -92,11 +109,11 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
         if err != nil {
             return err
         }
-        ctx.Writer.Flush()  // 关键：立即推送给客户端
+        ctx.Writer.Flush()  // 关键：立即推送给客户���
         return nil
     }
 
-    // 3. 定义 onComplete 回调：流式推送完成后执行
+    // 5. 定义 onComplete 回调：流式推送完成后执行
     onComplete := func(fullContent string) error {
         _, err := fmt.Fprintf(ctx.Writer, "data: {\"done\": true}\n\n")
         if err != nil {
@@ -106,8 +123,13 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
         return nil
     }
 
-    // 4. 调用 Service，传入回调函数
+    // 6. 调用 Service，传入回调函数
     err := c.aiChatService.SendMessageStream(ctx.Request.Context(), userId, req, onChunk, onComplete)
+    if err != nil {
+        // 发送错误信号给前端
+        fmt.Fprintf(ctx.Writer, "data: {\"error\": \"%s\"}\n\n", err.Error())
+        ctx.Writer.Flush()
+    }
 }
 ```
 
@@ -119,9 +141,19 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 | `Cache-Control: no-cache` | 禁用缓存，因为数据是流式的 |
 | `Connection: keep-alive` | 保持连接不断开 |
 
+**支持图片上传**：
+
+Controller 支持通过 Form-Data 上传图片文件：
+```go
+if file, err := ctx.FormFile("image"); err == nil {
+    result, err := c.fileService.UploadFile(ctx.Request.Context(), file, oss.MessageImage)
+    req.ImageURL = result.URL
+}
+```
+
 ### 3.2 Service 层（调用模型 + 执行回调）
 
-**文件**：`seekF-backend/internal/services/ai_service/aichat_service.go`
+**文件**：`seekF-backend/internal/services/user_service/aichat_service.go`
 
 ```go
 // SendMessageStream 的签名
@@ -132,14 +164,67 @@ func (s *AIChatServiceImpl) SendMessageStream(
     onChunk func(chunk string) error,        // 回调：每收到一块数据
     onComplete func(fullContent string) error // 回调：流式结束
 ) error {
-    // 1. 调用 AI 模型，获取流式响应
+    // 1. 校验会话
+    session, err := s.sessionDAO.GetAISessionByUuid(req.SessionId)
+    if err != nil {
+        return fmt.Errorf("会话不存在")
+    }
+
+    // 2. 获取用户信息
+    user, _ := s.userInfoDAO.FindUserByUuid(userId)
+
+    // 3. 判断消息类型：有图片时为文件类型(Type=2)，否则为文本(Type=0)
+    msgType := int8(0)
+    if req.ImageURL != "" {
+        msgType = 2
+    }
+
+    // 4. 保存用户消息到 DB
+    userMessage := &models.Message{...}
+    s.messageDAO.CreateMessage(userMessage)
+
+    // 5. 如果是第一条消息，更新会话第一条消息
+    if session.FirstMessage == "" {
+        s.sessionDAO.UpdateSessionFirstMessage(req.SessionId, content)
+    }
+
+    // 6. 从 DB 读取历史消息构建上下文（最近 100 条）
+    messages, _ := s.messageDAO.GetMessagesBySessionId(req.SessionId, 100, 0)
+
+    // 7. 判断是否为多模态模型
+    isMultiModalModel := req.ModelType == "glm-4v"
+
+    // 8. 构建 eino messages 数组
+    var chatMessages []*schema.Message
+    chatMessages = append(chatMessages, schema.SystemMessage("你是一个专业的AI助手..."))
+    for _, msg := range messages {
+        if msg.SendId == userId {
+            if isMultiModalModel && msg.Url != "" {
+                // 构建多模态消息
+                chatMessages = append(chatMessages, multiMsg)
+            } else {
+                chatMessages = append(chatMessages, schema.UserMessage(msg.Content))
+            }
+        } else {
+            chatMessages = append(chatMessages, schema.AssistantMessage(msg.Content, nil))
+        }
+    }
+
+    // 9. 如果有图片，追加当前用户消息为多模态
+    if isMultiModalModel && req.ImageURL != "" {
+        chatMessages = append(chatMessages, multiMsg)
+    }
+
+    // 10. 调用 AI 模型，获取流式响应
+    pool := aipkg.GetModelPool()
+    model := pool.GetModel(req.ModelType)
     stream, err := model.Stream(ctx, chatMessages)
     if err != nil {
-        return err
+        return fmt.Errorf("AI响应失败")
     }
     defer stream.Close()
 
-    // 2. 逐块读取模型返回的内容
+    // 11. 逐块读取模型返回的���容
     var fullContent strings.Builder
     for {
         chunk, err := stream.Recv()
@@ -159,7 +244,16 @@ func (s *AIChatServiceImpl) SendMessageStream(
         }
     }
 
-    // 3. 流式结束后，调用 onComplete 回调
+    // 12. 如果 AI 没有返回任何内容，发送默认回复
+    if finalContent := fullContent.String(); finalContent == "" {
+        finalContent = "抱歉，我暂时无法回答这个问题。"
+        onChunk(finalContent)
+    }
+
+    // 13. 发送 AI 响应到 Kafka 异步持久化
+    aipkg.SendAIMessage(aipkg.AIMessagePayload{...})
+
+    // 14. 流式结束后，调用 onComplete 回调
     if onComplete != nil {
         onComplete(fullContent.String())
     }
@@ -211,6 +305,8 @@ const evtSource = new EventSource(
     '/user/aichat/sendMessage?session_id=xxx&content=你好&model_type=deepseek'
 );
 
+let aiText = '';
+
 evtSource.onmessage = (event) => {
     const data = JSON.parse(event.data);
     
@@ -224,6 +320,11 @@ evtSource.onmessage = (event) => {
         // 流式响应结束
         evtSource.close();
     }
+
+    if (data.error) {
+        console.error('SSE 连接错误', data.error);
+        evtSource.close();
+    }
 };
 
 evtSource.onerror = (error) => {
@@ -232,18 +333,21 @@ evtSource.onerror = (error) => {
 };
 ```
 
-### 5.2 使用 fetch + ReadableStream（POST 请求）
+### 5.2 使用 fetch + ReadableStream（POST 请求 + 图片上传）
 
-浏览器原生 `EventSource` 只支持 GET 请求，如果需要 POST：
+浏览器原生 `EventSource` 只支持 GET 请求，如果需要 Post 或上传图片：
 
 ```javascript
+// 上传图片
+const formData = new FormData();
+formData.append('session_id', 'xxx');
+formData.append('content', '分析这张图片');
+formData.append('model_type', 'glm-4v');
+formData.append('image', imageFile);
+
 fetch('/user/aichat/sendMessage', {
     method: 'POST',
-    body: JSON.stringify({
-        session_id: 'xxx',
-        content: '你好',
-        model_type: 'deepseek'
-    })
+    body: formData
 }).then(response => {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -254,6 +358,8 @@ fetch('/user/aichat/sendMessage', {
             
             const text = decoder.decode(value);
             // 解析 SSE 格式...
+            // data: {"content": "xxx"}
+            // data: {"done": true}
             read();
         });
     }
@@ -275,8 +381,10 @@ fetch('/user/aichat/sendMessage', {
   │  Content-Type: text/event-stream           │
   │  ◄──────────────────────────────────────────
   │                                             │
+  │                                    校验会话
   │                                    保存用户消息到 DB
   │                                    调用 AI 模型
+  │                                    流式返回
   │                                             │
   │  data: {"content": "你"}                    │
   │  ◄──────────────────────────────────────────
@@ -284,7 +392,7 @@ fetch('/user/aichat/sendMessage', {
   │  data: {"content": "好，"}                  │
   │  ◄──────────────────────────────────────────
   │                                             │
-  │  data: {"content": "我是 AI 助手"}           │
+  │  data: {"content": "我是 AI 助手"}          │
   │  ◄──────────────────────────────────────────
   │                                             │
   │  data: {"done": true}                       │
@@ -294,13 +402,51 @@ fetch('/user/aichat/sendMessage', {
   │  (连接关闭)                                  │
 ```
 
+**支持图片上传的流程**：
+
+```
+前端                                         后端
+  │                                             │
+  │  POST /user/aichat/sendMessage (Form-Data)
+  │  session_id=xxx&content=分析图片&model_type=glm-4v
+  │  image=<图片文件>
+  │  ──────────────────────────────────────────►
+  │                                             │
+  │                                    上传到 OSS
+  │                                    获取图片 URL
+  │                                    构建多模态消息
+  │                                    调用 GLM-4V 模型
+  │                                             │
+  │  data: {"content": "这是一只..."}           │
+  │  ◄──────────────────────────────────────────
+  │                                             │
+  │  data: {"done": true}                       │
+  │                                             │
+```
+
 ---
 
 ## 七、关键代码位置汇总
 
 | 文件 | 作用 |
 |------|------|
-| `controllers/user/aichat_controller.go` | 设置 SSE 响应头、定义回调函数 |
-| `services/ai_service/aichat_service.go` | 调用模型流式推理、执行回调 |
+| `controllers/user/aichat_controller.go` | 设置 SSE 响应头、定义回调函数、支持图片上传 |
+| `services/user_service/aichat_service.go` | 调用模型流式推理、执行回调、多模态支持 |
 | `pkg/ai/model_pool.go` | 管理 AI 模型单例 |
-| `pkg/kafka/kafka.go` | Kafka 异步持久化 AI 响应 |
+| `pkg/ai/ai_kafka.go` | Kafka 消费者异步持久化 |
+| `dto/user/user_req/send_ai_message_request.go` | 请求参数（支持 image_url）|
+
+---
+
+## 八、SSE vs WebSocket 对比
+
+| 特性 | WebSocket | SSE |
+|------|-----------|-----|
+| 通信方向 | 双向 | 单向 |
+| 协议 | ws:// | http:// |
+| 复杂度 | 高 | 低 |
+| 心跳重连 | 需要 | 不需要 |
+| 浏览器支持 | 所有浏览器 | 所有现代浏览器 |
+| 编码量 | 较多 | 较少 |
+| 适用场景 | 实时聊天、游戏 | AI 流式响应、通知 |
+| 本项目用途 | 人聊 | AI 聊 |

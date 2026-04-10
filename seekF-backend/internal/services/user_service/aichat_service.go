@@ -219,11 +219,11 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	// 判断是否为多模态模型
 	isMultiModalModel := req.ModelType == "glm-4v"
 
-	// 将DB消息转换为eino消息格式，添加系统提示
+	// 将DB消息转换为eino消息格式，添加系统提示，构建上下文
 	var chatMessages []*schema.Message
 	chatMessages = append(chatMessages, schema.SystemMessage("你是一个专业的AI助手，当前使用的模型是"+req.ModelType+"。请根据这个身份回答用户的问题。"))
 	for _, msg := range messages {
-		if msg.SendId == userId {
+		if msg.SendId == userId { //处理用户消息
 			// 只有多模态模型才处理图片
 			if isMultiModalModel && msg.Url != "" {
 				imageURL := msg.Url
@@ -241,7 +241,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 				// 非多模态模型或无图片，只发送文本
 				chatMessages = append(chatMessages, schema.UserMessage(msg.Content))
 			}
-		} else {
+		} else { //处理AI消息
 			chatMessages = append(chatMessages, schema.AssistantMessage(msg.Content, nil))
 		}
 	}
