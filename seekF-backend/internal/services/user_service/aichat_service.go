@@ -1,4 +1,4 @@
-package aiservice
+package userservice
 
 import (
 	"context"

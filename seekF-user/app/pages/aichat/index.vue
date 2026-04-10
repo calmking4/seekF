@@ -167,7 +167,7 @@
                             :limit="1"
                             @change="handleImageChange"
                         >
-                            <el-button slot="trigger" size="small" type="text" class="!text-gray-500 !hover:text-blue-500">
+                            <el-button slot="trigger" size="small" class="!text-gray-500 !hover:text-blue-500">
                                 <Icon name="uil:image" class="text-xl" />
                             </el-button>
                         </el-upload>

@@ -7,7 +7,6 @@ import (
 	"seekF-backend/internal/pkg/kafka"
 	"seekF-backend/internal/pkg/websocket"
 	"seekF-backend/internal/router"
-	aiservice "seekF-backend/internal/services/ai_service"
 	userservice "seekF-backend/internal/services/user_service"
 )
 
@@ -30,7 +29,7 @@ func main() {
 	fileService := userservice.NewFileService()
 
 	// 初始化 AI Service 层（复用 sessionDAO 和 messageDAO）
-	aiChatService := aiservice.NewAIChatService(sessionDAO, messageDAO, userInfoDAO)
+	aiChatService := userservice.NewAIChatService(sessionDAO, messageDAO, userInfoDAO)
 
 	// 初始化 Controller 层
 	authController := usercontroller.NewAuthController(authService)

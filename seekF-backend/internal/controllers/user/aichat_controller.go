@@ -9,18 +9,17 @@ import (
 	"seekF-backend/internal/pkg/resp"
 	"seekF-backend/internal/pkg/upload/oss"
 	"seekF-backend/internal/pkg/zlog"
-	aiservice "seekF-backend/internal/services/ai_service"
 	userservice "seekF-backend/internal/services/user_service"
 
 	"github.com/gin-gonic/gin"
 )
 
 type AIChatController struct {
-	aiChatService aiservice.AIChatService
+	aiChatService userservice.AIChatService
 	fileService   userservice.FileService
 }
 
-func NewAIChatController(aiChatService aiservice.AIChatService, fileService userservice.FileService) *AIChatController {
+func NewAIChatController(aiChatService userservice.AIChatService, fileService userservice.FileService) *AIChatController {
 	return &AIChatController{
 		aiChatService: aiChatService,
 		fileService:   fileService,
