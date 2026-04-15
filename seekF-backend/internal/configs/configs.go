@@ -66,16 +66,22 @@ type StaticSrcConfig struct {
 }
 
 type AIModelConfig struct {
-	DeepseekApiKey string `toml:"deepseekApiKey"`
-	DeepseekModel  string `toml:"deepseekModel"`
-	DeepseekUrl    string `toml:"deepseekBaseUrl"`
-	QwenApiKey     string `toml:"qwenApiKey"`
-	QwenModel      string `toml:"qwenModel"`
-	QwenBaseUrl    string `toml:"qwenBaseUrl"`
-	GlmApiKey      string `toml:"glmApiKey"`
-	GlmModel       string `toml:"glmModel"`
-	GlmBaseUrl     string `toml:"glmBaseUrl"`
-	Glm4vModel     string `toml:"glm4vModel"`
+	DeepseekApiKey    string `toml:"deepseekApiKey"`
+	DeepseekModel     string `toml:"deepseekModel"`
+	DeepseekUrl       string `toml:"deepseekBaseUrl"`
+	QwenApiKey        string `toml:"qwenApiKey"`
+	QwenModel         string `toml:"qwenModel"`
+	QwenBaseUrl       string `toml:"qwenBaseUrl"`
+	GlmApiKey         string `toml:"glmApiKey"`
+	GlmModel          string `toml:"glmModel"`
+	GlmBaseUrl        string `toml:"glmBaseUrl"`
+	Glm4vModel        string `toml:"glm4vModel"`
+	GlmEmbeddingModel string `toml:"glmEmbeddingModel"`
+}
+
+type QdrantConfig struct {
+	Host string `toml:"host"`
+	Port int    `toml:"port"`
 }
 
 type JWTConfig struct {
@@ -103,6 +109,7 @@ type Config struct {
 	JWTConfig       `toml:"jwtConfig"`
 	AuthConfig      `toml:"authConfig"`
 	AIModelConfig   `toml:"aiModelConfig"`
+	QdrantConfig    `toml:"qdrantConfig"`
 }
 
 var config *Config
@@ -170,6 +177,26 @@ func loadEnvConfig(cfg *Config) {
 	}
 	if v := os.Getenv("GLM4V_MODEL"); v != "" {
 		cfg.AIModelConfig.Glm4vModel = v
+	}
+	if v := os.Getenv("GLM_EMBEDDING_MODEL"); v != "" {
+		cfg.AIModelConfig.GlmEmbeddingModel = v
+	}
+
+	// Qdrant Configuration
+	if v := os.Getenv("QDRANT_HOST"); v != "" {
+		cfg.QdrantConfig.Host = v
+	}
+	if v := os.Getenv("QDRANT_PORT"); v != "" {
+		cfg.QdrantConfig.Port = 6334
+		if v != "6334" {
+			port := 0
+			for _, c := range v {
+				if c >= '0' && c <= '9' {
+					port = port*10 + int(c-'0')
+				}
+			}
+			cfg.QdrantConfig.Port = port
+		}
 	}
 }
 

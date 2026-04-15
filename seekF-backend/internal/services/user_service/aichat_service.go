@@ -12,6 +12,7 @@ import (
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
 	aipkg "seekF-backend/internal/pkg/ai"
+	"seekF-backend/internal/pkg/ai/rag"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 
@@ -221,7 +222,25 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 
 	// 将DB消息转换为eino消息格式，添加系统提示，构建上下文
 	var chatMessages []*schema.Message
-	chatMessages = append(chatMessages, schema.SystemMessage("你是一个专业的AI助手，当前使用的模型是"+req.ModelType+"。请根据这个身份回答用户的问题。"))
+	systemPrompt := "你是一个专业的AI助手，当前使用的模型是" + req.ModelType + "。请根据这个身份回答用户的问题。"
+
+	// 如果启用知识库，搜索相关知识
+	if req.UseKnowledge {
+		ragInst := rag.GetRAG()
+		collectionName := "knowledge_" + userId
+		knowledgeResults, err := ragInst.Search(ctx, collectionName, content, 3)
+		if err == nil && len(knowledgeResults) > 0 {
+			knowledgeContext := "以下是你应该了解的知识库内容：\n"
+			for i, result := range knowledgeResults {
+				knowledgeContext += fmt.Sprintf("%d. %s\n", i+1, result)
+			}
+			knowledgeContext += "请根据以上知识库内容回答用户的问题。如果知识库没有相关信息，请忽略并按你原来的知识回答。"
+			systemPrompt = knowledgeContext + "\n\n" + systemPrompt
+			zlog.Info("knowledge search found " + fmt.Sprint(len(knowledgeResults)) + " results")
+		}
+	}
+
+	chatMessages = append(chatMessages, schema.SystemMessage(systemPrompt))
 	for _, msg := range messages {
 		if msg.SendId == userId { //处理用户消息
 			// 只有多模态模型才处理图片

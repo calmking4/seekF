@@ -72,9 +72,19 @@
                             <el-option label="GLM" value="glm" />
                             <el-option label="GLM-4.6V(图片识别)" value="glm-4v" />
                         </el-select>
+                        <el-switch
+                            v-model="useKnowledgeBase"
+                            active-text="知识库"
+                            inactive-text=""
+                            class="ml-2"
+                        >
+                        </el-switch>
                     </div>
                     <div class="flex-1"></div>
-                    <!-- 流式状态指示 -->
+                    <el-button size="small" @click="goToKnowledge">
+                        <Icon name="uil:book-open" class="mr-1" />
+                        知识库管理
+                    </el-button>
                     <div v-if="isStreaming" class="flex items-center gap-2 text-xs mr-2">
                         <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
                         <span class="text-blue-600">AI 正在思考...</span>
@@ -195,6 +205,7 @@
 
 <script setup>
 const aiChat = useAIChat()
+const knowledge = useKnowledge()
 
 const currentUserAvatar = ref('')
 const sessionList = ref([])
@@ -203,6 +214,11 @@ const messageList = ref([])
 const inputMessage = ref('')
 const isStreaming = ref(false)
 const selectedImage = ref(null)
+const useKnowledgeBase = ref(false)
+
+const goToKnowledge = () => {
+    navigateTo('/knowledge')
+}
 
 const scrollbarRef = ref()
 const hasMore = ref(true)
@@ -436,6 +452,7 @@ const sendMessage = async () => {
         content,
         session.modelType,
         imageFile,
+        useKnowledgeBase.value,
         // onChunk
         (chunk) => {
             const aiMsg = messageList.value[aiMsgIndex]

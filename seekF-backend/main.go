@@ -4,6 +4,8 @@ import (
 	usercontroller "seekF-backend/internal/controllers/user"
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/pkg/ai"
+	"seekF-backend/internal/pkg/ai/rag"
+	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/kafka"
 	"seekF-backend/internal/pkg/websocket"
 	"seekF-backend/internal/router"
@@ -18,6 +20,7 @@ func main() {
 	groupDAO := userdao.NewGroupDAO()
 	contactApplyDAO := userdao.NewContactApplyDAO()
 	messageDAO := userdao.NewMessageDAO()
+	knowledgeDAO := userdao.NewKnowledgeDAO()
 
 	// 初始化 Service 层
 	authService := userservice.NewAuthService(userInfoDAO)
@@ -31,6 +34,9 @@ func main() {
 	// 初始化 AI Service 层（复用 sessionDAO 和 messageDAO）
 	aiChatService := userservice.NewAIChatService(sessionDAO, messageDAO, userInfoDAO)
 
+	// 初始化 Knowledge Service 层
+	knowledgeService := userservice.NewKnowledgeService(knowledgeDAO)
+
 	// 初始化 Controller 层
 	authController := usercontroller.NewAuthController(authService)
 	userInfoController := usercontroller.NewUserInfoController(userInfoService)
@@ -41,6 +47,7 @@ func main() {
 	fileController := usercontroller.NewFileController(fileService)
 	wsController := usercontroller.NewWsController()
 	aichatController := usercontroller.NewAIChatController(aiChatService, fileService)
+	knowledgeController := usercontroller.NewKnowledgeController(knowledgeService)
 
 	// 初始化Kafka并启动WebSocket服务器
 	kafka.KafkaServiceInstance.Init()
@@ -53,8 +60,14 @@ func main() {
 	// 启动AI消息Kafka消费者
 	go ai.StartAIConsumer()
 
+	// 初始化Qdrant
+	db.InitQdrant()
+
+	// 初始化RAG
+	rag.GetRAG()
+
 	// 初始化路由器
-	r := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController, wsController, aichatController)
+	r := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController, wsController, aichatController, knowledgeController)
 
 	//启动服务，监听 8080 端口
 	r.Run()

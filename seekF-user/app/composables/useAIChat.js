@@ -74,11 +74,14 @@ export const useAIChat = () => {
      * @param {function} onError - 错误回调
      * @returns {EventSource} 返回 EventSource 实例，可用于手动关闭
      */
-    const sendMessage = (sessionId, content, modelType, imageFile, onChunk, onComplete, onError) => {
+    const sendMessage = (sessionId, content, modelType, imageFile, useKnowledge = false, onChunk, onComplete, onError) => {
         const formData = new FormData()
         formData.append('session_id', sessionId)
         formData.append('content', content)
         formData.append('model_type', modelType)
+        if (useKnowledge) {
+            formData.append('use_knowledge', 'true')
+        }
         if (imageFile) {
             formData.append('image', imageFile)
         }

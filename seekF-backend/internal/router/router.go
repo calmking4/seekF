@@ -18,6 +18,7 @@ func SetupRouter(
 	fileController *user.FileController,
 	wsController *user.WsController,
 	aichatController *user.AIChatController,
+	knowledgeController *user.KnowledgeController,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -91,6 +92,11 @@ func SetupRouter(
 			protectedGroup.POST("/aichat/getMessageHistory", aichatController.GetMessageHistory)
 			protectedGroup.POST("/aichat/sendMessage", aichatController.SendMessage)
 			protectedGroup.POST("/aichat/deleteSession", aichatController.DeleteSession)
+			// Knowledge Base
+			protectedGroup.POST("/knowledge/add", knowledgeController.AddDocument)
+			protectedGroup.POST("/knowledge/list", knowledgeController.ListDocuments)
+			protectedGroup.POST("/knowledge/remove", knowledgeController.RemoveDocument)
+			protectedGroup.POST("/knowledge/content", knowledgeController.GetDocumentContent)
 		}
 
 	}
