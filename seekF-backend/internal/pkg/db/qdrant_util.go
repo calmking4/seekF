@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/qdrant/go-client/qdrant"
 	"seekF-backend/internal/configs"
@@ -70,7 +71,7 @@ func (q *QdrantUtil) UpsertChunks(ctx context.Context, collectionName string, ch
 	points := make([]*qdrant.PointStruct, len(chunks))
 	for i, chunk := range chunks {
 		points[i] = &qdrant.PointStruct{
-			Id:      qdrant.NewIDNum(uint64(i)),
+			Id:      qdrant.NewIDNum(uint64(i+1) + uint64(time.Now().UnixNano())),
 			Vectors: qdrant.NewVectors(vectors[i]...),
 			Payload: qdrant.NewValueMap(map[string]any{
 				"text":     chunk,
