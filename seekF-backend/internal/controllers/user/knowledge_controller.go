@@ -2,10 +2,10 @@ package user
 
 import (
 	"net/http"
-	"seekF-backend/internal/dto/user/user_req"
-	"seekF-backend/internal/dto/user/user_resp"
+	userreq "seekF-backend/internal/dto/user/user_req"
+	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/pkg/resp"
-	"seekF-backend/internal/services/user_service"
+	userservice "seekF-backend/internal/services/user_service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,6 +20,7 @@ func NewKnowledgeController(knowledgeService userservice.KnowledgeService) *Know
 	}
 }
 
+// AddDocument 添加文档
 func (c *KnowledgeController) AddDocument(ctx *gin.Context) {
 	userId := ctx.GetString("Uuid")
 	if userId == "" {
@@ -50,6 +51,7 @@ func (c *KnowledgeController) AddDocument(ctx *gin.Context) {
 	})
 }
 
+// ListDocuments 获取文档列表
 func (c *KnowledgeController) ListDocuments(ctx *gin.Context) {
 	userId := ctx.GetString("Uuid")
 	if userId == "" {
@@ -80,6 +82,7 @@ func (c *KnowledgeController) ListDocuments(ctx *gin.Context) {
 	})
 }
 
+// RemoveDocument 删除文档
 func (c *KnowledgeController) RemoveDocument(ctx *gin.Context) {
 	userId := ctx.GetString("Uuid")
 	if userId == "" {
@@ -107,6 +110,7 @@ func (c *KnowledgeController) RemoveDocument(ctx *gin.Context) {
 	resp.Success(ctx, "删除成功", nil)
 }
 
+// GetDocumentContent 获取文档内容
 func (c *KnowledgeController) GetDocumentContent(ctx *gin.Context) {
 	userId := ctx.GetString("Uuid")
 	if userId == "" {

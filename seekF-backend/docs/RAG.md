@@ -209,7 +209,7 @@ func (s *KnowledgeServiceImpl) RemoveDocument(...) error {
          │
          ▼
 ┌───────────────────┐
-│  调用 GLM 模型     │
+│  调用 AI 模型     │
 │  生成回答          │
 └────────┬──────────┘
          │

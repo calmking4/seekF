@@ -10,12 +10,14 @@ import (
 	"seekF-backend/internal/pkg/zlog"
 )
 
+// Embedding 向量化模块,负责将文本转换为向量
 type Embedding struct {
 	apiKey  string
 	model   string
 	baseURL string
 }
 
+// NewEmbedding 创建向量化实例
 func NewEmbedding(apiKey, model, baseURL string) *Embedding {
 	return &Embedding{
 		apiKey:  apiKey,
@@ -24,11 +26,13 @@ func NewEmbedding(apiKey, model, baseURL string) *Embedding {
 	}
 }
 
+// EmbeddingRequest 向量化请求
 type EmbeddingRequest struct {
 	Input string `json:"input"`
 	Model string `json:"model"`
 }
 
+// EmbeddingResponse 向量化响应
 type EmbeddingResponse struct {
 	Data   []EmbeddingData `json:"data"`
 	Object string          `json:"object"`
@@ -36,18 +40,21 @@ type EmbeddingResponse struct {
 	Usage  Usage           `json:"usage"`
 }
 
+// EmbeddingData 向量化数据
 type EmbeddingData struct {
 	Object    string    `json:"object"`
 	Embedding []float32 `json:"embedding"`
 	Index     int       `json:"index"`
 }
 
+// Usage 使用统计
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 }
 
+// EmbedTexts 批量文本向量化
 func (e *Embedding) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
@@ -66,6 +73,7 @@ func (e *Embedding) EmbedTexts(ctx context.Context, texts []string) ([][]float32
 	return embeddings, nil
 }
 
+// embedSingle 单个文本向量化
 func (e *Embedding) embedSingle(ctx context.Context, text string) ([]float32, error) {
 	url := e.baseURL + "/embeddings"
 	reqBody, _ := json.Marshal(EmbeddingRequest{

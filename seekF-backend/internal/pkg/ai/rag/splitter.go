@@ -10,11 +10,13 @@ const (
 	DefaultOverlap   = 50
 )
 
+// TextSplitter 文本分块器,将长文本分割成适合向量化的较小块
 type TextSplitter struct {
 	chunkSize int
 	overlap   int
 }
 
+// NewTextSplitter 创建文本分块器实例
 func NewTextSplitter(chunkSize, overlap int) *TextSplitter {
 	if chunkSize <= 0 {
 		chunkSize = DefaultChunkSize
@@ -28,6 +30,7 @@ func NewTextSplitter(chunkSize, overlap int) *TextSplitter {
 	}
 }
 
+// SplitText 将文本分割成多个块
 func (s *TextSplitter) SplitText(text string) []string {
 	if text == "" {
 		return nil
@@ -96,6 +99,7 @@ func (s *TextSplitter) SplitText(text string) []string {
 	return chunks
 }
 
+// normalizeText 规范化文本(统一换行符,去除多余空行)
 func normalizeText(text string) string {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
@@ -104,6 +108,7 @@ func normalizeText(text string) string {
 	return strings.TrimSpace(text)
 }
 
+// splitIntoParagraphs 按段落分割文本
 func splitIntoParagraphs(text string) []string {
 	var paragraphs []string
 

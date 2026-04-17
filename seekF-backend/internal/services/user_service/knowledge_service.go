@@ -21,7 +21,11 @@ type KnowledgeService interface {
 	Search(ctx context.Context, userId, query string, topK int) ([]string, error)
 	GetDocumentContent(ctx context.Context, userId, uuid string) (string, error)
 }
+type KnowledgeServiceImpl struct {
+	knowledgeDAO userdao.KnowledgeDAO
+}
 
+// DocInfo 文档信息
 type DocInfo struct {
 	Uuid      string
 	FileName  string
@@ -31,20 +35,18 @@ type DocInfo struct {
 	CreatedAt string
 }
 
-type KnowledgeServiceImpl struct {
-	knowledgeDAO userdao.KnowledgeDAO
-}
-
 func NewKnowledgeService(knowledgeDAO userdao.KnowledgeDAO) KnowledgeService {
 	return &KnowledgeServiceImpl{
 		knowledgeDAO: knowledgeDAO,
 	}
 }
 
+// collectionName 获取用户专属的向量集合名称
 func (s *KnowledgeServiceImpl) collectionName(userId string) string {
 	return "knowledge_" + userId
 }
 
+// AddDocument 添加文档到知识库
 func (s *KnowledgeServiceImpl) AddDocument(ctx context.Context, userId, fileName, fileURL, fileType string) (*DocInfo, error) {
 	content, err := s.downloadFile(ctx, fileURL)
 	if err != nil {
@@ -96,6 +98,7 @@ func (s *KnowledgeServiceImpl) AddDocument(ctx context.Context, userId, fileName
 	}, nil
 }
 
+// ListDocuments 获取用户的文档列表
 func (s *KnowledgeServiceImpl) ListDocuments(ctx context.Context, userId string) ([]DocInfo, error) {
 	docs, err := s.knowledgeDAO.FindByUserId(userId)
 	if err != nil {
@@ -117,6 +120,7 @@ func (s *KnowledgeServiceImpl) ListDocuments(ctx context.Context, userId string)
 	return result, nil
 }
 
+// RemoveDocument 从知识库删除文档
 func (s *KnowledgeServiceImpl) RemoveDocument(ctx context.Context, userId, uuid string) error {
 	doc, err := s.knowledgeDAO.FindByUuid(uuid)
 	if err != nil {
@@ -144,12 +148,14 @@ func (s *KnowledgeServiceImpl) RemoveDocument(ctx context.Context, userId, uuid 
 	return nil
 }
 
+// Search 在知识库中搜索相关内容
 func (s *KnowledgeServiceImpl) Search(ctx context.Context, userId, query string, topK int) ([]string, error) {
 	ragInst := rag.GetRAG()
 	collectionName := s.collectionName(userId)
 	return ragInst.Search(ctx, collectionName, query, topK)
 }
 
+// downloadFile 从URL下载文件内容
 func (s *KnowledgeServiceImpl) downloadFile(ctx context.Context, url string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -171,6 +177,7 @@ func (s *KnowledgeServiceImpl) downloadFile(ctx context.Context, url string) (st
 	return content, nil
 }
 
+// removeMarkdownMarkers 移除Markdown标记符号(如标题(#)、代码块(```)、分隔线(---))
 func removeMarkdownMarkers(content string) string {
 	lines := strings.Split(content, "\n")
 	var result []string
@@ -190,6 +197,7 @@ func removeMarkdownMarkers(content string) string {
 	return strings.Join(result, "\n")
 }
 
+// GetDocumentContent 获取文档原始内容
 func (s *KnowledgeServiceImpl) GetDocumentContent(ctx context.Context, userId, uuid string) (string, error) {
 	doc, err := s.knowledgeDAO.FindByUuid(uuid)
 	if err != nil {

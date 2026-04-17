@@ -10,12 +10,15 @@ import (
 	"seekF-backend/internal/pkg/zlog"
 )
 
+// qdrantClient Qdrant客户端单例
 var qdrantClient *QdrantUtil
 
+// QdrantUtil Qdrant向量数据库工具
 type QdrantUtil struct {
 	client *qdrant.Client
 }
 
+// InitQdrant 初始化Qdrant客户端
 func InitQdrant() error {
 	cfg := configs.GetConfig()
 
@@ -32,10 +35,12 @@ func InitQdrant() error {
 	return nil
 }
 
+// GetQdrant 获取Qdrant客户端实例
 func GetQdrant() *QdrantUtil {
 	return qdrantClient
 }
 
+// EnsureCollection 确保向量集合存在,不存在则创建
 func (q *QdrantUtil) EnsureCollection(ctx context.Context, collectionName string, vectorSize uint64) error {
 	exists, err := q.client.CollectionExists(ctx, collectionName)
 	if err != nil {
@@ -57,6 +62,7 @@ func (q *QdrantUtil) EnsureCollection(ctx context.Context, collectionName string
 	return nil
 }
 
+// DeleteCollection 删除向量集合
 func (q *QdrantUtil) DeleteCollection(ctx context.Context, collectionName string) error {
 	err := q.client.DeleteCollection(ctx, collectionName)
 	if err != nil {
@@ -67,6 +73,7 @@ func (q *QdrantUtil) DeleteCollection(ctx context.Context, collectionName string
 	return nil
 }
 
+// UpsertChunks 批量插入或更新向量数据
 func (q *QdrantUtil) UpsertChunks(ctx context.Context, collectionName string, chunks []string, vectors [][]float32, docUUID string) error {
 	points := make([]*qdrant.PointStruct, len(chunks))
 	for i, chunk := range chunks {
@@ -92,6 +99,7 @@ func (q *QdrantUtil) UpsertChunks(ctx context.Context, collectionName string, ch
 	return nil
 }
 
+// DeleteByDocUUID 根据文档UUID删除对应的向量数据
 func (q *QdrantUtil) DeleteByDocUUID(ctx context.Context, collectionName string, docUUID string) error {
 	filter := &qdrant.Filter{
 		Should: []*qdrant.Condition{
@@ -113,6 +121,7 @@ func (q *QdrantUtil) DeleteByDocUUID(ctx context.Context, collectionName string,
 	return nil
 }
 
+// Search 向量相似性搜索
 func (q *QdrantUtil) Search(ctx context.Context, collectionName string, queryVector []float32, topK int) ([]string, error) {
 	limit := uint64(topK)
 	result, err := q.client.Query(ctx, &qdrant.QueryPoints{
@@ -140,6 +149,7 @@ func (q *QdrantUtil) Search(ctx context.Context, collectionName string, queryVec
 	return results, nil
 }
 
+// Close 关闭Qdrant客户端连接
 func (q *QdrantUtil) Close() error {
 	return q.client.Close()
 }
