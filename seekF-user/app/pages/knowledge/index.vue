@@ -157,6 +157,7 @@ const handleUpload = async () => {
     try {
         const formData = new FormData()
         formData.append('file', file)
+        formData.append('fileType', 'knowledge_doc')
 
         const config = useRuntimeConfig()
         const apiBase = config.public.apiBase ? config.public.apiBase.replace(/\/$/, '') : 'http://localhost:8080'

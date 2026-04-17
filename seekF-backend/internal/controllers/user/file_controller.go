@@ -47,6 +47,8 @@ func (c *FileController) UploadFile(ctx *gin.Context) {
 			fileType = oss.MessageVideo
 		case "message_audio":
 			fileType = oss.MessageAudio
+		case "knowledge_doc":
+			fileType = oss.KnowledgeDoc
 		default:
 			fileType = oss.MessageImage
 		}
