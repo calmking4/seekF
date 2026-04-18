@@ -110,6 +110,11 @@ type Config struct {
 	AuthConfig      `toml:"authConfig"`
 	AIModelConfig   `toml:"aiModelConfig"`
 	QdrantConfig    `toml:"qdrantConfig"`
+	SeniverseConfig `toml:"seniverseConfig"`
+}
+
+type SeniverseConfig struct {
+	APIKey string `toml:"apiKey"`
 }
 
 var config *Config
@@ -182,21 +187,9 @@ func loadEnvConfig(cfg *Config) {
 		cfg.AIModelConfig.GlmEmbeddingModel = v
 	}
 
-	// Qdrant Configuration
-	if v := os.Getenv("QDRANT_HOST"); v != "" {
-		cfg.QdrantConfig.Host = v
-	}
-	if v := os.Getenv("QDRANT_PORT"); v != "" {
-		cfg.QdrantConfig.Port = 6334
-		if v != "6334" {
-			port := 0
-			for _, c := range v {
-				if c >= '0' && c <= '9' {
-					port = port*10 + int(c-'0')
-				}
-			}
-			cfg.QdrantConfig.Port = port
-		}
+	// Seniverse Configuration
+	if v := os.Getenv("SENIVERSE_API_KEY"); v != "" {
+		cfg.SeniverseConfig.APIKey = v
 	}
 }
 

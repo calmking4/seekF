@@ -2,6 +2,7 @@ package userservice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,11 +13,15 @@ import (
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
 	aipkg "seekF-backend/internal/pkg/ai"
+	mcppkg "seekF-backend/internal/pkg/ai/mcp"
 	"seekF-backend/internal/pkg/ai/rag"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 
+	einomodel "github.com/cloudwego/eino/components/model"
+	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
 )
 
 // AIChatService AI聊天服务接口
@@ -292,17 +297,66 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 
 	// 获取对应模型的单例
 	pool := aipkg.GetModelPool()
-	model := pool.GetModel(req.ModelType)
-	if model == nil {
+	chatModel := pool.GetModel(req.ModelType)
+	if chatModel == nil {
 		zlog.Error("model not available: " + req.ModelType)
 		return fmt.Errorf("模型不可用")
 	}
 
-	// 调用模型流式推理
-	stream, err := model.Stream(ctx, chatMessages)
+	// MCP Agent：默认先走第 1 次 Generate（工具决策，非流式）→ 执行 MCP → 第 2 次 Stream（无工具绑定）
+	// 若 MCP 工具不可用/初始化失败，则回退为普通单轮流式。
+	finalContent, handled, err := runMCPAgentFlow(ctx, chatModel, chatMessages, onChunk)
+	if err != nil {
+		zlog.Error("MCP agent flow failed: " + err.Error())
+		return fmt.Errorf("AI响应失败")
+	}
+	if handled {
+		return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, onChunk, onComplete)
+	}
+
+	finalContent, err = streamChatModelToSSE(ctx, chatModel, chatMessages, onChunk)
 	if err != nil {
 		zlog.Error("call AI model stream failed: " + err.Error())
 		return fmt.Errorf("AI响应失败")
+	}
+
+	return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, onChunk, onComplete)
+}
+
+// persistAndCompleteAIMessage 负责将最终回复兜底、持久化，并触发完成回调。
+func (s *AIChatServiceImpl) persistAndCompleteAIMessage(req userreq.SendAIMessageRequest, userId string, userMessage *models.Message, finalContent string,
+	onChunk func(chunk string) error, onComplete func(fullContent string) error) error {
+	if finalContent == "" {
+		finalContent = "抱歉，我暂时无法回答这个问题。"
+		if err := onChunk(finalContent); err != nil {
+			zlog.Error("send final chunk failed: " + err.Error())
+		}
+	}
+
+	aiSendId := "A" + util.GetNowAndLenRandomString(11)
+	aipkg.SendAIMessage(aipkg.AIMessagePayload{
+		SessionId: req.SessionId,
+		SendId:    aiSendId,
+		SendName:  "AI助手",
+		ReceiveId: userId,
+		Content:   finalContent,
+		ModelType: req.ModelType,
+	})
+
+	s.sessionDAO.UpdateSessionLastMessage(req.SessionId, finalContent, userMessage.CreatedAt)
+
+	if onComplete != nil {
+		onComplete(finalContent)
+	}
+
+	return nil
+}
+
+// streamChatModelToSSE 将模型的流式输出逐块透传给 SSE，并返回完整聚合后的文本。
+func streamChatModelToSSE(ctx context.Context, m einomodel.ToolCallingChatModel, messages []*schema.Message, onChunk func(chunk string) error) (string, error) {
+	stream, err := m.Stream(ctx, messages)
+	if err != nil {
+		return "", err
 	}
 	defer stream.Close()
 
@@ -329,33 +383,96 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		}
 	}
 
-	finalContent := fullContent.String()
-	if finalContent == "" {
-		finalContent = "抱歉，我暂时无法回答这个问题。"
-		if err := onChunk(finalContent); err != nil {
-			zlog.Error("send final chunk failed: " + err.Error())
+	return fullContent.String(), nil
+}
+
+// runMCPAgentFlow 第 1 次请求：Generate + WithTools（非流式，工具决策）。
+// 若返回 ToolCalls：执行 MCP（InvokableRun），再第 2 次请求：无工具 Stream 总结。
+// 若无 ToolCalls：返回 handled=false，让外层走普通 Stream，保证非工具场景也保持流式体验。
+// 返回 handled=false 时回退为普通单轮流式（无 MCP 工具绑定）。
+func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatModel, chatMessages []*schema.Message,
+	onChunk func(chunk string) error) (finalContent string, handled bool, err error) {
+	tools, err := mcppkg.GetMCPTools(ctx)
+	if err != nil {
+		zlog.Error("get MCP tools failed: " + err.Error())
+		return "", false, nil
+	}
+	if len(tools) == 0 {
+		return "", false, nil
+	}
+
+	toolInfos := make([]*schema.ToolInfo, 0, len(tools))
+	toolByName := make(map[string]einotool.InvokableTool)
+	for _, t := range tools {
+		info, ierr := t.Info(ctx)
+		if ierr != nil {
+			zlog.Error("tool Info failed: " + ierr.Error())
+			continue
+		}
+		toolInfos = append(toolInfos, info)
+		if inv, ok := t.(einotool.InvokableTool); ok {
+			toolByName[info.Name] = inv
 		}
 	}
-
-	// 发送AI响应到Kafka异步持久化
-	aiSendId := "A" + util.GetNowAndLenRandomString(11)
-	aipkg.SendAIMessage(aipkg.AIMessagePayload{
-		SessionId: req.SessionId,
-		SendId:    aiSendId,
-		SendName:  "AI助手",
-		ReceiveId: userId,
-		Content:   finalContent,
-		ModelType: req.ModelType,
-	})
-
-	// 更新会话最后一条消息
-	s.sessionDAO.UpdateSessionLastMessage(req.SessionId, finalContent, userMessage.CreatedAt)
-
-	if onComplete != nil {
-		onComplete(finalContent)
+	if len(toolInfos) == 0 {
+		return "", false, nil
 	}
 
-	return nil
+	modelWithTools, err := chatModel.WithTools(toolInfos)
+	if err != nil {
+		zlog.Error("WithTools failed: " + err.Error())
+		return "", false, nil
+	}
+
+	first, err := modelWithTools.Generate(ctx, chatMessages)
+	if err != nil {
+		zlog.Error("MCP agent Generate (tool decision) failed: " + err.Error())
+		return "", false, nil
+	}
+
+	if len(first.ToolCalls) == 0 {
+		// 不需要工具时回退到普通流式，避免只返回一次性整段文本。
+		return "", false, nil
+	}
+
+	msgs2 := make([]*schema.Message, 0, len(chatMessages)+1+len(first.ToolCalls))
+	msgs2 = append(msgs2, chatMessages...)
+	msgs2 = append(msgs2, schema.AssistantMessage(first.Content, first.ToolCalls))
+
+	for _, tc := range first.ToolCalls {
+		name := tc.Function.Name
+		inv := toolByName[name]
+		var out string
+		if inv == nil {
+			out = fmt.Sprintf("错误：未找到可执行工具 %q", name)
+		} else {
+			runOut, runErr := inv.InvokableRun(ctx, tc.Function.Arguments)
+			if runErr != nil {
+				out = "工具执行失败: " + runErr.Error()
+			} else {
+				out = toolCallResultToText(runOut)
+			}
+		}
+		msgs2 = append(msgs2, schema.ToolMessage(out, tc.ID, schema.WithToolName(name)))
+	}
+
+	finalContent, err = streamChatModelToSSE(ctx, chatModel, msgs2, onChunk)
+	if err != nil {
+		return "", false, err
+	}
+	return finalContent, true, nil
+}
+
+func toolCallResultToText(raw string) string {
+	var result mcpgo.CallToolResult
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return raw
+	}
+	txt := mcpgo.GetTextFromContent(result.Content)
+	if txt == "" {
+		return raw
+	}
+	return txt
 }
 
 // DeleteSession 删除AI会话及其所有消息

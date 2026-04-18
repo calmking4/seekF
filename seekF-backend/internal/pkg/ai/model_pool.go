@@ -12,10 +12,10 @@ import (
 )
 
 type ModelPool struct {
-	DeepSeek model.BaseChatModel
-	Qwen     model.BaseChatModel
-	GLM      model.BaseChatModel
-	GLM4V    model.BaseChatModel
+	DeepSeek model.ToolCallingChatModel
+	Qwen     model.ToolCallingChatModel
+	GLM      model.ToolCallingChatModel
+	GLM4V    model.ToolCallingChatModel
 }
 
 var (
@@ -91,7 +91,7 @@ func GetModelPool() *ModelPool {
 	return modelPool
 }
 
-func (p *ModelPool) GetModel(modelType string) model.BaseChatModel {
+func (p *ModelPool) GetModel(modelType string) model.ToolCallingChatModel {
 	switch modelType {
 	case "deepseek":
 		return p.DeepSeek
