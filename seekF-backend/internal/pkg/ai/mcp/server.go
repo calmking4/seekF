@@ -1,8 +1,6 @@
 package mcp
 
 import (
-	"context"
-	"os"
 	"sync"
 
 	"seekF-backend/internal/pkg/ai/mcp/tool"
@@ -17,6 +15,7 @@ var (
 	initOnce    sync.Once
 )
 
+// InitMCPServer 初始化MCP服务器实例并注册天气工具
 func InitMCPServer() error {
 	var initErr error
 	initOnce.Do(func() {
@@ -36,6 +35,7 @@ func InitMCPServer() error {
 	return initErr
 }
 
+// GetMCPServer 获取MCP服务器实例，如果尚未初始化则先进行初始化
 func GetMCPServer() *server.MCPServer {
 	if mcpServer == nil {
 		if err := InitMCPServer(); err != nil {
@@ -44,24 +44,4 @@ func GetMCPServer() *server.MCPServer {
 		}
 	}
 	return mcpServer
-}
-
-func ServeStdio(ctx context.Context) error {
-	srv := GetMCPServer()
-	if srv == nil {
-		return nil
-	}
-
-	zlog.Info("Starting MCP server with stdio transport")
-	return server.ServeStdio(srv)
-}
-
-func ServeStdioWithOptions(ctx context.Context) error {
-	srv := GetMCPServer()
-	if srv == nil {
-		return nil
-	}
-
-	stdioServer := server.NewStdioServer(srv)
-	return stdioServer.Listen(ctx, os.Stdin, os.Stdout)
 }

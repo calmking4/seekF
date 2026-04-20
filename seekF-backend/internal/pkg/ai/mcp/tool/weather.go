@@ -24,6 +24,7 @@ func NewWeatherTool() *WeatherTool {
 	}
 }
 
+// GetWeatherTool 获取天气查询工具
 func (t *WeatherTool) GetWeatherTool() mcp.Tool {
 	return mcp.NewTool(
 		"get_weather",
@@ -35,6 +36,7 @@ func (t *WeatherTool) GetWeatherTool() mcp.Tool {
 	)
 }
 
+// HandleWeatherRequest 处理天气查询请求
 func (t *WeatherTool) HandleWeatherRequest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	arguments, ok := request.Params.Arguments.(map[string]any)
 	if !ok {
@@ -55,19 +57,23 @@ func (t *WeatherTool) HandleWeatherRequest(ctx context.Context, request mcp.Call
 	return mcp.NewToolResultText(weather), nil
 }
 
+// queryWeather 查询指定位置的天气信息
 func (t *WeatherTool) queryWeather(ctx context.Context, location string) (string, error) {
 	if t.apiKey == "" {
 		return "", fmt.Errorf("seniverse api key not configured")
 	}
 
+	// 构建心知天气API请求URL
 	apiURL := fmt.Sprintf("https://api.seniverse.com/v3/weather/now.json?key=%s&location=%s&language=zh-Hans&unit=c",
 		t.apiKey, url.QueryEscape(location))
 
+	// 创建HTTP请求并设置上下文
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return "", err
 	}
 
+	// 初始化HTTP客户端并设置超时时间
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -79,6 +85,7 @@ func (t *WeatherTool) queryWeather(ctx context.Context, location string) (string
 		return "", fmt.Errorf("API request failed with status: %d", resp.StatusCode)
 	}
 
+	// 定义响应数据结构体
 	var result struct {
 		Results []struct {
 			Location struct {
@@ -103,6 +110,7 @@ func (t *WeatherTool) queryWeather(ctx context.Context, location string) (string
 		} `json:"results"`
 	}
 
+	// 解析API响应JSON数据
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", err
 	}
@@ -114,6 +122,7 @@ func (t *WeatherTool) queryWeather(ctx context.Context, location string) (string
 	r := result.Results[0]
 	now := r.Now
 
+	// 格式化天气信息输出
 	weatherInfo := fmt.Sprintf(`%s %s 天气/%s
 🌡️ 气温: %s°C
 💧 湿度: %s

@@ -463,12 +463,13 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 	return finalContent, true, nil
 }
 
+// toolCallResultToText 将工具返回结果转换为纯文本。
 func toolCallResultToText(raw string) string {
 	var result mcpgo.CallToolResult
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
 		return raw
 	}
-	txt := mcpgo.GetTextFromContent(result.Content)
+	txt := mcpgo.GetTextFromContent(result.Content) // 获取CallToolResult的Content
 	if txt == "" {
 		return raw
 	}

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -14,26 +15,29 @@ import (
 )
 
 var (
-	einoTools []tool.BaseTool
-	toolsOnce sync.Once
-	toolsErr  error
+	einoTools []tool.BaseTool // 存储已初始化的Eino工具列表
+	toolsOnce sync.Once       // 确保工具只初始化一次的同步原语
+	toolsErr  error           // 记录初始化过程中的错误
 )
 
+// GetInProcessTools 获取当前进程内的MCP工具实例
 func GetInProcessTools(ctx context.Context) ([]tool.BaseTool, error) {
 	toolsOnce.Do(func() {
 		mcpServer := GetMCPServer()
 		if mcpServer == nil {
-			toolsErr = GetLastInitError()
+			toolsErr = errors.New("MCP server is not initialized")
 			return
 		}
 
-		mcpClient, err := client.NewInProcessClient(mcpServer)
+		// 创建与MCP服务器的进程内客户端连接
+		mcpClient, err := client.NewInProcessClient(mcpServer) //同一进程内直接调用
 		if err != nil {
 			toolsErr = err
 			zlog.Error("create in-process MCP client failed: " + err.Error())
 			return
 		}
 
+		// 构建初始化请求，设置协议版本和客户端信息
 		initRequest := mcp.InitializeRequest{}
 		initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 		initRequest.Params.ClientInfo = mcp.Implementation{
@@ -41,6 +45,7 @@ func GetInProcessTools(ctx context.Context) ([]tool.BaseTool, error) {
 			Version: "1.0.0",
 		}
 
+		// 向MCP服务器发送初始化请求
 		_, err = mcpClient.Initialize(ctx, initRequest)
 		if err != nil {
 			toolsErr = err
@@ -48,6 +53,7 @@ func GetInProcessTools(ctx context.Context) ([]tool.BaseTool, error) {
 			return
 		}
 
+		// 从MCP服务器获取可用的工具列表
 		einoTools, err = mcpp.GetTools(ctx, &mcpp.Config{
 			Cli: mcpClient,
 		})
@@ -62,32 +68,10 @@ func GetInProcessTools(ctx context.Context) ([]tool.BaseTool, error) {
 	return einoTools, toolsErr
 }
 
-func GetLastInitError() error {
-	return nil
-}
-
+// GetMCPTools 获取MCP工具列表，如果尚未初始化则先进行初始化
 func GetMCPTools(ctx context.Context) ([]tool.BaseTool, error) {
 	if len(einoTools) == 0 {
 		return GetInProcessTools(ctx)
 	}
 	return einoTools, nil
-}
-
-func GetWeatherTool(ctx context.Context) (tool.BaseTool, error) {
-	tools, err := GetMCPTools(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, t := range tools {
-		info, err := t.Info(ctx)
-		if err != nil {
-			continue
-		}
-		if info.Name == "get_weather" {
-			return t, nil
-		}
-	}
-
-	return nil, nil
 }
