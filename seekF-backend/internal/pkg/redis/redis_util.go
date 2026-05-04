@@ -31,6 +31,7 @@ func init() {
 	})
 }
 
+// SetKeyEx 设置带过期时间的键值对
 func SetKeyEx(key string, value string, timeout time.Duration) error {
 	err := redisClient.Set(ctx, key, value, timeout).Err()
 	if err != nil {
@@ -39,6 +40,7 @@ func SetKeyEx(key string, value string, timeout time.Duration) error {
 	return nil
 }
 
+// GetKey 获取指定键的值
 func GetKey(key string) (string, error) {
 	value, err := redisClient.Get(ctx, key).Result()
 	if err != nil {
@@ -51,6 +53,7 @@ func GetKey(key string) (string, error) {
 	return value, nil
 }
 
+// GetKeyNilIsErr 获取指定键的值，如果键不存在则返回错误
 func GetKeyNilIsErr(key string) (string, error) {
 	value, err := redisClient.Get(ctx, key).Result()
 	if err != nil {
@@ -59,6 +62,7 @@ func GetKeyNilIsErr(key string) (string, error) {
 	return value, nil
 }
 
+// GetKeyWithPrefixNilIsErr 根据前缀查找键，如果找到多个或没找到则返回错误
 func GetKeyWithPrefixNilIsErr(prefix string) (string, error) {
 	var keys []string
 	var err error
@@ -86,6 +90,7 @@ func GetKeyWithPrefixNilIsErr(prefix string) (string, error) {
 
 }
 
+// GetKeyWithSuffixNilIsErr 根据后缀查找键，如果找到多个或没找到则返回错误
 func GetKeyWithSuffixNilIsErr(suffix string) (string, error) {
 	var keys []string
 	var err error
@@ -113,6 +118,7 @@ func GetKeyWithSuffixNilIsErr(suffix string) (string, error) {
 
 }
 
+// DelKeyIfExists 删除存在的键，如果键不存在则不做任何操作
 func DelKeyIfExists(key string) error {
 	exists, err := redisClient.Exists(ctx, key).Result()
 	if err != nil {
@@ -128,6 +134,7 @@ func DelKeyIfExists(key string) error {
 	return nil
 }
 
+// DelKeysWithPattern 删除匹配指定模式的所有键
 func DelKeysWithPattern(pattern string) error {
 	var keys []string
 	var err error
@@ -158,6 +165,7 @@ func DelKeysWithPattern(pattern string) error {
 	return nil
 }
 
+// DelKeysWithPrefix 删除所有具有指定前缀的键
 func DelKeysWithPrefix(prefix string) error {
 	//var cursor uint64 = 0
 	var keys []string
@@ -189,6 +197,7 @@ func DelKeysWithPrefix(prefix string) error {
 	return nil
 }
 
+// DelKeysWithSuffix 删除所有具有指定后缀的键
 func DelKeysWithSuffix(suffix string) error {
 	//var cursor uint64 = 0
 	var keys []string
@@ -220,6 +229,7 @@ func DelKeysWithSuffix(suffix string) error {
 	return nil
 }
 
+// DeleteAllRedisKeys 删除 Redis 数据库中的所有键
 func DeleteAllRedisKeys() error {
 	var cursor uint64 = 0
 	for {

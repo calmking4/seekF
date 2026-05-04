@@ -65,7 +65,7 @@ func (t *WeatherTool) queryWeather(ctx context.Context, location string) (string
 
 	// 构建心知天气API请求URL
 	apiURL := fmt.Sprintf("https://api.seniverse.com/v3/weather/now.json?key=%s&location=%s&language=zh-Hans&unit=c",
-		t.apiKey, url.QueryEscape(location))
+		t.apiKey, url.QueryEscape(location)) //url.QueryEscape(location) 对 URL 查询参数进行编码 "北京" → "%E5%8C%97%E4%BA%AC"
 
 	// 创建HTTP请求并设置上下文
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
@@ -79,7 +79,7 @@ func (t *WeatherTool) queryWeather(ctx context.Context, location string) (string
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //在Go语言中，当发起HTTP请求后，需要手动关闭响应体以释放系统资源
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("API request failed with status: %d", resp.StatusCode)
