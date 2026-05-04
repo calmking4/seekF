@@ -98,22 +98,27 @@ type AuthConfig struct {
 }
 
 type Config struct {
-	MainConfig      `toml:"mainConfig"`
-	MysqlConfig     `toml:"mysqlConfig"`
-	RedisConfig     `toml:"redisConfig"`
-	AuthCodeConfig  `toml:"authCodeConfig"`
-	OSSConfig       `toml:"ossConfig"`
-	LogConfig       `toml:"logConfig"`
-	KafkaConfig     `toml:"kafkaConfig"`
-	StaticSrcConfig `toml:"staticSrcConfig"`
-	JWTConfig       `toml:"jwtConfig"`
-	AuthConfig      `toml:"authConfig"`
-	AIModelConfig   `toml:"aiModelConfig"`
-	QdrantConfig    `toml:"qdrantConfig"`
-	SeniverseConfig `toml:"seniverseConfig"`
+	MainConfig         `toml:"mainConfig"`
+	MysqlConfig        `toml:"mysqlConfig"`
+	RedisConfig        `toml:"redisConfig"`
+	AuthCodeConfig     `toml:"authCodeConfig"`
+	OSSConfig          `toml:"ossConfig"`
+	LogConfig          `toml:"logConfig"`
+	KafkaConfig        `toml:"kafkaConfig"`
+	StaticSrcConfig    `toml:"staticSrcConfig"`
+	JWTConfig          `toml:"jwtConfig"`
+	AuthConfig         `toml:"authConfig"`
+	AIModelConfig      `toml:"aiModelConfig"`
+	QdrantConfig       `toml:"qdrantConfig"`
+	SeniverseConfig    `toml:"seniverseConfig"`
+	ExchangeRateConfig `toml:"exchangeRateConfig"`
 }
 
 type SeniverseConfig struct {
+	APIKey string `toml:"apiKey"`
+}
+
+type ExchangeRateConfig struct {
 	APIKey string `toml:"apiKey"`
 }
 
@@ -190,6 +195,11 @@ func loadEnvConfig(cfg *Config) {
 	// Seniverse Configuration
 	if v := os.Getenv("SENIVERSE_API_KEY"); v != "" {
 		cfg.SeniverseConfig.APIKey = v
+	}
+
+	// ExchangeRate Configuration
+	if v := os.Getenv("EXCHANGE_RATE_API_KEY"); v != "" {
+		cfg.ExchangeRateConfig.APIKey = v
 	}
 }
 
