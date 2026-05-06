@@ -3,13 +3,19 @@
     <!-- 顶部搜索栏 -->
     <header class="sticky top-0 z-10 bg-white shadow-sm px-4 py-3">
       <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <span class="text-xl font-bold text-red-500">seekF</span>
-          <span class="text-gray-500">发现</span>
+        <!-- 搜索框 -->
+        <div class="w-[30rem] mx-auto flex items-center bg-gray-100 rounded-full px-3 py-2 gap-2">
+          <Icon name="mdi:magnify" class="text-gray-400 text-lg flex-shrink-0" />
+          <input
+            type="text"
+            placeholder="搜索"
+            class="bg-transparent outline-none text-sm w-full text-gray-700 placeholder-gray-400"
+          />
         </div>
-        <div class="flex gap-4 text-gray-500">
-          <Icon name="uil:search" />
-          <Icon name="uil:bell" />
+        <!-- 右侧图标 -->
+        <div class="flex items-center gap-4 text-gray-600 text-xl absolute right-4">
+          <Icon name="mdi:message-outline" class="text-[#60a5fa]"/>
+          <Icon name="mdi:plus-circle-outline" class="text-[#60a5fa] cursor-pointer" @click="navigateTo('/discover/create')"/>
         </div>
       </div>
     </header>
