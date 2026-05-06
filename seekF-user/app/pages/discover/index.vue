@@ -78,6 +78,13 @@
         没有更多内容了
       </div>
     </div>
+
+    <!-- 笔记详情弹窗 -->
+    <DiscoverCard
+      v-if="selectedItem"
+      :item="selectedItem"
+      @close="selectedItem = null"
+    />
   </div>
 </template>
 
@@ -89,6 +96,7 @@ const items = ref([])
 const columns = ref([]) // [{ items: [], height: number }]
 const loading = ref(false)
 const noMore = ref(false)
+const selectedItem = ref(null)
 const page = ref(1)
 const pageSize = 12
 const waterfallContainer = ref(null)
@@ -378,8 +386,7 @@ onUnmounted(() => {
 
 // 卡片点击
 const handleItemClick = (item) => {
-  console.log('点击了笔记:', item)
-  // 可跳转到详情页：navigateTo(`/note/${item.id}`)
+  selectedItem.value = item
 }
 </script>
 

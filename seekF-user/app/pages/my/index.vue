@@ -13,7 +13,7 @@
           <!-- 用户信息 -->
           <div class="flex flex-col gap-2">
             <h1 class="text-xl font-semibold text-gray-900">{{ userInfo.nickname || '加载中...' }}</h1>
-            <p class="text-gray-500 text-sm">小红书号: {{ userInfo.telephone || '加载中...' }}</p>
+            <p class="text-gray-500 text-sm">账号: {{ userInfo.telephone || '加载中...' }}</p>
             <p class="text-gray-600 text-sm">{{ userInfo.signature || '还没有简介' }}</p>
             <div class="flex gap-6 text-sm text-gray-600 mt-1">
               <span><span class="font-medium">{{ userInfo.followCount || 0 }}</span> 关注</span>

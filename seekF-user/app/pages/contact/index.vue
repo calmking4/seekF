@@ -959,4 +959,8 @@ onMounted(() => {
 .duration-200 {
   transition-duration: 200ms;
 }
+
+:deep(.el-tabs__nav-scroll) {
+  padding-left: 0.75rem !important;
+}
 </style>
