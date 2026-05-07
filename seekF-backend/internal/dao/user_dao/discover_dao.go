@@ -94,7 +94,7 @@ func (d *DiscoverDAOImpl) DeleteLike(userId, targetUuid string) error {
 
 func (d *DiscoverDAOImpl) FindLike(userId, targetUuid string) (*models.DiscoverLike, error) {
 	var like models.DiscoverLike
-	result := db.GormDB.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).First(&like)
+	result := db.GormDB.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Find(&like)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

@@ -37,15 +37,16 @@ type PostDetailRespond struct {
 }
 
 type CommentItem struct {
-	Uuid          string `json:"uuid"`
-	UserId        string `json:"user_id"`
-	Nickname      string `json:"nickname"`
-	Avatar        string `json:"avatar"`
-	ParentId      int64  `json:"parent_id"`
-	ReplyToUserId string `json:"reply_to_user_id"`
-	Content       string `json:"content"`
-	LikeCount     int    `json:"like_count"`
-	CreatedAt     string `json:"created_at"`
+	Uuid            string `json:"uuid"`
+	UserId          string `json:"user_id"`
+	Nickname        string `json:"nickname"`
+	Avatar          string `json:"avatar"`
+	ParentId        int64  `json:"parent_id"`
+	ReplyToUserId   string `json:"reply_to_user_id"`
+	ReplyToNickname string `json:"reply_to_nickname"`
+	Content         string `json:"content"`
+	LikeCount       int    `json:"like_count"`
+	CreatedAt       string `json:"created_at"`
 }
 
 type ListCommentsRespond struct {

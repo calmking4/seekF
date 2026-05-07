@@ -3,8 +3,12 @@
     <Transition name="discover">
       <div v-if="show" class="discover-overlay" @click.self="handleClose">
       <div class="note-card">
-        <!-- 左侧图片区 -->
-        <div class="image-container">
+        <!-- 左侧图片区：宽度由首张图测量锁定；切换时后续图宽度铺满，留白 bg-gray-50 -->
+        <div
+          class="image-container bg-gray-50"
+          :class="{ 'image-container--locked': lockedWidthPx != null }"
+          :style="lockedWidthPx != null ? { width: `${lockedWidthPx}px` } : undefined"
+        >
           <!-- 图片轮播 -->
           <div v-if="detail?.urls?.length" class="carousel">
             <Transition name="carousel-fade" mode="out-in">
@@ -13,6 +17,8 @@
                 :src="detail.urls[currentIndex]"
                 :alt="detail.title"
                 class="cover-image"
+                :class="currentIndex > 0 ? 'cover-image--slide' : 'cover-image--first'"
+                @load="onCarouselImageLoad"
               />
             </Transition>
             <!-- 左右切换箭头 -->
@@ -40,7 +46,8 @@
             v-else-if="item?.src"
             :src="item.src"
             :alt="item.title"
-            class="cover-image"
+            class="cover-image cover-image--first"
+            @load="onCarouselImageLoad"
           />
           <!-- 回退：无图 -->
           <div v-else class="image-content">
@@ -78,30 +85,55 @@
               <p class="comment-title">共 {{ detail?.comment_count ?? 0 }} 条评论</p>
               <div v-if="comments.length === 0" class="no-comment">暂无评论</div>
               <div class="comment-item" v-for="c in comments" :key="c.uuid">
-                <div class="comment-header">
-                  <el-avatar :size="32" :src="c.avatar" />
-                  <div class="comment-info">
+                <div class="comment-main">
+                  <div class="comment-avatar-col">
                     <span class="comment-author">{{ c.nickname }}</span>
+                    <el-avatar :size="32" :src="c.avatar" />
+                  </div>
+                  <div class="comment-content-col">
+                    <p class="comment-text">{{ c.content }}</p>
                     <p class="comment-time">{{ c.created_at }}</p>
+                    <div class="comment-actions">
+                      <span class="comment-like">
+                        <Icon name="gravity-ui:heart" /> {{ c.like_count }}
+                      </span>
+                      <span class="reply-btn" @click="startReply(c)">回复</span>
+                    </div>
                   </div>
                 </div>
-                <p class="comment-text">{{ c.content }}</p>
-                <div class="comment-actions">
-                  <span class="comment-like">
-                    <Icon name="gravity-ui:heart" /> {{ c.like_count }}
-                  </span>
-                  <span class="reply-btn">回复</span>
+                <!-- 回复列表 -->
+                <div v-if="c.replies?.length" class="reply-list">
+                  <div class="reply-item" v-for="reply in c.replies" :key="reply.uuid">
+                    <div class="comment-main">
+                      <div class="comment-avatar-col">
+                        <span class="comment-author">{{ reply.nickname }}</span>
+                        <el-avatar :size="28" :src="reply.avatar" />
+                      </div>
+                      <div class="comment-content-col">
+                        <p v-if="reply.reply_to_nickname" class="reply-to">回复 {{ reply.reply_to_nickname }}</p>
+                        <p class="comment-text">{{ reply.content }}</p>
+                        <p class="comment-time">{{ reply.created_at }}</p>
+                        <div class="comment-actions">
+                          <span class="comment-like">
+                            <Icon name="gravity-ui:heart" /> {{ reply.like_count }}
+                          </span>
+                          <span class="reply-btn" @click="startReply(reply, c)">回复</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
           <!-- 底部互动栏（固定底部） -->
-          <div class="interaction-bar">
-            <div class="input-area" @click="focusCommentInput">
+          <div class="interaction-bar" :class="{ 'interaction-bar--active': showCommentInput }">
+            <!-- 默认状态：输入提示 + 操作按钮 -->
+            <div v-if="!showCommentInput" class="input-area" @click="openCommentInput">
               <span class="input-placeholder">说点什么...</span>
             </div>
-            <div class="action-icons">
+            <div v-if="!showCommentInput" class="action-icons">
               <span class="action-item" :class="{ 'liked': isLiked }" @click.stop="toggleLike">
                 <Icon :name="isLiked ? 'gravity-ui:heart-fill' : 'gravity-ui:heart'" />
                 <span class="action-count">{{ likeCount }}</span>
@@ -118,6 +150,31 @@
                 <Icon name="ri:share-circle-fill" />
               </span>
             </div>
+
+            <!-- 激活状态：输入框 + 发送/取消 -->
+            <div v-if="showCommentInput" class="comment-input-wrapper">
+              <div v-if="replyTarget" class="reply-hint">
+                回复 {{ replyTarget.nickname }}
+                <span class="cancel-reply" @click="cancelReply">&times;</span>
+              </div>
+              <textarea
+                ref="commentInputRef"
+                v-model="commentText"
+                class="comment-input"
+                :placeholder="replyTarget ? `回复 ${replyTarget.nickname}...` : '写评论...'"
+                rows="3"
+              ></textarea>
+              <div class="comment-btn-group">
+                <button class="cancel-btn" @click="closeCommentInput">取消</button>
+                <button
+                  class="send-btn"
+                  :disabled="!commentText.trim()"
+                  @click="submitComment"
+                >
+                  发送
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -127,7 +184,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 
 const props = defineProps({
   item: {
@@ -144,6 +201,31 @@ const comments = ref([])
 const currentIndex = ref(0)
 const isLiked = ref(false)
 const likeCount = ref(0)
+const showCommentInput = ref(false)
+const commentText = ref('')
+const commentInputRef = ref(null)
+const replyTarget = ref(null) // { uuid, nickname, parentUuid }
+
+/** 左侧栏宽度（px），取首张图在当前 flex 布局下 contain 后的 offsetWidth，切换幻灯片不变 */
+const lockedWidthPx = ref(null)
+
+function onCarouselImageLoad(ev) {
+  if (currentIndex.value !== 0) return
+  const img = ev?.target
+  if (!img || !(img instanceof HTMLImageElement)) return
+  requestAnimationFrame(() => {
+    const w = img.offsetWidth
+    if (w > 0) lockedWidthPx.value = w
+  })
+}
+
+watch(
+  () => [detail.value?.urls?.[0], props.item?.src],
+  () => {
+    currentIndex.value = 0
+    lockedWidthPx.value = null
+  },
+)
 
 onMounted(() => {
   requestAnimationFrame(() => {
@@ -160,6 +242,7 @@ const fetchDetail = async () => {
     })
     if (res.code === 200 && res.data) {
       detail.value = res.data
+      currentIndex.value = 0
       isLiked.value = res.data.is_liked || false
       likeCount.value = res.data.like_count || 0
       fetchComments()
@@ -176,7 +259,27 @@ const fetchComments = async () => {
       body: { post_uuid: props.item.id, page: 1, page_size: 50 },
     })
     if (res.code === 200 && res.data?.list) {
-      comments.value = res.data.list
+      // 构建评论树：顶级评论 + 回复
+      const commentMap = {}
+      const topLevel = []
+
+      // 先收集所有评论
+      for (const c of res.data.list) {
+        commentMap[c.uuid] = { ...c, replies: [] }
+      }
+
+      // 组装树结构
+      for (const c of res.data.list) {
+        if (c.parent_id && commentMap[c.parent_id]) {
+          // 是回复，添加到父评论的replies中
+          commentMap[c.parent_id].replies.push(commentMap[c.uuid])
+        } else {
+          // 是顶级评论
+          topLevel.push(commentMap[c.uuid])
+        }
+      }
+
+      comments.value = topLevel
     }
   } catch (e) {
     console.error('获取评论失败:', e)
@@ -208,8 +311,66 @@ const nextImage = () => {
   currentIndex.value = (currentIndex.value + 1) % detail.value.urls.length
 }
 
-const focusCommentInput = () => {
-  // TODO: 聚焦评论输入框
+const openCommentInput = () => {
+  showCommentInput.value = true
+  nextTick(() => {
+    commentInputRef.value?.focus()
+  })
+}
+
+const closeCommentInput = () => {
+  showCommentInput.value = false
+  commentText.value = ''
+  replyTarget.value = null
+}
+
+const startReply = (comment, parentComment) => {
+  replyTarget.value = {
+    uuid: comment.uuid,
+    nickname: comment.nickname,
+    parentUuid: parentComment?.uuid || comment.uuid,
+  }
+  openCommentInput()
+}
+
+const cancelReply = () => {
+  replyTarget.value = null
+}
+
+const submitComment = async () => {
+  if (!commentText.value.trim() || !props.item?.id) return
+  try {
+    const body = {
+      post_uuid: props.item.id,
+      content: commentText.value.trim(),
+    }
+    // 如果是回复评论
+    if (replyTarget.value) {
+      body.parent_id = replyTarget.value.parentUuid
+      body.reply_to_user_id = replyTarget.value.uuid
+    }
+
+    const res = await useApi$('/user/discover/comment/add', {
+      body,
+    })
+    if (res.code === 200) {
+      commentText.value = ''
+      showCommentInput.value = false
+      replyTarget.value = null
+      // 刷新评论列表
+      await fetchComments()
+      // 更新评论数
+      if (detail.value) {
+        detail.value.comment_count = (detail.value.comment_count || 0) + 1
+      }
+      ElMessage.success('评论成功')
+    } else {
+      ElMessage.error(res.message || '评论失败')
+    }
+  } catch (e) {
+    console.error('评论失败:', e)
+    ElMessage.error('评论失败')
+  }
 }
 
 const handleClose = () => {
@@ -243,18 +404,32 @@ const handleClose = () => {
 .image-container {
   flex: 1;
   min-width: 0;
-  background: #f9fafb;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
+.image-container--locked {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
 .cover-image {
   display: block;
+  object-fit: contain;
+}
+
+.cover-image--first {
   max-width: 100%;
   max-height: 100%;
-  object-fit: contain;
+}
+
+/* 非首张：宽度铺满左侧栏，上下留白由容器 bg-gray-50 透出 */
+.cover-image--slide {
+  width: 100%;
+  height: auto;
+  max-height: 100%;
 }
 
 /* 轮播 */
@@ -436,39 +611,62 @@ const handleClose = () => {
   margin-bottom: 16px;
 }
 
-.comment-header {
+.comment-main {
   display: flex;
-  align-items: center;
+  gap: 12px;
 }
 
-.comment-info {
-  margin-left: 10px;
+.comment-avatar-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .comment-author {
+  font-size: 12px;
+  color: #999;
+  max-width: 48px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comment-content-col {
+  flex: 1;
+  min-width: 0;
+  padding-top: 16px;
+}
+
+.reply-to {
+  font-size: 12px;
+  color: #999;
+  margin: 0 0 4px 0;
+}
+
+.comment-text {
   font-size: 14px;
-  font-weight: 500;
+  margin: 0;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .comment-time {
   font-size: 12px;
   color: #999;
-  margin: 2px 0 0 0;
-}
-
-.comment-text {
-  font-size: 14px;
-  margin: 8px 0 5px 42px;
-  line-height: 1.6;
+  margin: 4px 0 0 0;
 }
 
 .comment-actions {
   font-size: 12px;
   color: #999;
-  margin-left: 42px;
   display: flex;
   align-items: center;
   gap: 16px;
+  margin-top: 4px;
 }
 
 .comment-like {
@@ -486,6 +684,42 @@ const handleClose = () => {
   color: #60a5fa;
 }
 
+.reply-list {
+  margin-left: 42px;
+  margin-top: 12px;
+  padding-left: 12px;
+  border-left: 2px solid #f0f0f0;
+}
+
+.reply-item {
+  margin-bottom: 12px;
+}
+
+.reply-to {
+  font-size: 12px;
+  color: #999;
+  margin-left: 4px;
+}
+
+.reply-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #60a5fa;
+  margin-bottom: 4px;
+}
+
+.cancel-reply {
+  cursor: pointer;
+  font-size: 14px;
+  color: #999;
+}
+
+.cancel-reply:hover {
+  color: #333;
+}
+
 .interaction-bar {
   flex-shrink: 0;
   display: flex;
@@ -493,6 +727,11 @@ const handleClose = () => {
   align-items: center;
   padding: 12px 20px;
   border-top: 1px solid #eee;
+  transition: all 0.3s ease;
+}
+
+.interaction-bar--active {
+  padding: 12px 20px;
 }
 
 .input-area {
@@ -504,6 +743,7 @@ const handleClose = () => {
   flex: 1;
   margin-right: 10px;
   cursor: text;
+  transition: all 0.3s ease;
 }
 
 .input-placeholder {
@@ -512,11 +752,99 @@ const handleClose = () => {
   font-size: 14px;
 }
 
+.comment-input-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 8px;
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.comment-input {
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 10px 15px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.comment-input:focus {
+  border-color: #60a5fa;
+}
+
+.comment-btn-group {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cancel-btn {
+  background: #f5f5f5;
+  color: #666;
+  border: none;
+  border-radius: 20px;
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.cancel-btn:hover {
+  background: #e5e7eb;
+}
+
+.send-btn {
+  background: #60a5fa;
+  color: #fff;
+  border: none;
+  border-radius: 20px;
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.send-btn:hover:not(:disabled) {
+  background: #3b82f6;
+}
+
+.send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .action-icons {
   display: flex;
   gap: 14px;
   font-size: 14px;
   color: #666;
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .action-item {

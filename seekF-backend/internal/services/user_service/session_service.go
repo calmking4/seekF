@@ -159,6 +159,11 @@ func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessio
 			// 构建响应
 			var sessionListRsp []userresp.GetSessionListRespond
 			for _, session := range sessionList {
+				// 跳过AI会话（ReceiveId以'A'开头）
+				if len(session.ReceiveId) > 0 && session.ReceiveId[0] == 'A' {
+					continue
+				}
+
 				// 根据 ReceiveId 获取最新的头像和名称信息
 				var avatar, name string
 

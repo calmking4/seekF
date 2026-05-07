@@ -33,16 +33,6 @@
     <!-- 标签切换区 -->
     <div class="max-w-3xl mx-auto">
       <el-tabs v-model="activeTab" class="w-full">
-        <!-- 笔记（发布）标签 -->
-        <el-tab-pane label="笔记" name="notes">
-          <div class="py-20 flex flex-col items-center justify-center text-gray-400">
-            <div class="w-20 h-20 rounded-full border border-gray-200 flex items-center justify-center mb-4 bg-gray-50">
-              <Icon name="uil:smile" class="text-2xl" />
-            </div>
-            <p class="text-sm text-gray-500">你还没有发布任何内容哦</p>
-          </div>
-        </el-tab-pane>
-
         <!-- 收藏标签 -->
         <el-tab-pane label="收藏" name="collections">
           <div class="py-20 flex flex-col items-center justify-center text-gray-400">

@@ -205,15 +205,16 @@ func (c *DiscoverController) AddComment(ctx *gin.Context) {
 	}
 
 	resp.Success(ctx, "评论成功", userresp.CommentItem{
-		Uuid:          comment.Uuid,
-		UserId:        comment.UserId,
-		Nickname:      comment.Nickname,
-		Avatar:        comment.Avatar,
-		ParentId:      comment.ParentId,
-		ReplyToUserId: comment.ReplyToUserId,
-		Content:       comment.Content,
-		LikeCount:     comment.LikeCount,
-		CreatedAt:     comment.CreatedAt,
+		Uuid:            comment.Uuid,
+		UserId:          comment.UserId,
+		Nickname:        comment.Nickname,
+		Avatar:          comment.Avatar,
+		ParentId:        comment.ParentId,
+		ReplyToUserId:   comment.ReplyToUserId,
+		ReplyToNickname: comment.ReplyToNickname,
+		Content:         comment.Content,
+		LikeCount:       comment.LikeCount,
+		CreatedAt:       comment.CreatedAt,
 	})
 }
 
@@ -244,15 +245,16 @@ func (c *DiscoverController) ListComments(ctx *gin.Context) {
 	var items []userresp.CommentItem
 	for _, c := range comments {
 		items = append(items, userresp.CommentItem{
-			Uuid:          c.Uuid,
-			UserId:        c.UserId,
-			Nickname:      c.Nickname,
-			Avatar:        c.Avatar,
-			ParentId:      c.ParentId,
-			ReplyToUserId: c.ReplyToUserId,
-			Content:       c.Content,
-			LikeCount:     c.LikeCount,
-			CreatedAt:     c.CreatedAt,
+			Uuid:            c.Uuid,
+			UserId:          c.UserId,
+			Nickname:        c.Nickname,
+			Avatar:          c.Avatar,
+			ParentId:        c.ParentId,
+			ReplyToUserId:   c.ReplyToUserId,
+			ReplyToNickname: c.ReplyToNickname,
+			Content:         c.Content,
+			LikeCount:       c.LikeCount,
+			CreatedAt:       c.CreatedAt,
 		})
 	}
 

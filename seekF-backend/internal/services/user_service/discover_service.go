@@ -57,15 +57,16 @@ type PostDetailInfo struct {
 }
 
 type CommentInfo struct {
-	Uuid          string
-	UserId        string
-	Nickname      string
-	Avatar        string
-	ParentId      int64
-	ReplyToUserId string
-	Content       string
-	LikeCount     int
-	CreatedAt     string
+	Uuid            string
+	UserId          string
+	Nickname        string
+	Avatar          string
+	ParentId        int64
+	ReplyToUserId   string
+	ReplyToNickname string
+	Content         string
+	LikeCount       int
+	CreatedAt       string
 }
 
 func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.UserInfoDAO) DiscoverService {
@@ -329,16 +330,25 @@ func (s *DiscoverServiceImpl) ListComments(ctx context.Context, postUuid string,
 			avatar = user.Avatar
 		}
 
+		replyToNickname := ""
+		if c.ReplyToUserId != "" {
+			replyToUser, _ := s.userInfoDAO.FindUserByUuid(c.ReplyToUserId)
+			if replyToUser != nil {
+				replyToNickname = replyToUser.Nickname
+			}
+		}
+
 		result = append(result, CommentInfo{
-			Uuid:          c.Uuid,
-			UserId:        c.UserId,
-			Nickname:      nickname,
-			Avatar:        avatar,
-			ParentId:      c.ParentId,
-			ReplyToUserId: c.ReplyToUserId,
-			Content:       c.Content,
-			LikeCount:     c.LikeCount,
-			CreatedAt:     c.CreatedAt.Format("2006-01-02 15:04:05"),
+			Uuid:            c.Uuid,
+			UserId:          c.UserId,
+			Nickname:        nickname,
+			Avatar:          avatar,
+			ParentId:        c.ParentId,
+			ReplyToUserId:   c.ReplyToUserId,
+			ReplyToNickname: replyToNickname,
+			Content:         c.Content,
+			LikeCount:       c.LikeCount,
+			CreatedAt:       c.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
 
