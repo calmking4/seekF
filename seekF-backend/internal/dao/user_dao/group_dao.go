@@ -37,7 +37,7 @@ func (d *GroupDAOImpl) GetGroupInfoByOwnerId(ownerId string) ([]models.GroupInfo
 // GetGroupInfoByUuid 根据群组uuid获取群组详情
 func (d *GroupDAOImpl) GetGroupInfoByUuid(uuid string) (models.GroupInfo, error) {
 	var group models.GroupInfo
-	result := db.GormDB.Unscoped().Where("uuid = ?", uuid).First(&group)
+	result := db.GormDB.Unscoped().Where("uuid = ?", uuid).Find(&group)
 	return group, result.Error
 }
 

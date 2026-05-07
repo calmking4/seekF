@@ -21,6 +21,7 @@ func main() {
 	contactApplyDAO := userdao.NewContactApplyDAO()
 	messageDAO := userdao.NewMessageDAO()
 	knowledgeDAO := userdao.NewKnowledgeDAO()
+	discoverDAO := userdao.NewDiscoverDAO()
 
 	// 初始化 Service 层
 	authService := userservice.NewAuthService(userInfoDAO)
@@ -37,6 +38,9 @@ func main() {
 	// 初始化 Knowledge Service 层
 	knowledgeService := userservice.NewKnowledgeService(knowledgeDAO)
 
+	// 初始化 Discover Service 层
+	discoverService := userservice.NewDiscoverService(discoverDAO, userInfoDAO)
+
 	// 初始化 Controller 层
 	authController := usercontroller.NewAuthController(authService)
 	userInfoController := usercontroller.NewUserInfoController(userInfoService)
@@ -48,6 +52,7 @@ func main() {
 	wsController := usercontroller.NewWsController()
 	aichatController := usercontroller.NewAIChatController(aiChatService, fileService)
 	knowledgeController := usercontroller.NewKnowledgeController(knowledgeService)
+	discoverController := usercontroller.NewDiscoverController(discoverService)
 
 	// 初始化Kafka并启动WebSocket服务器
 	kafka.KafkaServiceInstance.Init()
@@ -67,7 +72,7 @@ func main() {
 	rag.GetRAG()
 
 	// 初始化路由器
-	r := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController, wsController, aichatController, knowledgeController)
+	r := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController, wsController, aichatController, knowledgeController, discoverController)
 
 	//启动服务，监听 8080 端口
 	r.Run()

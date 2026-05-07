@@ -3,22 +3,49 @@
     <Transition name="discover">
       <div v-if="show" class="discover-overlay" @click.self="handleClose">
       <div class="note-card">
-        <!-- 关闭按钮 -->
-        <button class="close-btn" @click="handleClose">&times;</button>
-
         <!-- 左侧图片区 -->
         <div class="image-container">
+          <!-- 图片轮播 -->
+          <div v-if="detail?.urls?.length" class="carousel">
+            <Transition name="carousel-fade" mode="out-in">
+              <img
+                :key="detail.urls[currentIndex]"
+                :src="detail.urls[currentIndex]"
+                :alt="detail.title"
+                class="cover-image"
+              />
+            </Transition>
+            <!-- 左右切换箭头 -->
+            <div
+              v-if="detail.urls.length > 1"
+              class="carousel-arrow carousel-prev"
+              @click.stop="prevImage"
+            >
+              <Icon name="mdi:chevron-left" />
+            </div>
+            <div
+              v-if="detail.urls.length > 1"
+              class="carousel-arrow carousel-next"
+              @click.stop="nextImage"
+            >
+              <Icon name="mdi:chevron-right" />
+            </div>
+            <!-- 页码指示器 -->
+            <div v-if="detail.urls.length > 1" class="carousel-indicator">
+              {{ currentIndex + 1 }}/{{ detail.urls.length }}
+            </div>
+          </div>
+          <!-- 回退：单图 -->
           <img
-            v-if="item?.src"
+            v-else-if="item?.src"
             :src="item.src"
             :alt="item.title"
             class="cover-image"
           />
+          <!-- 回退：无图 -->
           <div v-else class="image-content">
             <div class="text-bg">
-              <span class="text-line">记录一次</span>
-              <span class="text-line">完整的</span>
-              <span class="text-line highlight">释放</span>
+              <span class="text-line">暂无图片</span>
             </div>
           </div>
         </div>
@@ -28,45 +55,41 @@
           <!-- 作者信息（固定顶部） -->
           <div class="author-header">
             <div class="author-info">
-              <el-avatar size="40" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png" />
-              <span class="author-name">{{ item?.title || '嵯峨之诗' }}</span>
+              <el-avatar :size="40" :src="detail?.avatar || item?.avatar" />
+              <span class="author-name">{{ detail?.nickname || item?.nickname || '匿名用户' }}</span>
             </div>
-            <el-button type="danger" size="small" class="follow-btn">关注</el-button>
+            <el-button type="primary" size="small" round class="follow-btn" :style="{ backgroundColor: '#60a5fa', borderColor: '#60a5fa',padding: '15px 30px' }">关注</el-button>
           </div>
 
           <!-- 可滚动的中间区域 -->
           <div class="scroll-area">
             <!-- 帖子内容 -->
             <div class="post-content">
-              <h3 class="post-title">{{ item?.title || '记录一次完整的释放1' }}</h3>
-              <p class="post-note">圈外勿入，谢谢理解 🙏</p>
-              <p class="post-text">
-                今天带朋友做了一次释放，她一直在哭，几乎崩溃，但释放完之后她觉得无比的安心。她同意我把这次神奇的释放过程完整的呈现给大家，希望对有同样感受的宝宝们有所启发。
-              </p>
-              <p class="post-text">
-                补充一点，释放不需要心智，不需要过度思考。因为这是我第一次带她释放，然后她头脑转得飞快hhh。但当她不再过度思考，只是顺着情绪的水流，释放就不再卡住了。
-              </p>
-              <div class="post-tags">
-                <span class="tag">#释放法</span>
-                <span class="tag">#显化sp</span>
+              <h3 class="post-title">{{ detail?.title || item?.title }}</h3>
+              <p v-if="detail?.content" class="post-text">{{ detail.content }}</p>
+              <div v-if="detail?.tags?.length" class="post-tags">
+                <span v-for="tag in detail.tags" :key="tag" class="tag">#{{ tag }}</span>
               </div>
-              <p class="post-time">编辑于 2025-07-27</p>
+              <p class="post-time">{{ detail?.created_at || '' }}</p>
             </div>
 
             <!-- 评论区 -->
             <div class="comment-section">
-              <p class="comment-title">共 110 条评论</p>
-              <div class="comment-item" v-for="(c, index) in comments" :key="index">
+              <p class="comment-title">共 {{ detail?.comment_count ?? 0 }} 条评论</p>
+              <div v-if="comments.length === 0" class="no-comment">暂无评论</div>
+              <div class="comment-item" v-for="c in comments" :key="c.uuid">
                 <div class="comment-header">
-                  <el-avatar size="32" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png" />
+                  <el-avatar :size="32" :src="c.avatar" />
                   <div class="comment-info">
-                    <span class="comment-author">{{ c.author }}</span>
-                    <p class="comment-time">{{ c.time }} {{ c.location }}</p>
+                    <span class="comment-author">{{ c.nickname }}</span>
+                    <p class="comment-time">{{ c.created_at }}</p>
                   </div>
                 </div>
                 <p class="comment-text">{{ c.content }}</p>
                 <div class="comment-actions">
-                  <span><i class="el-icon-star-off" /> {{ c.like }}</span>
+                  <span class="comment-like">
+                    <Icon name="gravity-ui:heart" /> {{ c.like_count }}
+                  </span>
                   <span class="reply-btn">回复</span>
                 </div>
               </div>
@@ -75,21 +98,21 @@
 
           <!-- 底部互动栏（固定底部） -->
           <div class="interaction-bar">
-            <div class="input-area">
+            <div class="input-area" @click="focusCommentInput">
               <span class="input-placeholder">说点什么...</span>
             </div>
             <div class="action-icons">
-              <span class="action-item">
-                <Icon name="mdi:heart-outline" />
-                <span class="action-count">{{ item?.likeCount ?? 919 }}</span>
+              <span class="action-item" :class="{ 'liked': isLiked }" @click.stop="toggleLike">
+                <Icon :name="isLiked ? 'gravity-ui:heart-fill' : 'gravity-ui:heart'" />
+                <span class="action-count">{{ likeCount }}</span>
               </span>
               <span class="action-item">
-                <Icon name="mdi:star-outline" />
-                <span class="action-count">348</span>
+                <Icon name="i-line-md:star" />
+                <span class="action-count">{{ detail?.comment_count ?? 0 }}</span>
               </span>
               <span class="action-item">
                 <Icon name="mdi:chat-outline" />
-                <span class="action-count">110</span>
+                <span class="action-count">{{ detail?.comment_count ?? 0 }}</span>
               </span>
               <span class="action-item">
                 <Icon name="ri:share-circle-fill" />
@@ -116,35 +139,83 @@ const props = defineProps({
 const emit = defineEmits(['close'])
 
 const show = ref(false)
+const detail = ref(null)
+const comments = ref([])
+const currentIndex = ref(0)
+const isLiked = ref(false)
+const likeCount = ref(0)
 
 onMounted(() => {
   requestAnimationFrame(() => {
     show.value = true
   })
+  fetchDetail()
 })
+
+const fetchDetail = async () => {
+  if (!props.item?.id) return
+  try {
+    const res = await useApi$('/user/discover/detail', {
+      body: { uuid: props.item.id },
+    })
+    if (res.code === 200 && res.data) {
+      detail.value = res.data
+      isLiked.value = res.data.is_liked || false
+      likeCount.value = res.data.like_count || 0
+      fetchComments()
+    }
+  } catch (e) {
+    console.error('获取帖子详情失败:', e)
+  }
+}
+
+const fetchComments = async () => {
+  if (!props.item?.id) return
+  try {
+    const res = await useApi$('/user/discover/comment/list', {
+      body: { post_uuid: props.item.id, page: 1, page_size: 50 },
+    })
+    if (res.code === 200 && res.data?.list) {
+      comments.value = res.data.list
+    }
+  } catch (e) {
+    console.error('获取评论失败:', e)
+  }
+}
+
+const toggleLike = async () => {
+  if (!props.item?.id) return
+  try {
+    const res = await useApi$('/user/discover/like', {
+      body: { target_uuid: props.item.id },
+    })
+    if (res.code === 200) {
+      isLiked.value = res.data.is_liked
+      likeCount.value += isLiked.value ? 1 : -1
+    }
+  } catch (e) {
+    console.error('点赞失败:', e)
+  }
+}
+
+const prevImage = () => {
+  if (!detail.value?.urls?.length) return
+  currentIndex.value = (currentIndex.value - 1 + detail.value.urls.length) % detail.value.urls.length
+}
+
+const nextImage = () => {
+  if (!detail.value?.urls?.length) return
+  currentIndex.value = (currentIndex.value + 1) % detail.value.urls.length
+}
+
+const focusCommentInput = () => {
+  // TODO: 聚焦评论输入框
+}
 
 const handleClose = () => {
   show.value = false
   setTimeout(() => emit('close'), 300)
 }
-
-// 评论数据
-const comments = ref([
-  {
-    author: '小鱼大王',
-    time: '03-24',
-    location: '河南',
-    content: '小鱼大王的',
-    like: 3
-  },
-  {
-    author: '乏了',
-    time: '7小时前',
-    location: '重庆',
-    content: 'fa',
-    like: 1
-  }
-])
 </script>
 
 <style scoped>
@@ -163,40 +234,16 @@ const comments = ref([
   position: relative;
   display: flex;
   background: #fff;
-  border-radius: 8px;
+  border-radius: 12px;
   overflow: hidden;
   height: 80vh;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
-}
-
-.close-btn {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 10;
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.4);
-  color: #fff;
-  font-size: 20px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  transition: background 0.2s;
-}
-
-.close-btn:hover {
-  background: rgba(0, 0, 0, 0.6);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.15);
 }
 
 .image-container {
   flex: 1;
   min-width: 0;
-  background: #000;
+  background: #f9fafb;
   position: relative;
   display: flex;
   align-items: center;
@@ -206,8 +253,61 @@ const comments = ref([
 .cover-image {
   display: block;
   max-width: 100%;
-  height: 100%;
+  max-height: 100%;
   object-fit: contain;
+}
+
+/* 轮播 */
+.carousel {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.carousel-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 20px;
+  color: #333;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transition: background 0.2s;
+  z-index: 5;
+}
+
+.carousel-arrow:hover {
+  background: #fff;
+}
+
+.carousel-prev {
+  left: 12px;
+}
+
+.carousel-next {
+  right: 12px;
+}
+
+.carousel-indicator {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 10px;
 }
 
 .image-content {
@@ -229,42 +329,10 @@ const comments = ref([
 }
 
 .text-line {
-  font-size: 72px;
+  font-size: 48px;
   font-weight: bold;
   line-height: 1.2;
-}
-
-.highlight {
-  background: #cce0f5;
-  padding: 0 10px;
-}
-
-.page-indicator {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  background: rgba(0, 0, 0, 0.3);
-  color: #fff;
-  border-radius: 10px;
-  padding: 2px 8px;
-  font-size: 12px;
-}
-
-.arrow {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 24px;
-  color: #999;
-  cursor: pointer;
-}
-
-.left-arrow {
-  left: 10px;
-}
-
-.right-arrow {
-  right: 10px;
+  color: #ccc;
 }
 
 .content-container {
@@ -313,40 +381,36 @@ const comments = ref([
 .post-title {
   font-size: 18px;
   font-weight: 600;
-  margin: 0 0 10px 0;
-}
-
-.post-note {
-  color: #666;
-  font-size: 14px;
-  margin: 0 0 15px 0;
+  margin: 16px 0 10px 0;
 }
 
 .post-text {
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.8;
   color: #333;
-  margin: 0 0 15px 0;
+  margin: 0 0 12px 0;
+  white-space: pre-wrap;
 }
 
 .post-tags {
   margin: 10px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .tag {
-  color: #3a86ff;
-  font-size: 14px;
-  margin-right: 10px;
+  color: #60a5fa;
+  font-size: 13px;
+  background: #eff6ff;
+  padding: 2px 10px;
+  border-radius: 12px;
 }
 
 .post-time {
   font-size: 12px;
   color: #999;
-  margin: 15px 0;
-}
-
-.post-content {
-  padding-top: 16px;
+  margin: 12px 0;
 }
 
 .comment-section {
@@ -356,12 +420,20 @@ const comments = ref([
 
 .comment-title {
   font-size: 14px;
-  color: #666;
+  color: #333;
+  font-weight: 500;
   margin-bottom: 15px;
 }
 
+.no-comment {
+  text-align: center;
+  color: #999;
+  font-size: 13px;
+  padding: 20px 0;
+}
+
 .comment-item {
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .comment-header {
@@ -387,17 +459,31 @@ const comments = ref([
 .comment-text {
   font-size: 14px;
   margin: 8px 0 5px 42px;
+  line-height: 1.6;
 }
 
 .comment-actions {
   font-size: 12px;
   color: #999;
   margin-left: 42px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.comment-like {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
 }
 
 .reply-btn {
-  margin-left: 15px;
   cursor: pointer;
+}
+
+.reply-btn:hover {
+  color: #60a5fa;
 }
 
 .interaction-bar {
@@ -417,6 +503,7 @@ const comments = ref([
   padding: 8px 15px;
   flex: 1;
   margin-right: 10px;
+  cursor: text;
 }
 
 .input-placeholder {
@@ -427,7 +514,7 @@ const comments = ref([
 
 .action-icons {
   display: flex;
-  gap: 16px;
+  gap: 14px;
   font-size: 14px;
   color: #666;
 }
@@ -445,11 +532,15 @@ const comments = ref([
   color: #ff2442;
 }
 
+.action-item.liked {
+  color: #ff2442;
+}
+
 .action-count {
   font-size: 13px;
 }
 
-/* 小红书风格弹窗动画 */
+/* 弹窗动画 */
 .discover-enter-active {
   transition: opacity 0.35s ease;
 }
@@ -483,6 +574,23 @@ const comments = ref([
 
 .discover-leave-to .note-card {
   transform: scale(0.9);
+  opacity: 0;
+}
+
+/* 图片轮播动画 */
+.carousel-fade-enter-active {
+  transition: opacity 0.3s ease;
+}
+
+.carousel-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.carousel-fade-enter-from {
+  opacity: 0;
+}
+
+.carousel-fade-leave-to {
   opacity: 0;
 }
 </style>

@@ -57,13 +57,19 @@
               <h3 class="text-sm font-medium line-clamp-2 mb-2">{{ item.title }}</h3>
               <div class="flex items-center justify-between text-xs text-gray-500">
                 <div class="flex items-center gap-1">
-                  <div 
+                  <img
+                    v-if="item.avatar"
+                    :src="item.avatar"
+                    class="w-5 h-5 rounded-full object-cover"
+                  />
+                  <div
+                    v-else
                     class="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs"
                     :style="{ backgroundColor: getAvatarColor(item.id) }"
                   >
                     {{ item.title.slice(0, 1) }}
                   </div>
-                  <span>用户{{ item.id.slice(-2) }}</span>
+                  <span>{{ item.nickname || '用户' + item.id.slice(-2) }}</span>
                 </div>
                 <div class="flex items-center gap-1">
                   <Icon name="uil:heart" />
@@ -267,15 +273,58 @@ const distributeToColumns = (newItems) => {
   })
 }
 
-// 加载数据（分页加载原始数组）
+// 加载数据（分页加载，优先使用API，回退到模拟数据）
 const loadMore = async () => {
   if (loading.value || noMore.value) return
   loading.value = true
 
-  // 模拟接口请求延迟
-  await new Promise(resolve => setTimeout(resolve, 800))
+  try {
+    const res = await useApi$('/user/discover/list', {
+      body: { page: page.value, page_size: pageSize },
+    })
+    if (res.code === 200 && res.data?.list?.length > 0) {
+      const apiData = res.data.list.map((item, idx) => {
+        orderCounter++
+        return {
+          id: item.uuid,
+          uid: `${page.value}-${idx}-${item.uuid}-${orderCounter}`,
+          src: item.first_url,
+          type: item.media_type === 1 ? 'video' : 'image',
+          title: item.title,
+          height: 250 + Math.floor(Math.random() * 150),
+          likeCount: item.like_count,
+          nickname: item.nickname,
+          avatar: item.avatar,
+          order: orderCounter,
+        }
+      })
+      items.value.push(...apiData)
+      distributeToColumns(apiData)
+      page.value++
+      if (items.value.length >= res.data.total) {
+        noMore.value = true
+      }
+    } else {
+      // API无数据时回退到模拟数据
+      await loadMockData()
+    }
+  } catch {
+    // API失败时回退到模拟数据
+    await loadMockData()
+  }
 
-  // 分页截取原始数据
+  loading.value = false
+
+  // 数据加载后观察新元素
+  if (process.client) {
+    await nextTick()
+    observeNewItems()
+  }
+}
+
+// 模拟数据加载（回退方案）
+const loadMockData = async () => {
+  await new Promise(resolve => setTimeout(resolve, 500))
   const start = (page.value - 1) * pageSize
   const end = start + pageSize
   const newData = originalItems.slice(start, end).map((item, idx) => {
@@ -287,21 +336,11 @@ const loadMore = async () => {
       order: orderCounter
     }
   })
-
   items.value.push(...newData)
   distributeToColumns(newData)
   page.value++
-  loading.value = false
-
-  // 判断是否加载完所有数据
   if (end >= originalItems.length) {
     noMore.value = true
-  }
-
-  // 数据加载后观察新元素
-  if (process.client) {
-    await nextTick()
-    observeNewItems()
   }
 }
 

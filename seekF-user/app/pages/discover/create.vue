@@ -210,15 +210,46 @@ const removeTag = (index) => {
   tags.value.splice(index, 1)
 }
 
-const handlePublish = () => {
-  // TODO: 调用发布接口
-  console.log('发布:', {
-    type: mediaType.value,
-    title: title.value,
-    content: content.value,
-    tags: tags.value,
-    media: mediaList.value.map(m => ({ type: m.type, file: m.file }))
-  })
+const handlePublish = async () => {
+  try {
+    // 1. 上传所有文件获取URL
+    const urls = []
+    for (const media of mediaList.value) {
+      const formData = new FormData()
+      formData.append('file', media.file)
+      formData.append('fileType', mediaType.value === 'video' ? 'discover_video' : 'discover_image')
+      const res = await useApi$('/user/file/upload', {
+        body: formData,
+        method: 'POST',
+      })
+      if (res.code === 200 && res.data?.url) {
+        urls.push(res.data.url)
+      } else {
+        ElMessage.error('文件上传失败')
+        return
+      }
+    }
+
+    // 2. 创建帖子
+    const postRes = await useApi$('/user/discover/create', {
+      body: {
+        title: title.value,
+        content: content.value,
+        media_type: mediaType.value === 'video' ? 1 : 0,
+        tags: tags.value,
+        urls,
+      },
+    })
+    if (postRes.code === 200) {
+      ElMessage.success('发布成功')
+      navigateTo('/discover')
+    } else {
+      ElMessage.error(postRes.message || '发布失败')
+    }
+  } catch (e) {
+    console.error('发布失败:', e)
+    ElMessage.error('发布失败')
+  }
 }
 </script>
 

@@ -33,6 +33,10 @@ const (
 	MessageAudio FileCategory = "message_audio"
 	// KnowledgeDoc 知识库文档
 	KnowledgeDoc FileCategory = "knowledge_doc"
+	// DiscoverImage 发现图片
+	DiscoverImage FileCategory = "discover_image"
+	// DiscoverVideo 发现视频
+	DiscoverVideo FileCategory = "discover_video"
 )
 
 // OSS 路径前缀（不以 / 结尾，后面会再拼子目录和文件名）
@@ -43,6 +47,8 @@ const (
 	messageVideoDirPrefix = "messages/videos"
 	messageAudioDirPrefix = "messages/audios"
 	knowledgeDirPrefix    = "knowledge"
+	discoverImageDirPrefix = "discover/images"
+	discoverVideoDirPrefix = "discover/videos"
 )
 
 // UploadResult 上传结果
@@ -111,6 +117,10 @@ func dirForCategory(category FileCategory) string {
 		return messageAudioDirPrefix
 	case KnowledgeDoc:
 		return knowledgeDirPrefix
+	case DiscoverImage:
+		return discoverImageDirPrefix
+	case DiscoverVideo:
+		return discoverVideoDirPrefix
 	default:
 		return messageImageDirPrefix
 	}

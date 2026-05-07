@@ -19,6 +19,7 @@ func SetupRouter(
 	wsController *user.WsController,
 	aichatController *user.AIChatController,
 	knowledgeController *user.KnowledgeController,
+	discoverController *user.DiscoverController,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -97,6 +98,13 @@ func SetupRouter(
 			protectedGroup.POST("/knowledge/list", knowledgeController.ListDocuments)
 			protectedGroup.POST("/knowledge/remove", knowledgeController.RemoveDocument)
 			protectedGroup.POST("/knowledge/content", knowledgeController.GetDocumentContent)
+			// Discover
+			protectedGroup.POST("/discover/create", discoverController.CreatePost)
+			protectedGroup.POST("/discover/list", discoverController.ListPosts)
+			protectedGroup.POST("/discover/detail", discoverController.GetPostDetail)
+			protectedGroup.POST("/discover/like", discoverController.ToggleLike)
+			protectedGroup.POST("/discover/comment/add", discoverController.AddComment)
+			protectedGroup.POST("/discover/comment/list", discoverController.ListComments)
 		}
 
 	}
