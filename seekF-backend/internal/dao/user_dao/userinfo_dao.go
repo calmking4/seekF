@@ -31,10 +31,7 @@ func (d *UserInfoDAOImpl) CreateUser(user *models.UserInfo) error {
 // FindUserByUuid 根据UUID查找用户
 func (d *UserInfoDAOImpl) FindUserByUuid(uuid string) (*models.UserInfo, error) {
 	var user models.UserInfo
-	result := db.GormDB.Where("uuid = ?", uuid).First(&user)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
+	result := db.GormDB.Where("uuid = ?", uuid).Find(&user)
 	return &user, result.Error
 }
 

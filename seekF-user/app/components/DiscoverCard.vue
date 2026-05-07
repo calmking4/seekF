@@ -110,8 +110,7 @@
                         <el-avatar :size="28" :src="reply.avatar" />
                       </div>
                       <div class="comment-content-col">
-                        <p v-if="reply.reply_to_nickname" class="reply-to">回复 {{ reply.reply_to_nickname }}</p>
-                        <p class="comment-text">{{ reply.content }}</p>
+                        <p class="comment-text"><span v-if="reply.reply_to_nickname" class="reply-to">回复 {{ reply.reply_to_nickname }}：</span>{{ reply.content }}</p>
                         <p class="comment-time">{{ reply.created_at }}</p>
                         <div class="comment-actions">
                           <span class="comment-like">
@@ -325,10 +324,15 @@ const closeCommentInput = () => {
 }
 
 const startReply = (comment, parentComment) => {
+  // 始终将新评论嵌套在顶级评论下
+  // parentComment存在说明回复的是非顶级评论，否则回复的是顶级评论
+  const topLevelUuid = parentComment ? parentComment.uuid : comment.uuid
   replyTarget.value = {
     uuid: comment.uuid,
+    userId: comment.user_id,
     nickname: comment.nickname,
-    parentUuid: parentComment?.uuid || comment.uuid,
+    parentUuid: topLevelUuid,
+    isReplyToTopLevel: !parentComment,
   }
   openCommentInput()
 }
@@ -347,7 +351,10 @@ const submitComment = async () => {
     // 如果是回复评论
     if (replyTarget.value) {
       body.parent_id = replyTarget.value.parentUuid
-      body.reply_to_user_id = replyTarget.value.uuid
+      // 仅回复非顶级评论时才设置reply_to_user_id，用于显示"回复 XXX:"
+      if (!replyTarget.value.isReplyToTopLevel) {
+        body.reply_to_user_id = replyTarget.value.userId
+      }
     }
 
     const res = await useApi$('/user/discover/comment/add', {
@@ -641,9 +648,8 @@ const handleClose = () => {
 }
 
 .reply-to {
-  font-size: 12px;
+  font-size: 14px;
   color: #999;
-  margin: 0 0 4px 0;
 }
 
 .comment-text {
@@ -693,12 +699,6 @@ const handleClose = () => {
 
 .reply-item {
   margin-bottom: 12px;
-}
-
-.reply-to {
-  font-size: 12px;
-  color: #999;
-  margin-left: 4px;
 }
 
 .reply-hint {

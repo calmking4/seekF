@@ -15,7 +15,7 @@ type DiscoverService interface {
 	ListPosts(ctx context.Context, page, pageSize int) ([]PostInfo, int64, error)
 	GetPostDetail(ctx context.Context, userId, uuid string) (*PostDetailInfo, error)
 	ToggleLike(ctx context.Context, userId, targetUuid string) (bool, error)
-	AddComment(ctx context.Context, userId, postUuid string, parentId int64, replyToUserId, content string) (*CommentInfo, error)
+	AddComment(ctx context.Context, userId, postUuid string, parentUuid, replyToUserId, content string) (*CommentInfo, error)
 	ListComments(ctx context.Context, postUuid string, page, pageSize int) ([]CommentInfo, error)
 	ToggleCommentLike(ctx context.Context, userId string, commentId int64) (bool, error)
 }
@@ -61,7 +61,7 @@ type CommentInfo struct {
 	UserId          string
 	Nickname        string
 	Avatar          string
-	ParentId        int64
+	ParentId        string
 	ReplyToUserId   string
 	ReplyToNickname string
 	Content         string
@@ -261,7 +261,7 @@ func (s *DiscoverServiceImpl) ToggleLike(ctx context.Context, userId, targetUuid
 	return true, nil
 }
 
-func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid string, parentId int64, replyToUserId, content string) (*CommentInfo, error) {
+func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid string, parentUuid, replyToUserId, content string) (*CommentInfo, error) {
 	post, err := s.discoverDAO.FindPostByUuid(postUuid)
 	if err != nil {
 		return nil, err
@@ -275,7 +275,7 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 		Uuid:          commentUUID,
 		PostId:        post.Id,
 		UserId:        userId,
-		ParentId:      parentId,
+		ParentId:      parentUuid,
 		ReplyToUserId: replyToUserId,
 		Content:       content,
 	}
@@ -299,7 +299,7 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 		UserId:        userId,
 		Nickname:      nickname,
 		Avatar:        avatar,
-		ParentId:      parentId,
+		ParentId:      parentUuid,
 		ReplyToUserId: replyToUserId,
 		Content:       content,
 		CreatedAt:     comment.CreatedAt.Format("2006-01-02 15:04:05"),

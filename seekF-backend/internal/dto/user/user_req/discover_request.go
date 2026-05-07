@@ -23,7 +23,7 @@ type ToggleLikeRequest struct {
 
 type AddCommentRequest struct {
 	PostUuid       string `json:"post_uuid" form:"post_uuid"`
-	ParentId       int64  `json:"parent_id" form:"parent_id"`
+	ParentUuid     string `json:"parent_id" form:"parent_id"`
 	ReplyToUserId  string `json:"reply_to_user_id" form:"reply_to_user_id"`
 	Content        string `json:"content" form:"content"`
 }

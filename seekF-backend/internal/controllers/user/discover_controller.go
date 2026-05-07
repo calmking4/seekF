@@ -198,7 +198,7 @@ func (c *DiscoverController) AddComment(ctx *gin.Context) {
 		return
 	}
 
-	comment, err := c.discoverService.AddComment(ctx.Request.Context(), userId, req.PostUuid, req.ParentId, req.ReplyToUserId, req.Content)
+	comment, err := c.discoverService.AddComment(ctx.Request.Context(), userId, req.PostUuid, req.ParentUuid, req.ReplyToUserId, req.Content)
 	if err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
