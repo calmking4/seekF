@@ -25,6 +25,8 @@ type DiscoverDAO interface {
 	FindLike(userId, targetUuid string) (*models.DiscoverLike, error)
 
 	CreateComment(comment *models.DiscoverComment) error
+	FindCommentById(commentId int64) (*models.DiscoverComment, error)
+	FindCommentByUuid(uuid string) (*models.DiscoverComment, error)
 	FindCommentsByPostId(postId int64, page, pageSize int) ([]models.DiscoverComment, error)
 	IncrementCommentLikeCount(commentId int64) error
 	DecrementCommentLikeCount(commentId int64) error
@@ -95,10 +97,31 @@ func (d *DiscoverDAOImpl) DeleteLike(userId, targetUuid string) error {
 func (d *DiscoverDAOImpl) FindLike(userId, targetUuid string) (*models.DiscoverLike, error) {
 	var like models.DiscoverLike
 	result := db.GormDB.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Find(&like)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, nil
+	}
+	return &like, nil
+}
+
+func (d *DiscoverDAOImpl) FindCommentById(commentId int64) (*models.DiscoverComment, error) {
+	var comment models.DiscoverComment
+	result := db.GormDB.Where("id = ?", commentId).First(&comment)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
-	return &like, result.Error
+	return &comment, result.Error
+}
+
+func (d *DiscoverDAOImpl) FindCommentByUuid(uuid string) (*models.DiscoverComment, error) {
+	var comment models.DiscoverComment
+	result := db.GormDB.Where("uuid = ?", uuid).First(&comment)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &comment, result.Error
 }
 
 func (d *DiscoverDAOImpl) CreateComment(comment *models.DiscoverComment) error {

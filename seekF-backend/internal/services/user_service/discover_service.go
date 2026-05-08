@@ -12,12 +12,12 @@ import (
 
 type DiscoverService interface {
 	CreatePost(ctx context.Context, userId, title, content string, mediaType int8, tags []string, urls []string) (*PostInfo, error)
-	ListPosts(ctx context.Context, page, pageSize int) ([]PostInfo, int64, error)
+	ListPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error)
 	GetPostDetail(ctx context.Context, userId, uuid string) (*PostDetailInfo, error)
-	ToggleLike(ctx context.Context, userId, targetUuid string) (bool, error)
+	ToggleLike(ctx context.Context, userId, targetUuid string) (bool, int, error)
 	AddComment(ctx context.Context, userId, postUuid string, parentUuid, replyToUserId, content string) (*CommentInfo, error)
-	ListComments(ctx context.Context, postUuid string, page, pageSize int) ([]CommentInfo, error)
-	ToggleCommentLike(ctx context.Context, userId string, commentId int64) (bool, error)
+	ListComments(ctx context.Context, userId, postUuid string, page, pageSize int) ([]CommentInfo, error)
+	ToggleCommentLike(ctx context.Context, userId, commentUuid string) (bool, int, error)
 }
 
 type DiscoverServiceImpl struct {
@@ -37,6 +37,7 @@ type PostInfo struct {
 	FirstUrl     string
 	LikeCount    int
 	CommentCount int
+	IsLiked      bool
 	CreatedAt    string
 }
 
@@ -66,6 +67,7 @@ type CommentInfo struct {
 	ReplyToNickname string
 	Content         string
 	LikeCount       int
+	IsLiked         bool
 	CreatedAt       string
 }
 
@@ -131,7 +133,7 @@ func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId, title, con
 	}, nil
 }
 
-func (s *DiscoverServiceImpl) ListPosts(ctx context.Context, page, pageSize int) ([]PostInfo, int64, error) {
+func (s *DiscoverServiceImpl) ListPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error) {
 	posts, err := s.discoverDAO.ListPosts(page, pageSize)
 	if err != nil {
 		return nil, 0, err
@@ -163,6 +165,15 @@ func (s *DiscoverServiceImpl) ListPosts(ctx context.Context, page, pageSize int)
 			avatar = user.Avatar
 		}
 
+		// 查询当前用户是否点赞了该帖子
+		isLiked := false
+		if userId != "" {
+			like, _ := s.discoverDAO.FindLike(userId, post.Uuid)
+			if like != nil {
+				isLiked = true
+			}
+		}
+
 		result = append(result, PostInfo{
 			Uuid:         post.Uuid,
 			UserId:       post.UserId,
@@ -175,6 +186,7 @@ func (s *DiscoverServiceImpl) ListPosts(ctx context.Context, page, pageSize int)
 			FirstUrl:     firstUrl,
 			LikeCount:    post.LikeCount,
 			CommentCount: post.CommentCount,
+			IsLiked:      isLiked,
 			CreatedAt:    post.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
@@ -233,17 +245,22 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 	}, nil
 }
 
-func (s *DiscoverServiceImpl) ToggleLike(ctx context.Context, userId, targetUuid string) (bool, error) {
+func (s *DiscoverServiceImpl) ToggleLike(ctx context.Context, userId, targetUuid string) (bool, int, error) {
 	existing, _ := s.discoverDAO.FindLike(userId, targetUuid)
 	if existing != nil {
 		if err := s.discoverDAO.DeleteLike(userId, targetUuid); err != nil {
-			return false, err
+			return false, 0, err
 		}
 		post, _ := s.discoverDAO.FindPostByUuid(targetUuid)
 		if post != nil {
 			s.discoverDAO.DecrementLikeCount(post.Id)
+			// 重新获取帖子以获取更新后的点赞数
+			updatedPost, _ := s.discoverDAO.FindPostByUuid(targetUuid)
+			if updatedPost != nil {
+				return false, updatedPost.LikeCount, nil
+			}
 		}
-		return false, nil
+		return false, 0, nil
 	}
 
 	like := &models.DiscoverLike{
@@ -251,14 +268,19 @@ func (s *DiscoverServiceImpl) ToggleLike(ctx context.Context, userId, targetUuid
 		TargetUuid: targetUuid,
 	}
 	if err := s.discoverDAO.CreateLike(like); err != nil {
-		return false, err
+		return false, 0, err
 	}
 
 	post, _ := s.discoverDAO.FindPostByUuid(targetUuid)
 	if post != nil {
 		s.discoverDAO.IncrementLikeCount(post.Id)
+		// 重新获取帖子以获取更新后的点赞数
+		updatedPost, _ := s.discoverDAO.FindPostByUuid(targetUuid)
+		if updatedPost != nil {
+			return true, updatedPost.LikeCount, nil
+		}
 	}
-	return true, nil
+	return true, 0, nil
 }
 
 func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid string, parentUuid, replyToUserId, content string) (*CommentInfo, error) {
@@ -306,7 +328,7 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 	}, nil
 }
 
-func (s *DiscoverServiceImpl) ListComments(ctx context.Context, postUuid string, page, pageSize int) ([]CommentInfo, error) {
+func (s *DiscoverServiceImpl) ListComments(ctx context.Context, userId, postUuid string, page, pageSize int) ([]CommentInfo, error) {
 	post, err := s.discoverDAO.FindPostByUuid(postUuid)
 	if err != nil {
 		return nil, err
@@ -338,6 +360,15 @@ func (s *DiscoverServiceImpl) ListComments(ctx context.Context, postUuid string,
 			}
 		}
 
+		// 查询当前用户是否点赞了该评论
+		isLiked := false
+		if userId != "" {
+			like, _ := s.discoverDAO.FindLike(userId, c.Uuid)
+			if like != nil {
+				isLiked = true
+			}
+		}
+
 		result = append(result, CommentInfo{
 			Uuid:            c.Uuid,
 			UserId:          c.UserId,
@@ -348,6 +379,7 @@ func (s *DiscoverServiceImpl) ListComments(ctx context.Context, postUuid string,
 			ReplyToNickname: replyToNickname,
 			Content:         c.Content,
 			LikeCount:       c.LikeCount,
+			IsLiked:         isLiked,
 			CreatedAt:       c.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
@@ -355,15 +387,23 @@ func (s *DiscoverServiceImpl) ListComments(ctx context.Context, postUuid string,
 	return result, nil
 }
 
-func (s *DiscoverServiceImpl) ToggleCommentLike(ctx context.Context, userId string, commentId int64) (bool, error) {
-	commentUuid := fmt.Sprintf("%d", commentId)
+func (s *DiscoverServiceImpl) ToggleCommentLike(ctx context.Context, userId, commentUuid string) (bool, int, error) {
 	existing, _ := s.discoverDAO.FindLike(userId, commentUuid)
 	if existing != nil {
 		if err := s.discoverDAO.DeleteLike(userId, commentUuid); err != nil {
-			return false, err
+			return false, 0, err
 		}
-		s.discoverDAO.DecrementCommentLikeCount(commentId)
-		return false, nil
+		// 通过 UUID 查询评论
+		comment, _ := s.discoverDAO.FindCommentByUuid(commentUuid)
+		if comment != nil {
+			s.discoverDAO.DecrementCommentLikeCount(comment.Id)
+			// 重新查询获取更新后的点赞数
+			updatedComment, _ := s.discoverDAO.FindCommentByUuid(commentUuid)
+			if updatedComment != nil {
+				return false, updatedComment.LikeCount, nil
+			}
+		}
+		return false, 0, nil
 	}
 
 	like := &models.DiscoverLike{
@@ -371,8 +411,17 @@ func (s *DiscoverServiceImpl) ToggleCommentLike(ctx context.Context, userId stri
 		TargetUuid: commentUuid,
 	}
 	if err := s.discoverDAO.CreateLike(like); err != nil {
-		return false, err
+		return false, 0, err
 	}
-	s.discoverDAO.IncrementCommentLikeCount(commentId)
-	return true, nil
+	// 通过 UUID 查询评论
+	comment, _ := s.discoverDAO.FindCommentByUuid(commentUuid)
+	if comment != nil {
+		s.discoverDAO.IncrementCommentLikeCount(comment.Id)
+		// 重新查询获取更新后的点赞数
+		updatedComment, _ := s.discoverDAO.FindCommentByUuid(commentUuid)
+		if updatedComment != nil {
+			return true, updatedComment.LikeCount, nil
+		}
+	}
+	return true, 0, nil
 }

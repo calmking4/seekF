@@ -24,9 +24,7 @@
                 >
                     <!-- AI 头像 -->
                     <div class="relative flex-shrink-0">
-                        <el-avatar :size="48" :style="{ backgroundColor: getModelColor(item.modelType) }">
-                            <Icon :name="getModelIcon(item.modelType)" class="text-white text-xl" />
-                        </el-avatar>
+                        <el-avatar :size="48" :src="aiAvatarUrl" />
                     </div>
                     <!-- 会话信息 -->
                     <div class="flex-1 min-w-0">
@@ -61,9 +59,7 @@
             <template v-else>
                 <!-- 聊天头部 -->
                 <div class="bg-white border-b border-gray-200 p-3 flex items-center gap-2 flex-shrink-0">
-                    <el-avatar :size="40" :style="{ backgroundColor: getModelColor(currentSession?.modelType) }">
-                        <Icon :name="getModelIcon(currentSession?.modelType)" class="text-white" />
-                    </el-avatar>
+                    <el-avatar :size="40" :src="aiAvatarUrl" />
                     <div class="flex items-center gap-2">
                         <span class="text-base font-medium">AI 助手</span>
                         <el-select v-model="currentSession.modelType" size="small" class="!w-24" @change="handleModelChange">
@@ -120,9 +116,7 @@
                             >
                                 <!-- AI 消息：头像在左 -->
                                 <div v-if="!msg.isSelf" class="flex-shrink-0">
-                                    <el-avatar :size="40" :style="{ backgroundColor: getModelColor(currentSession?.modelType) }">
-                                        <Icon :name="getModelIcon(currentSession?.modelType)" class="text-white text-sm" />
-                                    </el-avatar>
+                                    <el-avatar :size="40" :src="aiAvatarUrl" />
                                 </div>
 
                                 <!-- 消息气泡 -->
@@ -206,6 +200,7 @@
 <script setup>
 const aiChat = useAIChat()
 const knowledge = useKnowledge()
+const aiAvatarUrl = 'https://seekf.oss-cn-shenzhen.aliyuncs.com/common/ai_avatar/AI%E5%8A%A9%E6%89%8B%E5%A4%B4%E5%83%8F.png'
 
 const currentUserAvatar = ref('')
 const sessionList = ref([])
@@ -269,15 +264,6 @@ const previewImage = (url) => {
     window.open(url, '_blank')
 }
 
-// 模型图标（统一机器人头像）
-const getModelIcon = () => {
-    return 'uil:robot'
-}
-
-// 模型颜色（统一颜色）
-const getModelColor = () => {
-    return '#6B7280'
-}
 
 // 滚动到底部
 const scrollToBottom = () => {

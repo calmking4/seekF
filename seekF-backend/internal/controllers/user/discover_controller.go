@@ -66,6 +66,8 @@ func (c *DiscoverController) CreatePost(ctx *gin.Context) {
 
 // ListPosts 获取帖子列表
 func (c *DiscoverController) ListPosts(ctx *gin.Context) {
+	userId := ctx.GetString("Uuid")
+
 	var req userreq.ListPostsRequest
 	if err := ctx.ShouldBind(&req); err != nil {
 		resp.Error(ctx, "参数错误", http.StatusBadRequest)
@@ -78,7 +80,7 @@ func (c *DiscoverController) ListPosts(ctx *gin.Context) {
 		req.PageSize = 12
 	}
 
-	posts, total, err := c.discoverService.ListPosts(ctx.Request.Context(), req.Page, req.PageSize)
+	posts, total, err := c.discoverService.ListPosts(ctx.Request.Context(), userId, req.Page, req.PageSize)
 	if err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
@@ -98,6 +100,7 @@ func (c *DiscoverController) ListPosts(ctx *gin.Context) {
 			FirstUrl:     p.FirstUrl,
 			LikeCount:    p.LikeCount,
 			CommentCount: p.CommentCount,
+			IsLiked:      p.IsLiked,
 			CreatedAt:    p.CreatedAt,
 		})
 	}
@@ -167,16 +170,16 @@ func (c *DiscoverController) ToggleLike(ctx *gin.Context) {
 		return
 	}
 
-	isLiked, err := c.discoverService.ToggleLike(ctx.Request.Context(), userId, req.TargetUuid)
+	isLiked, likeCount, err := c.discoverService.ToggleLike(ctx.Request.Context(), userId, req.TargetUuid)
 	if err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	if isLiked {
-		resp.Success(ctx, "点赞成功", gin.H{"is_liked": true})
+		resp.Success(ctx, "点赞成功", gin.H{"is_liked": true, "like_count": likeCount})
 	} else {
-		resp.Success(ctx, "取消点赞", gin.H{"is_liked": false})
+		resp.Success(ctx, "取消点赞", gin.H{"is_liked": false, "like_count": likeCount})
 	}
 }
 
@@ -220,6 +223,8 @@ func (c *DiscoverController) AddComment(ctx *gin.Context) {
 
 // ListComments 获取评论列表
 func (c *DiscoverController) ListComments(ctx *gin.Context) {
+	userId := ctx.GetString("Uuid")
+
 	var req userreq.ListCommentsRequest
 	if err := ctx.ShouldBind(&req); err != nil {
 		resp.Error(ctx, "参数错误", http.StatusBadRequest)
@@ -236,7 +241,7 @@ func (c *DiscoverController) ListComments(ctx *gin.Context) {
 		req.PageSize = 20
 	}
 
-	comments, err := c.discoverService.ListComments(ctx.Request.Context(), req.PostUuid, req.Page, req.PageSize)
+	comments, err := c.discoverService.ListComments(ctx.Request.Context(), userId, req.PostUuid, req.Page, req.PageSize)
 	if err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
@@ -254,6 +259,7 @@ func (c *DiscoverController) ListComments(ctx *gin.Context) {
 			ReplyToNickname: c.ReplyToNickname,
 			Content:         c.Content,
 			LikeCount:       c.LikeCount,
+			IsLiked:         c.IsLiked,
 			CreatedAt:       c.CreatedAt,
 		})
 	}
@@ -261,4 +267,35 @@ func (c *DiscoverController) ListComments(ctx *gin.Context) {
 	resp.Success(ctx, "获取成功", userresp.ListCommentsRespond{
 		List: items,
 	})
+}
+
+// ToggleCommentLike 切换评论点赞状态
+func (c *DiscoverController) ToggleCommentLike(ctx *gin.Context) {
+	userId := ctx.GetString("Uuid")
+	if userId == "" {
+		resp.Error(ctx, "获取用户信息失败", http.StatusBadRequest)
+		return
+	}
+
+	var req userreq.ToggleCommentLikeRequest
+	if err := ctx.ShouldBind(&req); err != nil {
+		resp.Error(ctx, "参数错误", http.StatusBadRequest)
+		return
+	}
+	if req.CommentUuid == "" {
+		resp.Error(ctx, "comment_uuid不能为空", http.StatusBadRequest)
+		return
+	}
+
+	isLiked, likeCount, err := c.discoverService.ToggleCommentLike(ctx.Request.Context(), userId, req.CommentUuid)
+	if err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if isLiked {
+		resp.Success(ctx, "点赞成功", gin.H{"is_liked": true, "like_count": likeCount})
+	} else {
+		resp.Success(ctx, "取消点赞", gin.H{"is_liked": false, "like_count": likeCount})
+	}
 }

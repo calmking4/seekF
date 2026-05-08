@@ -33,3 +33,7 @@ type ListCommentsRequest struct {
 	Page     int    `json:"page" form:"page"`
 	PageSize int    `json:"page_size" form:"page_size"`
 }
+
+type ToggleCommentLikeRequest struct {
+	CommentUuid string `json:"comment_uuid" form:"comment_uuid"`
+}

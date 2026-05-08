@@ -94,8 +94,14 @@
                     <p class="comment-text">{{ c.content }}</p>
                     <p class="comment-time">{{ c.created_at }}</p>
                     <div class="comment-actions">
-                      <span class="comment-like">
-                        <Icon name="gravity-ui:heart" /> {{ c.like_count }}
+                      <span
+                        class="comment-like"
+                        :class="{ 'liked': c.is_liked }"
+                        @click.stop="toggleCommentLike(c)"
+                      >
+                        <Icon v-if="c.is_liked" name="mdi:heart" />
+                        <Icon v-else name="mdi:heart-outline" />
+                        {{ c.like_count }}
                       </span>
                       <span class="reply-btn" @click="startReply(c)">回复</span>
                     </div>
@@ -113,8 +119,14 @@
                         <p class="comment-text"><span v-if="reply.reply_to_nickname" class="reply-to">回复 {{ reply.reply_to_nickname }}：</span>{{ reply.content }}</p>
                         <p class="comment-time">{{ reply.created_at }}</p>
                         <div class="comment-actions">
-                          <span class="comment-like">
-                            <Icon name="gravity-ui:heart" /> {{ reply.like_count }}
+                          <span
+                            class="comment-like"
+                            :class="{ 'liked': reply.is_liked }"
+                            @click.stop="toggleCommentLike(reply)"
+                          >
+                            <Icon v-if="reply.is_liked" name="mdi:heart" />
+                            <Icon v-else name="mdi:heart-outline" />
+                            {{ reply.like_count }}
                           </span>
                           <span class="reply-btn" @click="startReply(reply, c)">回复</span>
                         </div>
@@ -134,7 +146,8 @@
             </div>
             <div v-if="!showCommentInput" class="action-icons">
               <span class="action-item" :class="{ 'liked': isLiked }" @click.stop="toggleLike">
-                <Icon :name="isLiked ? 'gravity-ui:heart-fill' : 'gravity-ui:heart'" />
+                <Icon v-if="isLiked" name="solar:heart-angle-bold" />
+                <Icon v-else name="mdi:heart-outline" />
                 <span class="action-count">{{ likeCount }}</span>
               </span>
               <span class="action-item">
@@ -183,7 +196,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, shallowRef, onMounted, watch, nextTick } from 'vue'
 
 const props = defineProps({
   item: {
@@ -192,11 +205,11 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'like-updated'])
 
 const show = ref(false)
 const detail = ref(null)
-const comments = ref([])
+const comments = shallowRef([])
 const currentIndex = ref(0)
 const isLiked = ref(false)
 const likeCount = ref(0)
@@ -293,10 +306,46 @@ const toggleLike = async () => {
     })
     if (res.code === 200) {
       isLiked.value = res.data.is_liked
-      likeCount.value += isLiked.value ? 1 : -1
+      likeCount.value = res.data.like_count
+      // 通知父组件更新赞数
+      emit('like-updated', {
+        postId: props.item.id,
+        likeCount: likeCount.value,
+        isLiked: isLiked.value,
+      })
     }
   } catch (e) {
     console.error('点赞失败:', e)
+  }
+}
+
+// 评论点赞
+const toggleCommentLike = async (comment) => {
+  try {
+    const res = await useApi$('/user/discover/comment/like', {
+      body: { comment_uuid: comment.uuid },
+    })
+    if (res.code === 200) {
+      // 在 comments 数组中找到对应的评论并更新
+      const updateComment = (list) => {
+        for (const c of list) {
+          if (c.uuid === comment.uuid) {
+            c.is_liked = res.data.is_liked
+            c.like_count = res.data.like_count
+            return true
+          }
+          if (c.replies && updateComment(c.replies)) {
+            return true
+          }
+        }
+        return false
+      }
+      updateComment(comments.value)
+      // 手动触发 shallowRef 更新
+      comments.value = [...comments.value]
+    }
+  } catch (e) {
+    console.error('评论点赞失败:', e)
   }
 }
 
@@ -680,6 +729,10 @@ const handleClose = () => {
   align-items: center;
   gap: 4px;
   cursor: pointer;
+}
+
+.comment-like.liked {
+  color: #ff2442;
 }
 
 .reply-btn {

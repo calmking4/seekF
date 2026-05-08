@@ -56,23 +56,27 @@
             <div class="p-3">
               <h3 class="text-sm font-medium line-clamp-2 mb-2">{{ item.title }}</h3>
               <div class="flex items-center justify-between text-xs text-gray-500">
-                <div class="flex items-center gap-1">
+                <div class="flex items-center gap-2">
                   <img
                     v-if="item.avatar"
                     :src="item.avatar"
-                    class="w-5 h-5 rounded-full object-cover"
+                    class="w-7 h-7 rounded-full object-cover"
                   />
                   <div
                     v-else
-                    class="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs"
+                    class="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs"
                     :style="{ backgroundColor: getAvatarColor(item.id) }"
                   >
                     {{ item.title.slice(0, 1) }}
                   </div>
                   <span>{{ item.nickname || '用户' + item.id.slice(-2) }}</span>
                 </div>
-                <div class="flex items-center gap-1">
-                  <Icon name="uil:heart" />
+                <div
+                  class="flex items-center gap-1 cursor-pointer"
+                  :class="{ 'text-red-500': item.isLiked }"
+                  @click.stop="toggleLike(item)"
+                >
+                  <Icon :name="item.isLiked ? 'solar:heart-angle-bold' : 'mdi:heart-outline'" class="text-base" />
                   <span>{{ item.likeCount }}</span>
                 </div>
               </div>
@@ -96,6 +100,7 @@
       v-if="selectedItem"
       :item="selectedItem"
       @close="selectedItem = null"
+      @like-updated="handleLikeUpdated"
     />
   </div>
 </template>
@@ -293,6 +298,7 @@ const loadMore = async () => {
           title: item.title,
           height: 250 + Math.floor(Math.random() * 150),
           likeCount: item.like_count,
+          isLiked: item.is_liked || false,
           nickname: item.nickname,
           avatar: item.avatar,
           order: orderCounter,
@@ -432,6 +438,40 @@ onUnmounted(() => {
 // 卡片点击
 const handleItemClick = (item) => {
   selectedItem.value = item
+}
+
+// 点赞更新处理
+const handleLikeUpdated = ({ postId, likeCount, isLiked }) => {
+  // 更新 items 中对应帖子的赞数和点赞状态
+  const item = items.value.find(i => i.id === postId)
+  if (item) {
+    item.likeCount = likeCount
+    item.isLiked = isLiked
+  }
+  // 更新 columns 中的赞数和点赞状态
+  for (const column of columns.value) {
+    const columnItem = column.items.find(i => i.id === postId)
+    if (columnItem) {
+      columnItem.likeCount = likeCount
+      columnItem.isLiked = isLiked
+      break
+    }
+  }
+}
+
+// 首页卡片点赞
+const toggleLike = async (item) => {
+  try {
+    const res = await useApi$('/user/discover/like', {
+      body: { target_uuid: item.id },
+    })
+    if (res.code === 200) {
+      item.isLiked = res.data.is_liked
+      item.likeCount = res.data.like_count
+    }
+  } catch (e) {
+    console.error('点赞失败:', e)
+  }
 }
 </script>
 
