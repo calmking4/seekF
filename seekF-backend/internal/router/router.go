@@ -107,6 +107,17 @@ func SetupRouter(
 			protectedGroup.POST("/discover/comment/add", discoverController.AddComment)
 			protectedGroup.POST("/discover/comment/list", discoverController.ListComments)
 			protectedGroup.POST("/discover/comment/like", discoverController.ToggleCommentLike)
+			// 收藏夹
+			protectedGroup.POST("/discover/folder/create", discoverController.CreateFolder)
+			protectedGroup.POST("/discover/folder/update", discoverController.UpdateFolder)
+			protectedGroup.POST("/discover/folder/delete", discoverController.DeleteFolder)
+			protectedGroup.POST("/discover/folder/list", discoverController.ListFolders)
+			protectedGroup.POST("/discover/folder/detail", discoverController.GetFolderDetail)
+			// 收藏
+			protectedGroup.POST("/discover/collect", discoverController.CollectPost)
+			protectedGroup.POST("/discover/uncollect", discoverController.UncollectPost)
+			protectedGroup.POST("/discover/check-collected", discoverController.CheckCollected)
+			protectedGroup.POST("/discover/collected-list", discoverController.ListCollectedPosts)
 		}
 
 	}

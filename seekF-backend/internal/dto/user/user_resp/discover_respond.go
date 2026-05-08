@@ -12,7 +12,9 @@ type PostItem struct {
 	FirstUrl     string   `json:"first_url"`
 	LikeCount    int      `json:"like_count"`
 	CommentCount int      `json:"comment_count"`
+	CollectCount int      `json:"collect_count"`
 	IsLiked      bool     `json:"is_liked"`
+	IsCollected  bool     `json:"is_collected"`
 	CreatedAt    string   `json:"created_at"`
 }
 
@@ -33,7 +35,9 @@ type PostDetailRespond struct {
 	Urls         []string `json:"urls"`
 	LikeCount    int      `json:"like_count"`
 	CommentCount int      `json:"comment_count"`
+	CollectCount int      `json:"collect_count"`
 	IsLiked      bool     `json:"is_liked"`
+	IsCollected  bool     `json:"is_collected"`
 	CreatedAt    string   `json:"created_at"`
 }
 
@@ -53,4 +57,18 @@ type CommentItem struct {
 
 type ListCommentsRespond struct {
 	List []CommentItem `json:"list"`
+}
+
+type FolderItem struct {
+	Uuid        string `json:"uuid"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	IsPublic    bool   `json:"is_public"`
+	PostCount   int    `json:"post_count"`
+	CoverUrl    string `json:"cover_url"`
+	CreatedAt   string `json:"created_at"`
+}
+
+type ListFoldersRespond struct {
+	List []FolderItem `json:"list"`
 }

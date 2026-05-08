@@ -150,9 +150,10 @@
                 <Icon v-else name="mdi:heart-outline" />
                 <span class="action-count">{{ likeCount }}</span>
               </span>
-              <span class="action-item">
-                <Icon name="i-line-md:star" />
-                <span class="action-count">{{ detail?.comment_count ?? 0 }}</span>
+              <span class="action-item" :class="{ 'collected': isCollected }" @click.stop="toggleCollect">
+                <Icon v-if="isCollected" name="mdi:bookmark" />
+                <Icon v-else name="mdi:bookmark-outline" />
+                <span class="action-count">{{ collectCount }}</span>
               </span>
               <span class="action-item">
                 <Icon name="mdi:chat-outline" />
@@ -192,6 +193,14 @@
       </div>
       </div>
     </Transition>
+
+    <!-- 收藏夹选择弹窗 -->
+    <CollectDialog
+      :visible="showCollectDialog"
+      :post-uuid="props.item?.id || ''"
+      @close="showCollectDialog = false"
+      @collected="handleCollected"
+    />
   </Teleport>
 </template>
 
@@ -205,7 +214,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['close', 'like-updated'])
+const emit = defineEmits(['close', 'like-updated', 'collect-updated'])
 
 const show = ref(false)
 const detail = ref(null)
@@ -213,6 +222,10 @@ const comments = shallowRef([])
 const currentIndex = ref(0)
 const isLiked = ref(false)
 const likeCount = ref(0)
+const isCollected = ref(false)
+const collectCount = ref(0)
+const collectedFolderUuid = ref('')
+const showCollectDialog = ref(false)
 const showCommentInput = ref(false)
 const commentText = ref('')
 const commentInputRef = ref(null)
@@ -257,10 +270,31 @@ const fetchDetail = async () => {
       currentIndex.value = 0
       isLiked.value = res.data.is_liked || false
       likeCount.value = res.data.like_count || 0
+      isCollected.value = res.data.is_collected || false
+      collectCount.value = res.data.collect_count || 0
+      // 如果已收藏，获取所在收藏夹 UUID
+      if (isCollected.value) {
+        checkCollectedFolder()
+      }
       fetchComments()
     }
   } catch (e) {
     console.error('获取帖子详情失败:', e)
+  }
+}
+
+const checkCollectedFolder = async () => {
+  if (!props.item?.id) return
+  try {
+    const res = await useApi$('/user/discover/check-collected', {
+      method: 'POST',
+      body: { post_uuid: props.item.id },
+    })
+    if (res.code === 200 && res.data?.is_collected) {
+      collectedFolderUuid.value = res.data.folder_uuid || ''
+    }
+  } catch (e) {
+    console.error('检查收藏状态失败:', e)
   }
 }
 
@@ -317,6 +351,50 @@ const toggleLike = async () => {
   } catch (e) {
     console.error('点赞失败:', e)
   }
+}
+
+const toggleCollect = () => {
+  if (!props.item?.id) return
+  if (isCollected.value) {
+    // 已收藏，直接取消收藏
+    handleUncollect()
+  } else {
+    // 未收藏，打开收藏夹选择弹窗
+    showCollectDialog.value = true
+  }
+}
+
+const handleUncollect = async () => {
+  if (!collectedFolderUuid.value) return
+  try {
+    const res = await useApi$('/user/discover/uncollect', {
+      method: 'POST',
+      body: { post_uuid: props.item.id, folder_uuid: collectedFolderUuid.value },
+    })
+    if (res.code === 200) {
+      isCollected.value = false
+      collectCount.value = res.data.collect_count
+      collectedFolderUuid.value = ''
+      emit('collect-updated', {
+        postId: props.item.id,
+        collectCount: collectCount.value,
+        isCollected: false,
+      })
+    }
+  } catch (e) {
+    console.error('取消收藏失败:', e)
+  }
+}
+
+const handleCollected = ({ collectCount: count, folderUuid }) => {
+  isCollected.value = true
+  collectCount.value = count
+  collectedFolderUuid.value = folderUuid
+  emit('collect-updated', {
+    postId: props.item.id,
+    collectCount: count,
+    isCollected: true,
+  })
 }
 
 // 评论点赞
@@ -915,6 +993,10 @@ const handleClose = () => {
 
 .action-item.liked {
   color: #ff2442;
+}
+
+.action-item.collected {
+  color: #ff9500;
 }
 
 .action-count {

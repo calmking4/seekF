@@ -17,6 +17,7 @@ type DiscoverPost struct {
 	Tags         json.RawMessage `gorm:"column:tags;type:json;comment:标签数组"`
 	LikeCount    int            `gorm:"column:like_count;not null;default:0;comment:点赞数"`
 	CommentCount int            `gorm:"column:comment_count;not null;default:0;comment:评论数"`
+	CollectCount int            `gorm:"column:collect_count;not null;default:0;comment:收藏数"`
 	Status       int8           `gorm:"column:status;not null;default:0;comment:状态，0.正常，1.下架"`
 	CreatedAt    time.Time      `gorm:"column:created_at;type:datetime;not null;comment:创建时间"`
 	UpdatedAt    time.Time      `gorm:"column:updated_at;type:datetime;not null;comment:更新时间"`

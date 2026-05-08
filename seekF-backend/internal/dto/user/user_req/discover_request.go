@@ -37,3 +37,46 @@ type ListCommentsRequest struct {
 type ToggleCommentLikeRequest struct {
 	CommentUuid string `json:"comment_uuid" form:"comment_uuid"`
 }
+
+type CreateFolderRequest struct {
+	Name        string `json:"name" form:"name"`
+	Description string `json:"description" form:"description"`
+	IsPublic    int8   `json:"is_public" form:"is_public"`
+}
+
+type UpdateFolderRequest struct {
+	Uuid        string `json:"uuid" form:"uuid"`
+	Name        string `json:"name" form:"name"`
+	Description string `json:"description" form:"description"`
+	IsPublic    int8   `json:"is_public" form:"is_public"`
+}
+
+type DeleteFolderRequest struct {
+	Uuid string `json:"uuid" form:"uuid"`
+}
+
+type GetFolderDetailRequest struct {
+	Uuid     string `json:"uuid" form:"uuid"`
+	Page     int    `json:"page" form:"page"`
+	PageSize int    `json:"page_size" form:"page_size"`
+}
+
+type CollectPostRequest struct {
+	PostUuid   string `json:"post_uuid" form:"post_uuid"`
+	FolderUuid string `json:"folder_uuid" form:"folder_uuid"`
+}
+
+type UncollectPostRequest struct {
+	PostUuid   string `json:"post_uuid" form:"post_uuid"`
+	FolderUuid string `json:"folder_uuid" form:"folder_uuid"`
+}
+
+type CheckCollectedRequest struct {
+	PostUuid string `json:"post_uuid" form:"post_uuid"`
+}
+
+type ListCollectedPostsRequest struct {
+	FolderUuid string `json:"folder_uuid" form:"folder_uuid"`
+	Page       int    `json:"page" form:"page"`
+	PageSize   int    `json:"page_size" form:"page_size"`
+}
