@@ -101,6 +101,7 @@ func SetupRouter(
 			// Discover
 			protectedGroup.POST("/discover/create", discoverController.CreatePost)
 			protectedGroup.POST("/discover/list", discoverController.ListPosts)
+			protectedGroup.POST("/discover/liked-list", discoverController.ListLikedPosts)
 			protectedGroup.POST("/discover/detail", discoverController.GetPostDetail)
 			protectedGroup.POST("/discover/like", discoverController.ToggleLike)
 			protectedGroup.POST("/discover/comment/add", discoverController.AddComment)

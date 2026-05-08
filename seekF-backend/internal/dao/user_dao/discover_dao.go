@@ -12,7 +12,9 @@ type DiscoverDAO interface {
 	CreatePost(post *models.DiscoverPost) error
 	FindPostByUuid(uuid string) (*models.DiscoverPost, error)
 	ListPosts(page, pageSize int) ([]models.DiscoverPost, error)
+	ListLikedPosts(userId string, page, pageSize int) ([]models.DiscoverPost, error)
 	CountPosts() (int64, error)
+	CountLikedPosts(userId string) (int64, error)
 	IncrementLikeCount(postId int64) error
 	DecrementLikeCount(postId int64) error
 	IncrementCommentCount(postId int64) error
@@ -58,9 +60,36 @@ func (d *DiscoverDAOImpl) ListPosts(page, pageSize int) ([]models.DiscoverPost, 
 	return posts, result.Error
 }
 
+func (d *DiscoverDAOImpl) ListLikedPosts(userId string, page, pageSize int) ([]models.DiscoverPost, error) {
+	var posts []models.DiscoverPost
+	offset := (page - 1) * pageSize
+	// 子查询：获取用户点赞的帖子 UUID
+	likedUuids := db.GormDB.Model(&models.DiscoverLike{}).
+		Where("user_id = ?", userId).
+		Select("target_uuid")
+	// 查询帖子
+	result := db.GormDB.Where("status = ? AND uuid IN (?)", 0, likedUuids).
+		Order("created_at DESC").
+		Offset(offset).Limit(pageSize).
+		Find(&posts)
+	return posts, result.Error
+}
+
 func (d *DiscoverDAOImpl) CountPosts() (int64, error) {
 	var count int64
 	result := db.GormDB.Model(&models.DiscoverPost{}).Where("status = ?", 0).Count(&count)
+	return count, result.Error
+}
+
+func (d *DiscoverDAOImpl) CountLikedPosts(userId string) (int64, error) {
+	var count int64
+	// 子查询：获取用户点赞的帖子 UUID
+	likedUuids := db.GormDB.Model(&models.DiscoverLike{}).
+		Where("user_id = ?", userId).
+		Select("target_uuid")
+	result := db.GormDB.Model(&models.DiscoverPost{}).
+		Where("status = ? AND uuid IN (?)", 0, likedUuids).
+		Count(&count)
 	return count, result.Error
 }
 

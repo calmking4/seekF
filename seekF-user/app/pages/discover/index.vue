@@ -96,7 +96,7 @@
     </div>
 
     <!-- 笔记详情弹窗 -->
-    <DiscoverCard
+    <DiscoverDetail
       v-if="selectedItem"
       :item="selectedItem"
       @close="selectedItem = null"

@@ -13,6 +13,7 @@ import (
 type DiscoverService interface {
 	CreatePost(ctx context.Context, userId, title, content string, mediaType int8, tags []string, urls []string) (*PostInfo, error)
 	ListPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error)
+	ListLikedPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error)
 	GetPostDetail(ctx context.Context, userId, uuid string) (*PostDetailInfo, error)
 	ToggleLike(ctx context.Context, userId, targetUuid string) (bool, int, error)
 	AddComment(ctx context.Context, userId, postUuid string, parentUuid, replyToUserId, content string) (*CommentInfo, error)
@@ -187,6 +188,58 @@ func (s *DiscoverServiceImpl) ListPosts(ctx context.Context, userId string, page
 			LikeCount:    post.LikeCount,
 			CommentCount: post.CommentCount,
 			IsLiked:      isLiked,
+			CreatedAt:    post.CreatedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	return result, total, nil
+}
+
+func (s *DiscoverServiceImpl) ListLikedPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error) {
+	posts, err := s.discoverDAO.ListLikedPosts(userId, page, pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	total, err := s.discoverDAO.CountLikedPosts(userId)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var result []PostInfo
+	for _, post := range posts {
+		mediaList, _ := s.discoverDAO.FindMediaByPostId(post.Id)
+		firstUrl := ""
+		if len(mediaList) > 0 {
+			firstUrl = mediaList[0].Url
+		}
+
+		var tags []string
+		if len(post.Tags) > 0 {
+			json.Unmarshal(post.Tags, &tags)
+		}
+
+		user, _ := s.userInfoDAO.FindUserByUuid(post.UserId)
+		nickname := ""
+		avatar := ""
+		if user != nil {
+			nickname = user.Nickname
+			avatar = user.Avatar
+		}
+
+		result = append(result, PostInfo{
+			Uuid:         post.Uuid,
+			UserId:       post.UserId,
+			Nickname:     nickname,
+			Avatar:       avatar,
+			Title:        post.Title,
+			Content:      post.Content,
+			MediaType:    post.MediaType,
+			Tags:         tags,
+			FirstUrl:     firstUrl,
+			LikeCount:    post.LikeCount,
+			CommentCount: post.CommentCount,
+			IsLiked:      true, // 点赞列表中的帖子都是已点赞的
 			CreatedAt:    post.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}

@@ -32,7 +32,7 @@
 
     <!-- 标签切换区 -->
     <div class="max-w-3xl mx-auto">
-      <el-tabs v-model="activeTab" class="w-full">
+      <el-tabs v-model="activeTab" class="w-full" @tab-change="handleTabChange">
         <!-- 收藏标签 -->
         <el-tab-pane label="收藏" name="collections">
           <div class="py-20 flex flex-col items-center justify-center text-gray-400">
@@ -45,11 +45,67 @@
 
         <!-- 点赞标签 -->
         <el-tab-pane label="点赞" name="likes">
-          <div class="py-20 flex flex-col items-center justify-center text-gray-400">
+          <div v-if="likedPosts.length === 0" class="py-20 flex flex-col items-center justify-center text-gray-400">
             <div class="w-20 h-20 rounded-full border border-gray-200 flex items-center justify-center mb-4 bg-gray-50">
               <Icon name="uil:heart" class="text-2xl" />
             </div>
             <p class="text-sm text-gray-500">暂无点赞内容</p>
+          </div>
+          <div v-else class="p-4">
+            <div class="grid grid-cols-4 gap-4">
+              <div
+                v-for="item in likedPosts"
+                :key="item.uuid"
+                class="liked-card bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                @click="handleLikedItemClick(item)"
+              >
+                <!-- 图片 -->
+                <div class="w-full h-48 bg-gray-100">
+                  <img
+                    v-if="item.first_url"
+                    :src="item.first_url"
+                    :alt="item.title"
+                    class="w-full h-full object-cover"
+                  />
+                  <div v-else class="w-full h-full flex items-center justify-center text-gray-400">
+                    <Icon name="uil:image" class="text-3xl" />
+                  </div>
+                </div>
+                <!-- 内容 -->
+                <div class="p-3">
+                  <h3 class="text-sm font-medium line-clamp-2 mb-2">{{ item.title }}</h3>
+                  <div class="flex items-center justify-between text-xs text-gray-500">
+                    <div class="flex items-center gap-2">
+                      <img
+                        v-if="item.avatar"
+                        :src="item.avatar"
+                        class="w-6 h-6 rounded-full object-cover"
+                      />
+                      <div
+                        v-else
+                        class="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs"
+                        :style="{ backgroundColor: getAvatarColor(item.uuid) }"
+                      >
+                        {{ item.title?.slice(0, 1) || '?' }}
+                      </div>
+                      <span>{{ item.nickname || '用户' }}</span>
+                    </div>
+                    <div class="flex items-center gap-1 text-red-500">
+                      <Icon name="mdi:heart" class="text-sm" />
+                      <span>{{ item.like_count }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- 加载更多 -->
+            <div v-if="likedLoading" class="py-8 flex justify-center items-center text-gray-500">
+              <Icon name="uil:spinner" class="animate-spin text-xl mr-2" />
+              <span>加载中...</span>
+            </div>
+            <div v-if="!likedLoading && likedNoMore && likedPosts.length > 0" class="py-8 text-center text-gray-400 text-sm">
+              没有更多内容了
+            </div>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -105,6 +161,14 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- 帖子详情弹窗 -->
+    <DiscoverDetail
+      v-if="selectedLikedItem"
+      :item="selectedLikedItem"
+      @close="selectedLikedItem = null"
+      @like-updated="handleLikedItemLikeUpdated"
+    />
   </div>
 </template>
 
@@ -115,9 +179,33 @@ import { ElMessage } from 'element-plus'
 import { useAuthState } from '~/composables/useAuthState'
 import { Plus } from '@element-plus/icons-vue'
 
-const activeTab = ref('notes')
+const activeTab = ref('likes')
 const editDialogVisible = ref(false)
 const updating = ref(false)
+
+// 点赞帖子相关
+const likedPosts = ref([])
+const likedLoading = ref(false)
+const likedNoMore = ref(false)
+const likedPage = ref(1)
+const likedPageSize = 12
+const selectedLikedItem = ref(null)
+
+// 头像颜色数组
+const avatarColors = [
+  '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
+  '#F7DC6F', '#BB8FCE', '#85C1E9', '#F8C471', '#82E0AA'
+]
+
+// 根据ID生成固定的头像颜色
+const getAvatarColor = (id) => {
+  const str = String(id ?? '')
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) >>> 0
+  }
+  return avatarColors[hash % avatarColors.length]
+}
 
 const userInfo = reactive({
   uuid: '',
@@ -170,6 +258,62 @@ const loadUserInfo = async () => {
     }
   } catch (err) {
     console.error('获取用户信息时发生错误:', err)
+  }
+}
+
+// 加载点赞帖子列表
+const loadLikedPosts = async () => {
+  if (likedLoading.value || likedNoMore.value) return
+  likedLoading.value = true
+  try {
+    const res = await useApi$('/user/discover/liked-list', {
+      method: 'POST',
+      body: { page: likedPage.value, page_size: likedPageSize }
+    })
+    if (res.code === 200 && res.data) {
+      const list = res.data.list || []
+      if (list.length < likedPageSize) {
+        likedNoMore.value = true
+      }
+      likedPosts.value = [...likedPosts.value, ...list]
+      likedPage.value++
+    }
+  } catch (e) {
+    console.error('加载点赞列表失败:', e)
+  } finally {
+    likedLoading.value = false
+  }
+}
+
+// 点击点赞帖子卡片
+const handleLikedItemClick = (item) => {
+  selectedLikedItem.value = {
+    ...item,
+    id: item.uuid,
+    src: item.first_url,
+    type: item.media_type === 1 ? 'video' : 'image',
+  }
+}
+
+// 处理点赞状态更新（从详情弹窗返回）
+const handleLikedItemLikeUpdated = ({ isLiked, likeCount }) => {
+  if (!isLiked) {
+    // 取消点赞，从列表中移除
+    likedPosts.value = likedPosts.value.filter(p => p.uuid !== selectedLikedItem.value?.uuid)
+  } else if (selectedLikedItem.value) {
+    // 更新点赞数
+    const idx = likedPosts.value.findIndex(p => p.uuid === selectedLikedItem.value.uuid)
+    if (idx !== -1) {
+      likedPosts.value[idx] = { ...likedPosts.value[idx], like_count: likeCount }
+      likedPosts.value = [...likedPosts.value]
+    }
+  }
+}
+
+// 标签切换处理
+const handleTabChange = (tab) => {
+  if (tab === 'likes' && likedPosts.value.length === 0) {
+    loadLikedPosts()
   }
 }
 
@@ -259,6 +403,7 @@ const confirmEdit = async () => {
 
 onMounted(() => {
   loadUserInfo()
+  loadLikedPosts()
 })
 </script>
 

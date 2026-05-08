@@ -111,6 +111,57 @@ func (c *DiscoverController) ListPosts(ctx *gin.Context) {
 	})
 }
 
+// ListLikedPosts 获取用户点赞的帖子列表
+func (c *DiscoverController) ListLikedPosts(ctx *gin.Context) {
+	userId := ctx.GetString("Uuid")
+	if userId == "" {
+		resp.Error(ctx, "获取用户信息失败", http.StatusBadRequest)
+		return
+	}
+
+	var req userreq.ListPostsRequest
+	if err := ctx.ShouldBind(&req); err != nil {
+		resp.Error(ctx, "参数错误", http.StatusBadRequest)
+		return
+	}
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+	if req.PageSize <= 0 || req.PageSize > 20 {
+		req.PageSize = 12
+	}
+
+	posts, total, err := c.discoverService.ListLikedPosts(ctx.Request.Context(), userId, req.Page, req.PageSize)
+	if err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var items []userresp.PostItem
+	for _, p := range posts {
+		items = append(items, userresp.PostItem{
+			Uuid:         p.Uuid,
+			UserId:       p.UserId,
+			Nickname:     p.Nickname,
+			Avatar:       p.Avatar,
+			Title:        p.Title,
+			Content:      p.Content,
+			MediaType:    p.MediaType,
+			Tags:         p.Tags,
+			FirstUrl:     p.FirstUrl,
+			LikeCount:    p.LikeCount,
+			CommentCount: p.CommentCount,
+			IsLiked:      p.IsLiked,
+			CreatedAt:    p.CreatedAt,
+		})
+	}
+
+	resp.Success(ctx, "获取成功", userresp.ListPostsRespond{
+		List:  items,
+		Total: total,
+	})
+}
+
 // GetPostDetail 获取帖子详情
 func (c *DiscoverController) GetPostDetail(ctx *gin.Context) {
 	userId := ctx.GetString("Uuid")
