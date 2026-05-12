@@ -13,11 +13,13 @@ var Ctx = context.Background()
 
 // KafkaService Kafka服务（全局单例）
 type KafkaService struct {
-	ChatWriter   *kafka.Writer
-	ChatReader   *kafka.Reader
-	AIChatWriter *kafka.Writer
-	AIChatReader *kafka.Reader
-	KafkaConn    *kafka.Conn
+	ChatWriter      *kafka.Writer
+	ChatReader      *kafka.Reader
+	AIChatWriter    *kafka.Writer
+	AIChatReader    *kafka.Reader
+	AICommentWriter *kafka.Writer
+	AICommentReader *kafka.Reader
+	KafkaConn       *kafka.Conn
 }
 
 var KafkaServiceInstance = new(KafkaService)
@@ -61,6 +63,23 @@ func (k *KafkaService) Init() {
 		StartOffset:    kafka.LastOffset,
 	})
 
+	// AI评论回复 Writer/Reader
+	k.AICommentWriter = &kafka.Writer{
+		Addr:                   kafka.TCP(kafkaConfig.HostPort),
+		Topic:                  kafkaConfig.AICommentTopic,
+		Balancer:               &kafka.Hash{},
+		WriteTimeout:           kafkaConfig.Timeout * time.Second,
+		RequiredAcks:           kafka.RequireNone,
+		AllowAutoTopicCreation: false,
+	}
+	k.AICommentReader = kafka.NewReader(kafka.ReaderConfig{
+		Brokers:        []string{kafkaConfig.HostPort},
+		Topic:          kafkaConfig.AICommentTopic,
+		CommitInterval: kafkaConfig.Timeout * time.Second,
+		GroupID:        "ai_comment",
+		StartOffset:    kafka.LastOffset,
+	})
+
 	zlog.Info("Kafka service initialized, chat topic: " + kafkaConfig.ChatTopic + ", ai chat topic: " + kafkaConfig.AIChatTopic)
 }
 
@@ -79,6 +98,16 @@ func (k *KafkaService) Close() {
 	}
 	if k.AIChatReader != nil {
 		if err := k.AIChatReader.Close(); err != nil {
+			zlog.Error(err.Error())
+		}
+	}
+	if k.AICommentWriter != nil {
+		if err := k.AICommentWriter.Close(); err != nil {
+			zlog.Error(err.Error())
+		}
+	}
+	if k.AICommentReader != nil {
+		if err := k.AICommentReader.Close(); err != nil {
 			zlog.Error(err.Error())
 		}
 	}
@@ -103,6 +132,11 @@ func (k *KafkaService) CreateTopic() {
 		},
 		{
 			Topic:             kafkaConfig.AIChatTopic,
+			NumPartitions:     kafkaConfig.Partition,
+			ReplicationFactor: 1,
+		},
+		{
+			Topic:             kafkaConfig.AICommentTopic,
 			NumPartitions:     kafkaConfig.Partition,
 			ReplicationFactor: 1,
 		},

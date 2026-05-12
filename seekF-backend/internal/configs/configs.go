@@ -54,7 +54,8 @@ type KafkaConfig struct {
 	HostPort    string        `toml:"hostPort"`
 	LoginTopic  string        `toml:"loginTopic"`
 	ChatTopic   string        `toml:"chatTopic"`
-	AIChatTopic string        `toml:"aiChatTopic"`
+	AIChatTopic    string        `toml:"aiChatTopic"`
+	AICommentTopic string        `toml:"aiCommentTopic"`
 	LogoutTopic string        `toml:"logoutTopic"`
 	Partition   int           `toml:"partition"`
 	Timeout     time.Duration `toml:"timeout"`

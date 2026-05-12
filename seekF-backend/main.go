@@ -63,7 +63,11 @@ func main() {
 	ai.GetModelPool()
 
 	// 启动AI消息Kafka消费者
-	go ai.StartAIConsumer()
+	ai.StartAIConsumer()
+
+	// 初始化并启动AI评论回复Kafka消费者
+	ai.InitAICommentConsumer(discoverDAO, userInfoDAO)
+	ai.StartAICommentConsumer()
 
 	// 初始化Qdrant
 	db.InitQdrant()

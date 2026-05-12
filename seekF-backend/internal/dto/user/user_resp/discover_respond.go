@@ -59,6 +59,10 @@ type ListCommentsRespond struct {
 	List []CommentItem `json:"list"`
 }
 
+type AICommentRespond struct {
+	UserComment CommentItem `json:"user_comment"`
+}
+
 type FolderItem struct {
 	Uuid        string `json:"uuid"`
 	Name        string `json:"name"`

@@ -178,14 +178,23 @@
                 rows="3"
               ></textarea>
               <div class="comment-btn-group">
-                <button class="cancel-btn" @click="closeCommentInput">取消</button>
                 <button
-                  class="send-btn"
-                  :disabled="!commentText.trim()"
-                  @click="submitComment"
+                  class="ai-assist-btn"
+                  :class="{ 'active': isAIComment }"
+                  @click="toggleAIComment"
                 >
-                  发送
+                  <Icon name="mdi:robot-outline" /> @AI助手
                 </button>
+                <div class="comment-btn-right">
+                  <button class="cancel-btn" @click="closeCommentInput">取消</button>
+                  <button
+                    class="send-btn"
+                    :disabled="!commentText.trim()"
+                    @click="submitComment"
+                  >
+                    发送
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -230,6 +239,8 @@ const showCommentInput = ref(false)
 const commentText = ref('')
 const commentInputRef = ref(null)
 const replyTarget = ref(null) // { uuid, nickname, parentUuid }
+const isAIComment = ref(false)
+const AI_PREFIX = '@AI助手 '
 
 /** 左侧栏宽度（px），取首张图在当前 flex 布局下 contain 后的 offsetWidth，切换幻灯片不变 */
 const lockedWidthPx = ref(null)
@@ -448,6 +459,7 @@ const closeCommentInput = () => {
   showCommentInput.value = false
   commentText.value = ''
   replyTarget.value = null
+  isAIComment.value = false
 }
 
 const startReply = (comment, parentComment) => {
@@ -458,6 +470,7 @@ const startReply = (comment, parentComment) => {
     uuid: comment.uuid,
     userId: comment.user_id,
     nickname: comment.nickname,
+    content: comment.content,
     parentUuid: topLevelUuid,
     isReplyToTopLevel: !parentComment,
   }
@@ -470,10 +483,18 @@ const cancelReply = () => {
 
 const submitComment = async () => {
   if (!commentText.value.trim() || !props.item?.id) return
+
+  // 检测@AI助手评论
+  const trimmedText = commentText.value.trim()
+  if (trimmedText.startsWith('@AI助手') || isAIComment.value) {
+    await submitAIComment(trimmedText)
+    return
+  }
+
   try {
     const body = {
       post_uuid: props.item.id,
-      content: commentText.value.trim(),
+      content: trimmedText,
     }
     // 如果是回复评论
     if (replyTarget.value) {
@@ -504,6 +525,65 @@ const submitComment = async () => {
   } catch (e) {
     console.error('评论失败:', e)
     ElMessage.error('评论失败')
+  }
+}
+
+const toggleAIComment = () => {
+  if (isAIComment.value) {
+    isAIComment.value = false
+    if (commentText.value.startsWith(AI_PREFIX)) {
+      commentText.value = commentText.value.slice(AI_PREFIX.length)
+    }
+  } else {
+    isAIComment.value = true
+    if (!commentText.value.startsWith(AI_PREFIX)) {
+      commentText.value = AI_PREFIX + commentText.value
+    }
+    nextTick(() => commentInputRef.value?.focus())
+  }
+}
+
+const submitAIComment = async (fullText) => {
+  let question = fullText
+  if (question.startsWith(AI_PREFIX.trim())) {
+    question = question.slice(AI_PREFIX.trim().length).trim()
+  }
+  if (!question) {
+    ElMessage.warning('请输入你的问题')
+    return
+  }
+
+  try {
+    const body = {
+      post_uuid: props.item.id,
+      content: fullText,       // 完整内容（含@AI助手前缀），存数据库
+      ai_question: question,   // 去掉前缀的问题，给AI处理
+    }
+    if (replyTarget.value) {
+      body.parent_id = replyTarget.value.parentUuid
+      if (!replyTarget.value.isReplyToTopLevel) {
+        body.reply_to_user_id = replyTarget.value.userId
+      }
+      body.reply_to_content = replyTarget.value.content || ''
+    }
+
+    const res = await useApi$('/user/discover/comment/ai', { body })
+    if (res.code === 200) {
+      commentText.value = ''
+      showCommentInput.value = false
+      replyTarget.value = null
+      isAIComment.value = false
+      await fetchComments()
+      if (detail.value) {
+        detail.value.comment_count = (detail.value.comment_count || 0) + 1
+      }
+      ElMessage.success('评论已发送，AI助手稍后回复')
+    } else {
+      ElMessage.error(res.message || '评论失败')
+    }
+  } catch (e) {
+    console.error('AI评论失败:', e)
+    ElMessage.error('评论失败，请稍后重试')
   }
 }
 
@@ -922,8 +1002,38 @@ const handleClose = () => {
 
 .comment-btn-group {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 8px;
+}
+
+.comment-btn-right {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-assist-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #f0f7ff;
+  color: #60a5fa;
+  border: 1px solid #bfdbfe;
+  border-radius: 20px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ai-assist-btn:hover {
+  background: #dbeafe;
+}
+
+.ai-assist-btn.active {
+  background: #60a5fa;
+  color: #fff;
+  border-color: #60a5fa;
 }
 
 .cancel-btn {

@@ -38,6 +38,15 @@ type ToggleCommentLikeRequest struct {
 	CommentUuid string `json:"comment_uuid" form:"comment_uuid"`
 }
 
+type AICommentRequest struct {
+	PostUuid       string `json:"post_uuid" binding:"required"`
+	Content        string `json:"content" binding:"required"` // 完整内容（含@AI助手前缀），存数据库
+	AIQuestion     string `json:"ai_question"`                // 去掉前缀的问题，给AI处理
+	ParentUuid     string `json:"parent_id"`
+	ReplyToUserId  string `json:"reply_to_user_id"`
+	ReplyToContent string `json:"reply_to_content"` // 被回复评论的内容，加入AI上下文
+}
+
 type CreateFolderRequest struct {
 	Name        string `json:"name" form:"name"`
 	Description string `json:"description" form:"description"`

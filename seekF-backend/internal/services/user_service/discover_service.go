@@ -7,6 +7,7 @@ import (
 
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
+	aipkg "seekF-backend/internal/pkg/ai"
 	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/util"
 )
@@ -20,6 +21,7 @@ type DiscoverService interface {
 	AddComment(ctx context.Context, userId, postUuid string, parentUuid, replyToUserId, content string) (*CommentInfo, error)
 	ListComments(ctx context.Context, userId, postUuid string, page, pageSize int) ([]CommentInfo, error)
 	ToggleCommentLike(ctx context.Context, userId, commentUuid string) (bool, int, error)
+	AddAIComment(ctx context.Context, userId, postUuid, content, aiQuestion, parentUuid, replyToUserId, replyToContent string) (*CommentInfo, error)
 
 	// 收藏夹
 	CreateFolder(ctx context.Context, userId, name, description string, isPublic int8) (*FolderInfo, error)
@@ -534,6 +536,36 @@ func (s *DiscoverServiceImpl) ToggleCommentLike(ctx context.Context, userId, com
 		}
 	}
 	return true, 0, nil
+}
+
+func (s *DiscoverServiceImpl) AddAIComment(ctx context.Context, userId, postUuid, content, aiQuestion, parentUuid, replyToUserId, replyToContent string) (*CommentInfo, error) {
+	// 1. 保存用户评论（完整内容含@AI助手前缀）
+	userComment, err := s.AddComment(ctx, userId, postUuid, parentUuid, replyToUserId, content)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. 确定AI评论的父级和回复目标
+	aiParentUuid := parentUuid
+	aiReplyToUserId := ""
+	if aiParentUuid == "" {
+		// 用户发的是顶级评论，AI回复嵌套在用户评论下，不显示"回复 XXX:"
+		aiParentUuid = userComment.Uuid
+	} else {
+		// 用户回复别人时@AI，AI回复显示"回复 [用户昵称]:"
+		aiReplyToUserId = userId
+	}
+
+	// 3. 发送Kafka任务
+	aipkg.SendAICommentTask(aipkg.AICommentPayload{
+		PostUuid:       postUuid,
+		Content:        aiQuestion,
+		ParentUuid:     aiParentUuid,
+		ReplyToUserId:  aiReplyToUserId,
+		ReplyToContent: replyToContent,
+	})
+
+	return userComment, nil
 }
 
 // ========== 收藏夹 ==========

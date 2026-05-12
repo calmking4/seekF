@@ -278,6 +278,40 @@ func (c *DiscoverController) AddComment(ctx *gin.Context) {
 	})
 }
 
+// AddAIComment 添加@AI助手评论（异步，AI稍后回复）
+func (c *DiscoverController) AddAIComment(ctx *gin.Context) {
+	userId := ctx.GetString("Uuid")
+	if userId == "" {
+		resp.Error(ctx, "获取用户信息失败", http.StatusBadRequest)
+		return
+	}
+
+	var req userreq.AICommentRequest
+	if err := ctx.ShouldBind(&req); err != nil {
+		resp.Error(ctx, "参数错误", http.StatusBadRequest)
+		return
+	}
+
+	comment, err := c.discoverService.AddAIComment(ctx.Request.Context(), userId, req.PostUuid, req.Content, req.AIQuestion, req.ParentUuid, req.ReplyToUserId, req.ReplyToContent)
+	if err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "评论已发送，AI助手稍后回复", userresp.CommentItem{
+		Uuid:            comment.Uuid,
+		UserId:          comment.UserId,
+		Nickname:        comment.Nickname,
+		Avatar:          comment.Avatar,
+		ParentId:        comment.ParentId,
+		ReplyToUserId:   comment.ReplyToUserId,
+		ReplyToNickname: comment.ReplyToNickname,
+		Content:         comment.Content,
+		LikeCount:       comment.LikeCount,
+		CreatedAt:       comment.CreatedAt,
+	})
+}
+
 // ListComments 获取评论列表
 func (c *DiscoverController) ListComments(ctx *gin.Context) {
 	userId := ctx.GetString("Uuid")

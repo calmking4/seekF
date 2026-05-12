@@ -107,6 +107,7 @@ func SetupRouter(
 			protectedGroup.POST("/discover/comment/add", discoverController.AddComment)
 			protectedGroup.POST("/discover/comment/list", discoverController.ListComments)
 			protectedGroup.POST("/discover/comment/like", discoverController.ToggleCommentLike)
+			protectedGroup.POST("/discover/comment/ai", discoverController.AddAIComment)
 			// 收藏夹
 			protectedGroup.POST("/discover/folder/create", discoverController.CreateFolder)
 			protectedGroup.POST("/discover/folder/update", discoverController.UpdateFolder)
