@@ -1,0 +1,86 @@
+[mainConfig]
+appName = "seekF"
+host = "0.0.0.0"
+port = 8000
+
+[authConfig]
+# mode: "redis"(默认，不透明token+redis会话) 或 "jwt"(JWT+Redis校验)
+mode = "redis"
+# 会话过期时间（分钟）。不填/<=0 时，将回退使用 jwtConfig.expireMinutes
+sessionExpireMinutes = 1440
+
+[jwtConfig]
+secret = ""
+expireMinutes = 1440
+issuer = "seekF-backend"
+
+[mysqlConfig]
+host = "127.0.0.1"
+port = 3306
+user = "root"
+password = ""
+databaseName = "seekf"
+
+[redisConfig]
+host = "127.0.0.1"
+port = 6379
+password = ""
+db = 0
+
+[authCodeConfig]
+accessKeyID = ""
+accessKeySecret = ""
+signName = "阿里云短信测试"
+templateCode = "SMS_154950909"
+
+[ossConfig]
+accessKeyID = ""
+accessKeySecret = ""
+region = "cn-shenzhen"
+bucket = "seekf"
+baseURL = "https://seekf.oss-cn-shenzhen.aliyuncs.com"
+
+[logConfig]
+logPath = "./logs/app.log"
+
+[kafkaConfig]
+hostPort = "127.0.0.1:9092" # "127.0.0.1:9092,127.0.0.1:9093,127.0.0.1:9094" 多个kafka服务器
+loginTopic = "login"
+chatTopic = "chat_message"
+aiChatTopic = "ai_chat_message"
+aiCommentTopic = "ai_comment_reply"
+logoutTopic = "logout"
+partition = 0 # kafka partition
+timeout = 1 # 单位秒
+
+[staticSrcConfig]
+staticAvatarPath = "./static/avatars"
+staticFilePath = "./static/files"
+
+[aiModelConfig]
+deepseekApiKey = ""
+deepseekModel = ""
+deepseekBaseUrl = ""
+qwenApiKey = ""
+qwenModel = ""
+qwenBaseUrl = ""
+glmApiKey = ""
+glmModel = ""
+glmBaseUrl = ""
+glm4vModel = ""
+glmEmbeddingModel = ""
+ttsModel = "glm-tts"
+ttsVoice = "chuichui"
+
+[qdrantConfig]
+host = "localhost"
+port = 6334
+
+[seniverseConfig]
+apiKey = ""
+
+[exchangeRateConfig]
+apiKey = ""
+
+[tavilyConfig]
+apiKey = ""
