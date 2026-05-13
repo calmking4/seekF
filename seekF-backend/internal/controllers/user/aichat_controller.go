@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	userreq "seekF-backend/internal/dto/user/user_req"
@@ -154,6 +155,27 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 		fmt.Fprintf(ctx.Writer, "data: {\"error\": \"%s\"}\n\n", err.Error())
 		ctx.Writer.Flush()
 	}
+}
+
+func (c *AIChatController) TextToSpeech(ctx *gin.Context) {
+	var req userreq.TTSRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "参数错误", http.StatusBadRequest)
+		return
+	}
+
+	wavData, err := c.aiChatService.TextToSpeech(ctx.Request.Context(), req.Content, req.Voice)
+	if err != nil {
+		zlog.Error("TTS synthesize failed: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	ctx.Header("Content-Type", "audio/wav")
+	ctx.Header("Content-Length", strconv.Itoa(len(wavData)))
+	ctx.Status(http.StatusOK)
+	ctx.Writer.Write(wavData)
 }
 
 func (c *AIChatController) DeleteSession(ctx *gin.Context) {

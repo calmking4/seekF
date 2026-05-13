@@ -78,6 +78,8 @@ type AIModelConfig struct {
 	GlmBaseUrl        string `toml:"glmBaseUrl"`
 	Glm4vModel        string `toml:"glm4vModel"`
 	GlmEmbeddingModel string `toml:"glmEmbeddingModel"`
+	TTSModel          string `toml:"ttsModel"`
+	TTSVoice          string `toml:"ttsVoice"`
 }
 
 type QdrantConfig struct {
@@ -196,6 +198,12 @@ func loadEnvConfig(cfg *Config) {
 	}
 	if v := os.Getenv("GLM_EMBEDDING_MODEL"); v != "" {
 		cfg.AIModelConfig.GlmEmbeddingModel = v
+	}
+	if v := os.Getenv("TTS_MODEL"); v != "" {
+		cfg.AIModelConfig.TTSModel = v
+	}
+	if v := os.Getenv("TTS_VOICE"); v != "" {
+		cfg.AIModelConfig.TTSVoice = v
 	}
 
 	// Seniverse Configuration

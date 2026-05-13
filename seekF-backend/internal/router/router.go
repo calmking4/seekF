@@ -93,6 +93,7 @@ func SetupRouter(
 			protectedGroup.POST("/aichat/getMessageHistory", aichatController.GetMessageHistory)
 			protectedGroup.POST("/aichat/sendMessage", aichatController.SendMessage)
 			protectedGroup.POST("/aichat/deleteSession", aichatController.DeleteSession)
+			protectedGroup.POST("/aichat/tts", aichatController.TextToSpeech)
 			// Knowledge Base
 			protectedGroup.POST("/knowledge/add", knowledgeController.AddDocument)
 			protectedGroup.POST("/knowledge/list", knowledgeController.ListDocuments)

@@ -17,6 +17,7 @@ import (
 	mcppkg "seekF-backend/internal/pkg/ai/mcp"
 	toolpkg "seekF-backend/internal/pkg/ai/mcp/tool"
 	"seekF-backend/internal/pkg/ai/rag"
+	"seekF-backend/internal/pkg/ai/tts"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 
@@ -38,6 +39,8 @@ type AIChatService interface {
 	SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onComplete func(fullContent string) error) error
 	// DeleteSession 删除AI会话
 	DeleteSession(sessionId string) error
+	// TextToSpeech 文本转语音，返回 WAV 音频数据
+	TextToSpeech(ctx context.Context, content string, voice string) ([]byte, error)
 }
 
 // AIChatServiceImpl AI聊天服务实现
@@ -565,6 +568,11 @@ func stripSourcesSentinel(text string) string {
 		return text
 	}
 	return strings.TrimSpace(text[:idx])
+}
+
+// TextToSpeech 文本转语音
+func (s *AIChatServiceImpl) TextToSpeech(ctx context.Context, content string, voice string) ([]byte, error) {
+	return tts.Synthesize(ctx, content, voice)
 }
 
 // DeleteSession 删除AI会话及其所有消息

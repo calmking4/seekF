@@ -151,7 +151,15 @@
                                     </p>
                                     <!-- 搜索来源 -->
                                     <SearchSources v-if="!msg.isSelf && msg.sources && msg.sources.length > 0" :sources="msg.sources" />
-                                    <p class="text-xs text-gray-400 text-right mt-1">{{ msg.sendTime }}</p>
+                                    <div class="flex items-center justify-end gap-1 mt-1">
+                                        <TTSButton
+                                            v-if="!msg.isSelf && !msg.isStreaming && msg.content"
+                                            :playing="tts.isMessagePlaying(msg.messageId)"
+                                            :loading="tts.isMessageLoading(msg.messageId)"
+                                            @speak="tts.speak(msg.content, msg.messageId)"
+                                        />
+                                        <span class="text-xs text-gray-400">{{ msg.sendTime }}</span>
+                                    </div>
                                 </div>
 
                                 <!-- 用户消息：头像在右 -->
@@ -218,6 +226,7 @@
 <script setup>
 const aiChat = useAIChat()
 const knowledge = useKnowledge()
+const tts = useTTS()
 const aiAvatarUrl = 'https://seekf.oss-cn-shenzhen.aliyuncs.com/common/ai_avatar/AI%E5%8A%A9%E6%89%8B%E5%A4%B4%E5%83%8F.png'
 
 const currentUserAvatar = ref('')
