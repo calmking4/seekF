@@ -136,11 +136,13 @@
                                         <img :src="msg.url" class="max-w-full rounded cursor-pointer mb-1" @click="previewImage(msg.url)" />
                                     </div>
                                     <!-- AI 思考中动画 -->
-                                    <div v-if="!msg.isSelf && msg.isStreaming && !msg.content" class="flex items-center gap-1 py-1">
-                                        <span class="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 0s"></span>
-                                        <span class="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 0.15s"></span>
-                                        <span class="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 0.3s"></span>
-                                        <span class="text-xs text-gray-400 ml-1">正在思考...</span>
+                                    <div v-if="!msg.isSelf && msg.isStreaming && !msg.content" class="flex items-center gap-3 py-1.5 px-1">
+                                        <div class="flex items-center gap-1">
+                                            <span class="thinking-dot w-2 h-2 rounded-full bg-blue-400" style="animation-delay: 0s"></span>
+                                            <span class="thinking-dot w-2 h-2 rounded-full bg-blue-400" style="animation-delay: 0.2s"></span>
+                                            <span class="thinking-dot w-2 h-2 rounded-full bg-blue-400" style="animation-delay: 0.4s"></span>
+                                        </div>
+                                        <span class="text-xs text-blue-400 thinking-text">正在思考</span>
                                     </div>
                                     <!-- 文本消息 -->
                                     <p v-if="msg.content && msg.content !== '图片'" class="text-sm whitespace-pre-wrap">
@@ -576,5 +578,33 @@ onUnmounted(() => {
 }
 ::-webkit-scrollbar-track {
     background: transparent;
+}
+
+.thinking-dot {
+    animation: thinking-bounce 1.4s ease-in-out infinite;
+}
+
+@keyframes thinking-bounce {
+    0%, 80%, 100% {
+        transform: scale(0.6);
+        opacity: 0.4;
+    }
+    40% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.thinking-text {
+    animation: thinking-fade 1.4s ease-in-out infinite;
+}
+
+@keyframes thinking-fade {
+    0%, 100% {
+        opacity: 0.4;
+    }
+    50% {
+        opacity: 1;
+    }
 }
 </style>
