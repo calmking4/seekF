@@ -7,5 +7,6 @@ type GetAIMessageHistoryRespond struct {
 	Content   string `json:"content"`
 	Type      int8   `json:"type"`
 	Url       string `json:"url"`
+	Sources   string `json:"sources,omitempty"`
 	CreatedAt string `json:"created_at"`
 }

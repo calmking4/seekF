@@ -146,6 +146,7 @@ func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, page int, pageSi
 			Content:   msg.Content,
 			Type:      msg.Type,
 			Url:       msg.Url,
+			Sources:   msg.Sources,
 			CreatedAt: msg.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
@@ -328,7 +329,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 				zlog.Error("send sources to client failed: " + err.Error())
 			}
 		}
-		return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, onChunk, onComplete)
+		return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, sources, onChunk, onComplete)
 	}
 
 	finalContent, err = streamChatModelToSSE(ctx, chatModel, chatMessages, onChunk)
@@ -337,16 +338,33 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		return fmt.Errorf("AI响应失败")
 	}
 
-	return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, onChunk, onComplete)
+	return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, nil, onChunk, onComplete)
 }
 
 // persistAndCompleteAIMessage 负责将最终回复兜底、持久化，并触发完成回调。
 func (s *AIChatServiceImpl) persistAndCompleteAIMessage(req userreq.SendAIMessageRequest, userId string, userMessage *models.Message, finalContent string,
-	onChunk func(chunk string) error, onComplete func(fullContent string) error) error {
+	sources []toolpkg.SearchSource, onChunk func(chunk string) error, onComplete func(fullContent string) error) error {
 	if finalContent == "" {
 		finalContent = "抱歉，我暂时无法回答这个问题。"
 		if err := onChunk(finalContent); err != nil {
 			zlog.Error("send final chunk failed: " + err.Error())
+		}
+	}
+
+	// 序列化搜索来源数据（只保留标题和URL）
+	var sourcesJSON string
+	if len(sources) > 0 {
+		type sourceLite struct {
+			Title string `json:"title"`
+			URL   string `json:"url"`
+		}
+		lite := make([]sourceLite, 0, len(sources))
+		for _, s := range sources {
+			lite = append(lite, sourceLite{Title: s.Title, URL: s.URL})
+		}
+		b, err := json.Marshal(lite)
+		if err == nil {
+			sourcesJSON = string(b)
 		}
 	}
 
@@ -358,6 +376,7 @@ func (s *AIChatServiceImpl) persistAndCompleteAIMessage(req userreq.SendAIMessag
 		ReceiveId: userId,
 		Content:   finalContent,
 		ModelType: req.ModelType,
+		Sources:   sourcesJSON,
 	})
 
 	s.sessionDAO.UpdateSessionLastMessage(req.SessionId, finalContent, userMessage.CreatedAt)

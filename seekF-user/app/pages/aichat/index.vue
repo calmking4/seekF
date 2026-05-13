@@ -363,7 +363,8 @@ const loadMessageList = async (sessionId, page = 1) => {
             sendTime: msg.created_at,
             isSelf: msg.send_id && !msg.send_id.startsWith('A'),
             type: msg.type,
-            url: msg.url || ''
+            url: msg.url || '',
+            sources: msg.sources ? JSON.parse(msg.sources) : []
         }))
 
         if (page === 1) {
