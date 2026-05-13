@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	userdao "seekF-backend/internal/dao/user_dao"
 	userreq "seekF-backend/internal/dto/user/user_req"
@@ -14,6 +15,7 @@ import (
 	"seekF-backend/internal/models"
 	aipkg "seekF-backend/internal/pkg/ai"
 	mcppkg "seekF-backend/internal/pkg/ai/mcp"
+	toolpkg "seekF-backend/internal/pkg/ai/mcp/tool"
 	"seekF-backend/internal/pkg/ai/rag"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
@@ -33,7 +35,7 @@ type AIChatService interface {
 	// GetMessageHistory 分页获取AI消息历史
 	GetMessageHistory(sessionId string, page int, pageSize int) ([]userresp.GetAIMessageHistoryRespond, int64, error)
 	// SendMessageStream 流式发送消息，通过SSE推送实时响应
-	SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onComplete func(fullContent string) error) error
+	SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onComplete func(fullContent string) error) error
 	// DeleteSession 删除AI会话
 	DeleteSession(sessionId string) error
 }
@@ -155,7 +157,7 @@ func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, page int, pageSi
 // 1. 校验会话 → 2. 保存用户消息到DB → 3. 从DB读取历史构建上下文
 // 4. 调用模型单例获取流式响应 → 5. 通过onChunk回调推送SSE
 // 6. 完整响应保存到DB（失败则走Kafka异步持久化）
-func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onComplete func(fullContent string) error) error {
+func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onComplete func(fullContent string) error) error {
 	// 校验AI会话是否存在
 	session, err := s.sessionDAO.GetAISessionByUuid(req.SessionId)
 	if err != nil {
@@ -227,7 +229,16 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 
 	// 将DB消息转换为eino消息格式，添加系统提示，构建上下文
 	var chatMessages []*schema.Message
-	systemPrompt := "你是一个专业的AI助手，当前使用的模型是" + req.ModelType + "。请根据这个身份回答用户的问题。"
+	currentTime := time.Now().Format("2006-01-02 15:04:05")
+	systemPrompt := "你是一个专业的AI助手，当前使用的模型是" + req.ModelType + "。当前时间是" + currentTime + "。请根据这个身份回答用户的问题。"
+	if req.UseWebSearch {
+		systemPrompt += "\n\n你拥有联网搜索能力（web_search 工具）。当用户询问以下类型的问题时，你必须优先使用 web_search 工具搜索最新信息，而不是凭训练数据回答：\n" +
+			"1. 今天的新闻、最近的事件、时事热点\n" +
+			"2. 需要最新数据的问题（如股价、比分、天气）\n" +
+			"3. 你训练数据中可能没有的最新信息\n" +
+			"4. 用户明确要求搜索或联网查询的问题\n" +
+			"重要：不要猜测或编造信息，如果问题涉及实时信息，请务必先搜索再回答。"
+	}
 
 	// 如果启用知识库，搜索相关知识
 	if req.UseKnowledge {
@@ -305,12 +316,18 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 
 	// MCP Agent：默认先走第 1 次 Generate（工具决策，非流式）→ 执行 MCP → 第 2 次 Stream（无工具绑定）
 	// 若 MCP 工具不可用/初始化失败，则回退为普通单轮流式。
-	finalContent, handled, err := runMCPAgentFlow(ctx, chatModel, chatMessages, onChunk)
+	finalContent, handled, sources, err := runMCPAgentFlow(ctx, chatModel, chatMessages, onChunk, req.UseWebSearch)
 	if err != nil {
 		zlog.Error("MCP agent flow failed: " + err.Error())
 		return fmt.Errorf("AI响应失败")
 	}
 	if handled {
+		// 如果有搜索来源数据，通过 onSources 回调推送给前端
+		if len(sources) > 0 && onSources != nil {
+			if err := onSources(sources); err != nil {
+				zlog.Error("send sources to client failed: " + err.Error())
+			}
+		}
 		return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, onChunk, onComplete)
 	}
 
@@ -390,15 +407,16 @@ func streamChatModelToSSE(ctx context.Context, m einomodel.ToolCallingChatModel,
 // 若返回 ToolCalls：执行 MCP（InvokableRun），再第 2 次请求：无工具 Stream 总结。
 // 若无 ToolCalls：返回 handled=false，让外层走普通 Stream，保证非工具场景也保持流式体验。
 // 返回 handled=false 时回退为普通单轮流式（无 MCP 工具绑定）。
+// enableWebSearch 控制是否启用 web_search 工具。
 func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatModel, chatMessages []*schema.Message,
-	onChunk func(chunk string) error) (finalContent string, handled bool, err error) {
+	onChunk func(chunk string) error, enableWebSearch bool) (finalContent string, handled bool, sources []toolpkg.SearchSource, err error) {
 	tools, err := mcppkg.GetMCPTools(ctx)
 	if err != nil {
 		zlog.Error("get MCP tools failed: " + err.Error())
-		return "", false, nil
+		return "", false, nil, nil
 	}
 	if len(tools) == 0 {
-		return "", false, nil
+		return "", false, nil, nil
 	}
 
 	toolInfos := make([]*schema.ToolInfo, 0, len(tools))
@@ -409,35 +427,50 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 			zlog.Error("tool Info failed: " + ierr.Error())
 			continue
 		}
+		// 根据开关过滤 web_search 工具
+		if !enableWebSearch && info.Name == "web_search" {
+			continue
+		}
 		toolInfos = append(toolInfos, info)
 		if inv, ok := t.(einotool.InvokableTool); ok {
 			toolByName[info.Name] = inv
 		}
 	}
 	if len(toolInfos) == 0 {
-		return "", false, nil
+		return "", false, nil, nil
 	}
 
 	modelWithTools, err := chatModel.WithTools(toolInfos)
 	if err != nil {
 		zlog.Error("WithTools failed: " + err.Error())
-		return "", false, nil
+		return "", false, nil, nil
 	}
 
+	// 第1次调用：非流式 Generate，AI 看完用户问题和工具列表后，决定是否需要调用工具。
+	// first 包含两个关键字段：
+	//   first.Content   — AI 的文本回复（可能为空，也可能有内容，如"我来帮你查一下"）
+	//   first.ToolCalls — AI 决定调用的工具列表，如 [{Name:"get_weather", Args:{"location":"北京"}}]
+	// 	 first.ToolCalls == [
+	//       {ID: "call_001", Function: {Name: "get_weather", Arguments: `{"location":"北京"}`}},
+	//       {ID: "call_002", Function: {Name: "web_search",  Arguments: `{"query":"北京今日天气"}`}},
+	//   ]
+	// 如果 AI 觉得不需要工具（比如问"1+1=?"），ToolCalls 为空，回退到普通流式回答。
 	first, err := modelWithTools.Generate(ctx, chatMessages)
 	if err != nil {
 		zlog.Error("MCP agent Generate (tool decision) failed: " + err.Error())
-		return "", false, nil
+		return "", false, nil, nil
 	}
 
 	if len(first.ToolCalls) == 0 {
 		// 不需要工具时回退到普通流式，避免只返回一次性整段文本。
-		return "", false, nil
+		return "", false, nil, nil
 	}
 
+	// msgs2 是第2次调用（流式总结）的消息列表。
+	// 结构：[原始对话历史..., AI的工具决策回复, 工具执行结果1, 工具执行结果2, ...]
 	msgs2 := make([]*schema.Message, 0, len(chatMessages)+1+len(first.ToolCalls))
-	msgs2 = append(msgs2, chatMessages...)
-	msgs2 = append(msgs2, schema.AssistantMessage(first.Content, first.ToolCalls))
+	msgs2 = append(msgs2, chatMessages...)                                         // 原始对话历史（system + user/assistant）
+	msgs2 = append(msgs2, schema.AssistantMessage(first.Content, first.ToolCalls)) // AI 的工具决策（"我要调用 get_weather"）
 
 	for _, tc := range first.ToolCalls {
 		name := tc.Function.Name
@@ -453,14 +486,27 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 				out = toolCallResultToText(runOut)
 			}
 		}
+
+		// 从 web_search 工具结果中提取结构化来源数据
+		if name == "web_search" {
+			extracted := extractSources(out)
+			if len(extracted) > 0 {
+				sources = append(sources, extracted...)
+			}
+			// 从发给模型的文本中移除标记，避免模型看到内部标记
+			out = stripSourcesSentinel(out)
+		}
+
+		// 把工具执行结果封装为 ToolMessage 追加到 msgs2，AI 第2次调用时会看到这些结果
+		// 例如 ToolMessage("北京 晴天 25°C 湿度40%...", toolID="call_001", toolName="get_weather")
 		msgs2 = append(msgs2, schema.ToolMessage(out, tc.ID, schema.WithToolName(name)))
 	}
 
 	finalContent, err = streamChatModelToSSE(ctx, chatModel, msgs2, onChunk)
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
-	return finalContent, true, nil
+	return finalContent, true, sources, nil
 }
 
 // toolCallResultToText 将工具返回结果转换为纯文本。
@@ -474,6 +520,32 @@ func toolCallResultToText(raw string) string {
 		return raw
 	}
 	return txt
+}
+
+// extractSources 从工具结果文本中提取 __SOURCES_JSON__ 标记后的结构化来源数据
+func extractSources(text string) []toolpkg.SearchSource {
+	idx := strings.Index(text, toolpkg.SourcesSentinel)
+	if idx == -1 {
+		return nil
+	}
+	jsonStr := text[idx+len(toolpkg.SourcesSentinel):]
+	var sources []toolpkg.SearchSource
+	// 使用 Decoder 而非 Unmarshal，避免 JSON 数组后的多余字符导致解析失败
+	decoder := json.NewDecoder(strings.NewReader(jsonStr))
+	if err := decoder.Decode(&sources); err != nil {
+		zlog.Error("parse sources json failed: " + err.Error())
+		return nil
+	}
+	return sources
+}
+
+// stripSourcesSentinel 从文本中移除 __SOURCES_JSON__ 标记及其后的 JSON 数据
+func stripSourcesSentinel(text string) string {
+	idx := strings.Index(text, toolpkg.SourcesSentinel)
+	if idx == -1 {
+		return text
+	}
+	return strings.TrimSpace(text[:idx])
 }
 
 // DeleteSession 删除AI会话及其所有消息

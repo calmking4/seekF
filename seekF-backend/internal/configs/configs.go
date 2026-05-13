@@ -113,6 +113,7 @@ type Config struct {
 	QdrantConfig       `toml:"qdrantConfig"`
 	SeniverseConfig    `toml:"seniverseConfig"`
 	ExchangeRateConfig `toml:"exchangeRateConfig"`
+	TavilyConfig       `toml:"tavilyConfig"`
 }
 
 type SeniverseConfig struct {
@@ -120,6 +121,10 @@ type SeniverseConfig struct {
 }
 
 type ExchangeRateConfig struct {
+	APIKey string `toml:"apiKey"`
+}
+
+type TavilyConfig struct {
 	APIKey string `toml:"apiKey"`
 }
 
@@ -201,6 +206,11 @@ func loadEnvConfig(cfg *Config) {
 	// ExchangeRate Configuration
 	if v := os.Getenv("EXCHANGE_RATE_API_KEY"); v != "" {
 		cfg.ExchangeRateConfig.APIKey = v
+	}
+
+	// Tavily Configuration
+	if v := os.Getenv("TAVILY_API_KEY"); v != "" {
+		cfg.TavilyConfig.APIKey = v
 	}
 }
 

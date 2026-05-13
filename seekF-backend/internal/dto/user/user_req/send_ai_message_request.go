@@ -6,4 +6,5 @@ type SendAIMessageRequest struct {
 	ModelType    string `form:"model_type" binding:"required"`
 	ImageURL     string `form:"image_url"`
 	UseKnowledge bool   `form:"use_knowledge"`
+	UseWebSearch bool   `form:"use_web_search"`
 }

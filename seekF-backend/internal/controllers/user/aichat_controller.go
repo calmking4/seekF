@@ -1,11 +1,13 @@
 package user
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
 	userreq "seekF-backend/internal/dto/user/user_req"
+	tool "seekF-backend/internal/pkg/ai/mcp/tool"
 	"seekF-backend/internal/pkg/resp"
 	"seekF-backend/internal/pkg/upload/oss"
 	"seekF-backend/internal/pkg/zlog"
@@ -127,6 +129,16 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 		return nil
 	}
 
+	onSources := func(sources []tool.SearchSource) error {
+		sourcesJSON, _ := json.Marshal(sources)
+		_, err := fmt.Fprintf(ctx.Writer, "data: {\"sources\": %s}\n\n", sourcesJSON)
+		if err != nil {
+			return err
+		}
+		ctx.Writer.Flush()
+		return nil
+	}
+
 	onComplete := func(fullContent string) error {
 		_, err := fmt.Fprintf(ctx.Writer, "data: {\"done\": true}\n\n")
 		if err != nil {
@@ -136,7 +148,7 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 		return nil
 	}
 
-	err := c.aiChatService.SendMessageStream(ctx.Request.Context(), userId, req, onChunk, onComplete)
+	err := c.aiChatService.SendMessageStream(ctx.Request.Context(), userId, req, onChunk, onSources, onComplete)
 	if err != nil {
 		zlog.Info("SendMessageStream service err: " + err.Error())
 		fmt.Fprintf(ctx.Writer, "data: {\"error\": \"%s\"}\n\n", err.Error())

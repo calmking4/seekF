@@ -13,6 +13,7 @@ var (
 	mcpServer        *server.MCPServer
 	weatherTool      *tool.WeatherTool
 	exchangeRateTool *tool.ExchangeRateTool
+	webSearchTool    *tool.WebSearchTool
 	initOnce         sync.Once
 )
 
@@ -22,6 +23,7 @@ func InitMCPServer() error {
 	initOnce.Do(func() {
 		weatherTool = tool.NewWeatherTool()
 		exchangeRateTool = tool.NewExchangeRateTool()
+		webSearchTool = tool.NewWebSearchTool()
 
 		mcpServer = server.NewMCPServer(
 			"seekF-weather",
@@ -32,8 +34,9 @@ func InitMCPServer() error {
 
 		mcpServer.AddTool(weatherTool.GetWeatherTool(), weatherTool.HandleWeatherRequest)
 		mcpServer.AddTool(exchangeRateTool.GetExchangeRateTool(), exchangeRateTool.HandleExchangeRateRequest)
+		mcpServer.AddTool(webSearchTool.GetWebSearchTool(), webSearchTool.HandleWebSearchRequest)
 
-		zlog.Info("MCP server initialized with weather and exchange rate tools")
+		zlog.Info("MCP server initialized with weather, exchange rate and web search tools")
 	})
 	return initErr
 }

@@ -75,6 +75,13 @@
                             class="ml-2"
                         >
                         </el-switch>
+                        <el-switch
+                            v-model="useWebSearch"
+                            active-text="联网搜索"
+                            inactive-text=""
+                            class="ml-2"
+                        >
+                        </el-switch>
                     </div>
                     <div class="flex-1"></div>
                     <el-button size="small" @click="goToKnowledge">
@@ -128,11 +135,20 @@
                                     <div v-if="msg.isSelf && msg.type === 2 && msg.url && isImageUrl(msg.url)">
                                         <img :src="msg.url" class="max-w-full rounded cursor-pointer mb-1" @click="previewImage(msg.url)" />
                                     </div>
+                                    <!-- AI 思考中动画 -->
+                                    <div v-if="!msg.isSelf && msg.isStreaming && !msg.content" class="flex items-center gap-1 py-1">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 0s"></span>
+                                        <span class="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 0.15s"></span>
+                                        <span class="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style="animation-delay: 0.3s"></span>
+                                        <span class="text-xs text-gray-400 ml-1">正在思考...</span>
+                                    </div>
                                     <!-- 文本消息 -->
                                     <p v-if="msg.content && msg.content !== '图片'" class="text-sm whitespace-pre-wrap">
                                         <span v-if="!msg.isSelf && msg.isStreaming">{{ msg.content }}<span class="inline-block w-0.5 h-4 bg-gray-400 ml-0.5 animate-pulse">|</span></span>
                                         <span v-else>{{ msg.content }}</span>
                                     </p>
+                                    <!-- 搜索来源 -->
+                                    <SearchSources v-if="!msg.isSelf && msg.sources && msg.sources.length > 0" :sources="msg.sources" />
                                     <p class="text-xs text-gray-400 text-right mt-1">{{ msg.sendTime }}</p>
                                 </div>
 
@@ -210,6 +226,7 @@ const inputMessage = ref('')
 const isStreaming = ref(false)
 const selectedImage = ref(null)
 const useKnowledgeBase = ref(false)
+const useWebSearch = ref(false)
 
 const goToKnowledge = () => {
     navigateTo('/knowledge')
@@ -422,7 +439,8 @@ const sendMessage = async () => {
         senderName: 'AI 助手',
         sendTime: '',
         isSelf: false,
-        isStreaming: true
+        isStreaming: true,
+        sources: []
     })
 
     isStreaming.value = true
@@ -439,12 +457,20 @@ const sendMessage = async () => {
         session.modelType,
         imageFile,
         useKnowledgeBase.value,
+        useWebSearch.value,
         // onChunk
         (chunk) => {
             const aiMsg = messageList.value[aiMsgIndex]
             if (aiMsg) {
                 aiMsg.content += chunk
                 scrollToBottom()
+            }
+        },
+        // onSources
+        (sources) => {
+            const aiMsg = messageList.value[aiMsgIndex]
+            if (aiMsg) {
+                aiMsg.sources = sources
             }
         },
         // onComplete
