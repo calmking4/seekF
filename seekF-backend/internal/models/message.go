@@ -13,6 +13,7 @@ type Message struct {
 	Content    string       `gorm:"column:content;type:TEXT;comment:消息内容"`
 	Url        string       `gorm:"column:url;type:char(255);comment:消息url"`
 	Sources    string       `gorm:"column:sources;type:TEXT;comment:搜索来源JSON"`
+	Posts      string       `gorm:"column:posts;type:TEXT;comment:帖子数据JSON"`
 	SendId     string       `gorm:"column:send_id;index;type:char(20);not null;comment:发送者uuid"`
 	SendName   string       `gorm:"column:send_name;type:varchar(20);not null;comment:发送者昵称"`
 	SendAvatar string       `gorm:"column:send_avatar;type:varchar(255);not null;comment:发送者头像"`

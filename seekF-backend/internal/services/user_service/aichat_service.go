@@ -36,7 +36,7 @@ type AIChatService interface {
 	// GetMessageHistory 分页获取AI消息历史
 	GetMessageHistory(sessionId string, page int, pageSize int) ([]userresp.GetAIMessageHistoryRespond, int64, error)
 	// SendMessageStream 流式发送消息，通过SSE推送实时响应
-	SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onComplete func(fullContent string) error) error
+	SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onPosts func(posts []toolpkg.DiscoverPostItem) error, onComplete func(fullContent string) error) error
 	// DeleteSession 删除AI会话
 	DeleteSession(sessionId string) error
 	// TextToSpeech 文本转语音，返回 WAV 音频数据
@@ -150,6 +150,7 @@ func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, page int, pageSi
 			Type:      msg.Type,
 			Url:       msg.Url,
 			Sources:   msg.Sources,
+			Posts:     msg.Posts,
 			CreatedAt: msg.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
@@ -161,7 +162,7 @@ func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, page int, pageSi
 // 1. 校验会话 → 2. 保存用户消息到DB → 3. 从DB读取历史构建上下文
 // 4. 调用模型单例获取流式响应 → 5. 通过onChunk回调推送SSE
 // 6. 完整响应保存到DB（失败则走Kafka异步持久化）
-func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onComplete func(fullContent string) error) error {
+func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onPosts func(posts []toolpkg.DiscoverPostItem) error, onComplete func(fullContent string) error) error {
 	// 校验AI会话是否存在
 	session, err := s.sessionDAO.GetAISessionByUuid(req.SessionId)
 	if err != nil {
@@ -235,6 +236,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	var chatMessages []*schema.Message
 	currentTime := time.Now().Format("2006-01-02 15:04:05")
 	systemPrompt := "你是一个专业的AI助手，当前使用的模型是" + req.ModelType + "。当前时间是" + currentTime + "。请根据这个身份回答用户的问题。"
+	systemPrompt += "\n\n你还拥有查询平台帖子的能力（get_discover_posts 工具）。当用户询问「有什么新鲜帖子」、「推荐帖子」、「看看大家发了什么」、特定话题/标签的帖子（如「旅行」、「美食」、「编程」）、社区动态等，请使用此工具查询。搜索会自动匹配帖子的标题、正文内容和标签。"
 	if req.UseWebSearch {
 		systemPrompt += "\n\n你拥有联网搜索能力（web_search 工具）。当用户询问以下类型的问题时，你必须优先使用 web_search 工具搜索最新信息，而不是凭训练数据回答：\n" +
 			"1. 今天的新闻、最近的事件、时事热点\n" +
@@ -320,7 +322,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 
 	// MCP Agent：默认先走第 1 次 Generate（工具决策，非流式）→ 执行 MCP → 第 2 次 Stream（无工具绑定）
 	// 若 MCP 工具不可用/初始化失败，则回退为普通单轮流式。
-	finalContent, handled, sources, err := runMCPAgentFlow(ctx, chatModel, chatMessages, onChunk, req.UseWebSearch)
+	finalContent, handled, sources, posts, err := runMCPAgentFlow(ctx, chatModel, chatMessages, onChunk, req.UseWebSearch)
 	if err != nil {
 		zlog.Error("MCP agent flow failed: " + err.Error())
 		return fmt.Errorf("AI响应失败")
@@ -332,7 +334,13 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 				zlog.Error("send sources to client failed: " + err.Error())
 			}
 		}
-		return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, sources, onChunk, onComplete)
+		// 如果有帖子数据，通过 onPosts 回调推送给前端
+		if len(posts) > 0 && onPosts != nil {
+			if err := onPosts(posts); err != nil {
+				zlog.Error("send posts to client failed: " + err.Error())
+			}
+		}
+		return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, sources, posts, onChunk, onComplete)
 	}
 
 	finalContent, err = streamChatModelToSSE(ctx, chatModel, chatMessages, onChunk)
@@ -341,12 +349,12 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		return fmt.Errorf("AI响应失败")
 	}
 
-	return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, nil, onChunk, onComplete)
+	return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, nil, nil, onChunk, onComplete)
 }
 
 // persistAndCompleteAIMessage 负责将最终回复兜底、持久化，并触发完成回调。
 func (s *AIChatServiceImpl) persistAndCompleteAIMessage(req userreq.SendAIMessageRequest, userId string, userMessage *models.Message, finalContent string,
-	sources []toolpkg.SearchSource, onChunk func(chunk string) error, onComplete func(fullContent string) error) error {
+	sources []toolpkg.SearchSource, posts []toolpkg.DiscoverPostItem, onChunk func(chunk string) error, onComplete func(fullContent string) error) error {
 	if finalContent == "" {
 		finalContent = "抱歉，我暂时无法回答这个问题。"
 		if err := onChunk(finalContent); err != nil {
@@ -371,6 +379,15 @@ func (s *AIChatServiceImpl) persistAndCompleteAIMessage(req userreq.SendAIMessag
 		}
 	}
 
+	// 序列化帖子数据
+	var postsJSON string
+	if len(posts) > 0 {
+		b, err := json.Marshal(posts)
+		if err == nil {
+			postsJSON = string(b)
+		}
+	}
+
 	aiSendId := "A" + util.GetNowAndLenRandomString(11)
 	aipkg.SendAIMessage(aipkg.AIMessagePayload{
 		SessionId: req.SessionId,
@@ -380,6 +397,7 @@ func (s *AIChatServiceImpl) persistAndCompleteAIMessage(req userreq.SendAIMessag
 		Content:   finalContent,
 		ModelType: req.ModelType,
 		Sources:   sourcesJSON,
+		Posts:     postsJSON,
 	})
 
 	s.sessionDAO.UpdateSessionLastMessage(req.SessionId, finalContent, userMessage.CreatedAt)
@@ -431,14 +449,14 @@ func streamChatModelToSSE(ctx context.Context, m einomodel.ToolCallingChatModel,
 // 返回 handled=false 时回退为普通单轮流式（无 MCP 工具绑定）。
 // enableWebSearch 控制是否启用 web_search 工具。
 func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatModel, chatMessages []*schema.Message,
-	onChunk func(chunk string) error, enableWebSearch bool) (finalContent string, handled bool, sources []toolpkg.SearchSource, err error) {
+	onChunk func(chunk string) error, enableWebSearch bool) (finalContent string, handled bool, sources []toolpkg.SearchSource, posts []toolpkg.DiscoverPostItem, err error) {
 	tools, err := mcppkg.GetMCPTools(ctx)
 	if err != nil {
 		zlog.Error("get MCP tools failed: " + err.Error())
-		return "", false, nil, nil
+		return "", false, nil, nil, nil
 	}
 	if len(tools) == 0 {
-		return "", false, nil, nil
+		return "", false, nil, nil, nil
 	}
 
 	toolInfos := make([]*schema.ToolInfo, 0, len(tools))
@@ -459,13 +477,13 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 		}
 	}
 	if len(toolInfos) == 0 {
-		return "", false, nil, nil
+		return "", false, nil, nil, nil
 	}
 
 	modelWithTools, err := chatModel.WithTools(toolInfos)
 	if err != nil {
 		zlog.Error("WithTools failed: " + err.Error())
-		return "", false, nil, nil
+		return "", false, nil, nil, nil
 	}
 
 	// 第1次调用：非流式 Generate，AI 看完用户问题和工具列表后，决定是否需要调用工具。
@@ -480,12 +498,12 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 	first, err := modelWithTools.Generate(ctx, chatMessages)
 	if err != nil {
 		zlog.Error("MCP agent Generate (tool decision) failed: " + err.Error())
-		return "", false, nil, nil
+		return "", false, nil, nil, nil
 	}
 
 	if len(first.ToolCalls) == 0 {
 		// 不需要工具时回退到普通流式，避免只返回一次性整段文本。
-		return "", false, nil, nil
+		return "", false, nil, nil, nil
 	}
 
 	// msgs2 是第2次调用（流式总结）的消息列表。
@@ -519,6 +537,16 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 			out = stripSourcesSentinel(out)
 		}
 
+		// 从 get_discover_posts 工具结果中提取结构化帖子数据
+		if name == "get_discover_posts" {
+			extracted := extractPosts(out)
+			if len(extracted) > 0 {
+				posts = append(posts, extracted...)
+			}
+			// 从发给模型的文本中移除标记，避免模型看到内部标记
+			out = stripDiscoverPostsSentinel(out)
+		}
+
 		// 把工具执行结果封装为 ToolMessage 追加到 msgs2，AI 第2次调用时会看到这些结果
 		// 例如 ToolMessage("北京 晴天 25°C 湿度40%...", toolID="call_001", toolName="get_weather")
 		msgs2 = append(msgs2, schema.ToolMessage(out, tc.ID, schema.WithToolName(name)))
@@ -526,9 +554,9 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 
 	finalContent, err = streamChatModelToSSE(ctx, chatModel, msgs2, onChunk)
 	if err != nil {
-		return "", false, nil, err
+		return "", false, nil, nil, err
 	}
-	return finalContent, true, sources, nil
+	return finalContent, true, sources, posts, nil
 }
 
 // toolCallResultToText 将工具返回结果转换为纯文本。
@@ -564,6 +592,31 @@ func extractSources(text string) []toolpkg.SearchSource {
 // stripSourcesSentinel 从文本中移除 __SOURCES_JSON__ 标记及其后的 JSON 数据
 func stripSourcesSentinel(text string) string {
 	idx := strings.Index(text, toolpkg.SourcesSentinel)
+	if idx == -1 {
+		return text
+	}
+	return strings.TrimSpace(text[:idx])
+}
+
+// extractPosts 从工具结果文本中提取 __DISCOVER_POSTS_JSON__ 标记后的结构化帖子数据
+func extractPosts(text string) []toolpkg.DiscoverPostItem {
+	idx := strings.Index(text, toolpkg.DiscoverPostsSentinel)
+	if idx == -1 {
+		return nil
+	}
+	jsonStr := text[idx+len(toolpkg.DiscoverPostsSentinel):]
+	var posts []toolpkg.DiscoverPostItem
+	decoder := json.NewDecoder(strings.NewReader(jsonStr))
+	if err := decoder.Decode(&posts); err != nil {
+		zlog.Error("parse discover posts json failed: " + err.Error())
+		return nil
+	}
+	return posts
+}
+
+// stripDiscoverPostsSentinel 从文本中移除 __DISCOVER_POSTS_JSON__ 标记及其后的 JSON 数据
+func stripDiscoverPostsSentinel(text string) string {
+	idx := strings.Index(text, toolpkg.DiscoverPostsSentinel)
 	if idx == -1 {
 		return text
 	}

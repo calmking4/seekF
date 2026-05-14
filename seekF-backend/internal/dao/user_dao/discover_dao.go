@@ -12,6 +12,7 @@ type DiscoverDAO interface {
 	CreatePost(post *models.DiscoverPost) error
 	FindPostByUuid(uuid string) (*models.DiscoverPost, error)
 	ListPosts(page, pageSize int) ([]models.DiscoverPost, error)
+	SearchPostsByKeyword(keyword string, limit int) ([]models.DiscoverPost, error)
 	ListLikedPosts(userId string, page, pageSize int) ([]models.DiscoverPost, error)
 	CountPosts() (int64, error)
 	CountLikedPosts(userId string) (int64, error)
@@ -77,6 +78,20 @@ func (d *DiscoverDAOImpl) ListPosts(page, pageSize int) ([]models.DiscoverPost, 
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
 	result := db.GormDB.Where("status = ?", 0).Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&posts)
+	return posts, result.Error
+}
+
+func (d *DiscoverDAOImpl) SearchPostsByKeyword(keyword string, limit int) ([]models.DiscoverPost, error) {
+	if keyword == "" {
+		return d.ListPosts(1, limit)
+	}
+	var posts []models.DiscoverPost
+	likePattern := "%" + keyword + "%"
+	tagMatch := `"` + keyword + `"`
+	result := db.GormDB.Where(
+		"status = 0 AND (title LIKE ? OR content LIKE ? OR JSON_CONTAINS(tags, ?))",
+		likePattern, likePattern, tagMatch,
+	).Order("created_at DESC").Limit(limit).Find(&posts)
 	return posts, result.Error
 }
 

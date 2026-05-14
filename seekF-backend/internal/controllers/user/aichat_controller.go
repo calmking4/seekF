@@ -140,6 +140,16 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 		return nil
 	}
 
+	onPosts := func(posts []tool.DiscoverPostItem) error {
+		postsJSON, _ := json.Marshal(posts)
+		_, err := fmt.Fprintf(ctx.Writer, "data: {\"posts\": %s}\n\n", postsJSON)
+		if err != nil {
+			return err
+		}
+		ctx.Writer.Flush()
+		return nil
+	}
+
 	onComplete := func(fullContent string) error {
 		_, err := fmt.Fprintf(ctx.Writer, "data: {\"done\": true}\n\n")
 		if err != nil {
@@ -149,7 +159,7 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 		return nil
 	}
 
-	err := c.aiChatService.SendMessageStream(ctx.Request.Context(), userId, req, onChunk, onSources, onComplete)
+	err := c.aiChatService.SendMessageStream(ctx.Request.Context(), userId, req, onChunk, onSources, onPosts, onComplete)
 	if err != nil {
 		zlog.Info("SendMessageStream service err: " + err.Error())
 		fmt.Fprintf(ctx.Writer, "data: {\"error\": \"%s\"}\n\n", err.Error())

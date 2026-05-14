@@ -22,6 +22,7 @@ type AIMessagePayload struct {
 	Content   string `json:"content"`
 	ModelType string `json:"model_type"`
 	Sources   string `json:"sources,omitempty"`
+	Posts     string `json:"posts,omitempty"`
 }
 
 // SendAIMessage 发送AI消息到Kafka（用于DB保存失败时的降级持久化）
@@ -64,6 +65,7 @@ func StartAIConsumer() {
 				Type:       0,
 				Content:    payload.Content,
 				Sources:    payload.Sources,
+				Posts:      payload.Posts,
 				SendId:     payload.SendId,
 				SendName:   payload.SendName,
 				SendAvatar: "https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png",

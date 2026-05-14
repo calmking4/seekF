@@ -151,6 +151,12 @@
                                     </p>
                                     <!-- 搜索来源 -->
                                     <SearchSources v-if="!msg.isSelf && msg.sources && msg.sources.length > 0" :sources="msg.sources" />
+                                    <!-- 帖子列表 -->
+                                    <DiscoverPosts
+                                        v-if="!msg.isSelf && msg.posts && msg.posts.length > 0"
+                                        :posts="msg.posts"
+                                        @post-click="openDiscoverDetail"
+                                    />
                                     <div class="flex items-center justify-end gap-1 mt-1">
                                         <TTSButton
                                             v-if="!msg.isSelf && !msg.isStreaming && msg.content"
@@ -220,6 +226,12 @@
             </template>
         </main>
 
+        <!-- 帖子详情弹窗 -->
+        <DiscoverDetail
+            v-if="showDiscoverDetail && selectedDiscoverItem"
+            :item="selectedDiscoverItem"
+            @close="showDiscoverDetail = false"
+        />
     </div>
 </template>
 
@@ -238,6 +250,8 @@ const isStreaming = ref(false)
 const selectedImage = ref(null)
 const useKnowledgeBase = ref(false)
 const useWebSearch = ref(false)
+const showDiscoverDetail = ref(false)
+const selectedDiscoverItem = ref(null)
 
 const goToKnowledge = () => {
     navigateTo('/knowledge')
@@ -290,6 +304,18 @@ const isImageUrl = (url) => {
 // 图片预览
 const previewImage = (url) => {
     window.open(url, '_blank')
+}
+
+// 打开帖子详情
+const openDiscoverDetail = (post) => {
+    selectedDiscoverItem.value = {
+        id: post.id,
+        src: post.src,
+        title: post.title,
+        avatar: post.avatar,
+        nickname: post.nickname
+    }
+    showDiscoverDetail.value = true
 }
 
 
@@ -375,7 +401,8 @@ const loadMessageList = async (sessionId, page = 1) => {
             isSelf: msg.send_id && !msg.send_id.startsWith('A'),
             type: msg.type,
             url: msg.url || '',
-            sources: msg.sources ? JSON.parse(msg.sources) : []
+            sources: msg.sources ? JSON.parse(msg.sources) : [],
+            posts: msg.posts ? JSON.parse(msg.posts) : []
         }))
 
         if (page === 1) {
@@ -452,7 +479,8 @@ const sendMessage = async () => {
         sendTime: '',
         isSelf: false,
         isStreaming: true,
-        sources: []
+        sources: [],
+        posts: []
     })
 
     isStreaming.value = true
@@ -483,6 +511,13 @@ const sendMessage = async () => {
             const aiMsg = messageList.value[aiMsgIndex]
             if (aiMsg) {
                 aiMsg.sources = sources
+            }
+        },
+        // onPosts
+        (posts) => {
+            const aiMsg = messageList.value[aiMsgIndex]
+            if (aiMsg) {
+                aiMsg.posts = posts
             }
         },
         // onComplete

@@ -73,11 +73,12 @@ export const useAIChat = () => {
      * @param {boolean} useWebSearch - 是否启用联网搜索
      * @param {function} onChunk - 收到每个 chunk 时的回调
      * @param {function} onSources - 收到搜索来源时的回调
+     * @param {function} onPosts - 收到帖子数据时的回调
      * @param {function} onComplete - 完成时的回调
      * @param {function} onError - 错误回调
      * @returns {object} 返回 close 方法，可用于手动关闭
      */
-    const sendMessage = (sessionId, content, modelType, imageFile, useKnowledge = false, useWebSearch = false, onChunk, onSources, onComplete, onError) => {
+    const sendMessage = (sessionId, content, modelType, imageFile, useKnowledge = false, useWebSearch = false, onChunk, onSources, onPosts, onComplete, onError) => {
         const formData = new FormData()
         formData.append('session_id', sessionId)
         formData.append('content', content)
@@ -140,6 +141,9 @@ export const useAIChat = () => {
                                 }
                                 if (data.sources) {
                                     onSources?.(data.sources)
+                                }
+                                if (data.posts) {
+                                    onPosts?.(data.posts)
                                 }
                                 if (data.content) {
                                     onChunk?.(data.content)
