@@ -14,6 +14,11 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// 复用连接，降低汇率 API 请求 TLS 握手开销
+var exchangeRateHTTPClient = &http.Client{
+	Timeout: 10 * time.Second,
+}
+
 type ExchangeRateTool struct {
 	apiKey string
 }
@@ -86,9 +91,7 @@ func (t *ExchangeRateTool) queryExchangeRate(ctx context.Context, baseCurrency, 
 		return "", err
 	}
 
-	// 初始化HTTP客户端并设置超时时间
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := exchangeRateHTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}

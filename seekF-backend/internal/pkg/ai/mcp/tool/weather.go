@@ -14,6 +14,11 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// 复用连接，降低心知天气请求 TLS 握手开销
+var seniverseHTTPClient = &http.Client{
+	Timeout: 10 * time.Second,
+}
+
 type WeatherTool struct {
 	apiKey string
 }
@@ -73,9 +78,7 @@ func (t *WeatherTool) queryWeather(ctx context.Context, location string) (string
 		return "", err
 	}
 
-	// 初始化HTTP客户端并设置超时时间
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := seniverseHTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}

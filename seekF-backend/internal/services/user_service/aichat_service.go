@@ -22,7 +22,6 @@ import (
 	"seekF-backend/internal/pkg/zlog"
 
 	einomodel "github.com/cloudwego/eino/components/model"
-	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 )
@@ -450,31 +449,10 @@ func streamChatModelToSSE(ctx context.Context, m einomodel.ToolCallingChatModel,
 // enableWebSearch 控制是否启用 web_search 工具。
 func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatModel, chatMessages []*schema.Message,
 	onChunk func(chunk string) error, enableWebSearch bool) (finalContent string, handled bool, sources []toolpkg.SearchSource, posts []toolpkg.DiscoverPostItem, err error) {
-	tools, err := mcppkg.GetMCPTools(ctx)
+	toolInfos, toolByName, err := mcppkg.FilteredMCPToolBinding(ctx, enableWebSearch)
 	if err != nil {
 		zlog.Error("get MCP tools failed: " + err.Error())
 		return "", false, nil, nil, nil
-	}
-	if len(tools) == 0 {
-		return "", false, nil, nil, nil
-	}
-
-	toolInfos := make([]*schema.ToolInfo, 0, len(tools))
-	toolByName := make(map[string]einotool.InvokableTool)
-	for _, t := range tools {
-		info, ierr := t.Info(ctx)
-		if ierr != nil {
-			zlog.Error("tool Info failed: " + ierr.Error())
-			continue
-		}
-		// 根据开关过滤 web_search 工具
-		if !enableWebSearch && info.Name == "web_search" {
-			continue
-		}
-		toolInfos = append(toolInfos, info)
-		if inv, ok := t.(einotool.InvokableTool); ok {
-			toolByName[info.Name] = inv
-		}
 	}
 	if len(toolInfos) == 0 {
 		return "", false, nil, nil, nil

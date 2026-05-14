@@ -22,6 +22,8 @@ type DiscoverDAO interface {
 
 	CreateMedia(media *models.DiscoverMedia) error
 	FindMediaByPostId(postId int64) ([]models.DiscoverMedia, error)
+	// FindMediaByPostIds 批量查询多个帖子的媒体，按 post_id、sort_order 排序，便于取每帖首张图
+	FindMediaByPostIds(postIds []int64) ([]models.DiscoverMedia, error)
 
 	CreateLike(like *models.DiscoverLike) error
 	DeleteLike(userId, targetUuid string) error
@@ -147,6 +149,15 @@ func (d *DiscoverDAOImpl) CreateMedia(media *models.DiscoverMedia) error {
 func (d *DiscoverDAOImpl) FindMediaByPostId(postId int64) ([]models.DiscoverMedia, error) {
 	var mediaList []models.DiscoverMedia
 	result := db.GormDB.Where("post_id = ?", postId).Order("sort_order ASC").Find(&mediaList)
+	return mediaList, result.Error
+}
+
+func (d *DiscoverDAOImpl) FindMediaByPostIds(postIds []int64) ([]models.DiscoverMedia, error) {
+	if len(postIds) == 0 {
+		return nil, nil
+	}
+	var mediaList []models.DiscoverMedia
+	result := db.GormDB.Where("post_id IN ?", postIds).Order("post_id ASC, sort_order ASC").Find(&mediaList)
 	return mediaList, result.Error
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	userdao "seekF-backend/internal/dao/user_dao"
+	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/zlog"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -95,6 +96,47 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 		return mcp.NewToolResultText("未找到相关帖子"), nil
 	}
 
+	// 批量拉取媒体与用户，避免对每个帖子单独查库（N+1）
+	postIDs := make([]int64, len(posts))
+	userUUIDs := make([]string, 0, len(posts))
+	seenUser := make(map[string]struct{}, len(posts))
+	for i, post := range posts {
+		postIDs[i] = post.Id
+		if post.UserId == "" {
+			continue
+		}
+		if _, ok := seenUser[post.UserId]; ok {
+			continue
+		}
+		seenUser[post.UserId] = struct{}{}
+		userUUIDs = append(userUUIDs, post.UserId)
+	}
+
+	firstMediaURLByPostID := make(map[int64]string, len(posts))
+	mediaRows, mErr := t.discoverDAO.FindMediaByPostIds(postIDs)
+	if mErr != nil {
+		zlog.Error("batch load discover media failed: " + mErr.Error())
+	} else {
+		for _, row := range mediaRows {
+			if _, exists := firstMediaURLByPostID[row.PostId]; !exists {
+				firstMediaURLByPostID[row.PostId] = row.Url
+			}
+		}
+	}
+
+	userByUUID := make(map[string]*models.UserInfo, len(userUUIDs))
+	if len(userUUIDs) > 0 {
+		users, uErr := t.userInfoDAO.FindUsersByUuids(userUUIDs)
+		if uErr != nil {
+			zlog.Error("batch load user info failed: " + uErr.Error())
+		} else {
+			for i := range users {
+				u := &users[i]
+				userByUUID[u.Uuid] = u
+			}
+		}
+	}
+
 	// 构建文本摘要（给 AI 模型）和结构化数据（给前端）
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("找到 %d 个相关帖子：\n\n", len(posts)))
@@ -102,24 +144,21 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 	postItems := make([]DiscoverPostItem, 0, len(posts))
 	for i, post := range posts {
 		// 获取首图 URL
-		var src string
-		mediaList, err := t.discoverDAO.FindMediaByPostId(post.Id)
-		if err == nil && len(mediaList) > 0 {
-			src = mediaList[0].Url
-		}
+		src := firstMediaURLByPostID[post.Id]
 
 		// 获取用户信息
 		var avatar, nickname string
-		user, err := t.userInfoDAO.FindUserByUuid(post.UserId)
-		if err == nil && user != nil {
-			avatar = user.Avatar
-			nickname = user.Nickname
+		if u := userByUUID[post.UserId]; u != nil {
+			avatar = u.Avatar
+			nickname = u.Nickname
 		}
 
 		// 解析标签
 		var tags []string
 		if len(post.Tags) > 0 {
-			json.Unmarshal(post.Tags, &tags)
+			if jerr := json.Unmarshal(post.Tags, &tags); jerr != nil {
+				zlog.Error("unmarshal post tags failed: " + jerr.Error())
+			}
 		}
 
 		// 截断正文摘要

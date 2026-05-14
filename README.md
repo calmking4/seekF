@@ -1,4 +1,4 @@
- seekF 是一个集成了 AI 能力的全栈即时通讯（IM）应用，采用 Go 后端 + Nuxt 4 前端的 monorepo 结构。
+#  seekF 是一个集成了 AI 能力的全栈即时通讯（IM）应用，采用 Go 后端 + Nuxt 4 前端的 monorepo 结构。
 
   核心功能：
   - 单聊、群聊、音视频通话（WebSocket + WebRTC）

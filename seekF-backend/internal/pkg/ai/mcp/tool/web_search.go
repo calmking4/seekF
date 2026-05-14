@@ -16,6 +16,11 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// 复用连接，降低 Tavily 请求 TLS 握手开销
+var tavilyHTTPClient = &http.Client{
+	Timeout: 15 * time.Second,
+}
+
 // SearchSource 搜索来源
 type SearchSource struct {
 	Title   string  `json:"title"`
@@ -105,8 +110,7 @@ func (t *WebSearchTool) searchWeb(ctx context.Context, query string) (*mcp.CallT
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := tavilyHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
