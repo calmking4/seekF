@@ -24,8 +24,6 @@ type SearchSource struct {
 	Score   float64 `json:"score,omitempty"`
 }
 
-const SourcesSentinel = "__SOURCES_JSON__"
-
 type WebSearchTool struct {
 	apiKey string
 }
@@ -49,6 +47,7 @@ func (t *WebSearchTool) GetWebSearchTool() mcp.Tool {
 }
 
 // HandleWebSearchRequest 处理网页搜索请求
+// 返回 TextContent（摘要给 AI）+ EmbeddedResource（结构化来源 JSON 给前端）
 func (t *WebSearchTool) HandleWebSearchRequest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	arguments, ok := request.Params.Arguments.(map[string]any)
 	if !ok {
@@ -66,7 +65,7 @@ func (t *WebSearchTool) HandleWebSearchRequest(ctx context.Context, request mcp.
 		return mcp.NewToolResultText("搜索失败: " + err.Error()), nil
 	}
 
-	return mcp.NewToolResultText(result), nil
+	return result, nil
 }
 
 // tavilyResponse Tavily API 响应结构
@@ -81,9 +80,10 @@ type tavilyResponse struct {
 }
 
 // searchWeb 调用 Tavily Search API 搜索网页
-func (t *WebSearchTool) searchWeb(ctx context.Context, query string) (string, error) {
+// 返回包含 TextContent + EmbeddedResource 的 CallToolResult
+func (t *WebSearchTool) searchWeb(ctx context.Context, query string) (*mcp.CallToolResult, error) {
 	if t.apiKey == "" {
-		return "", fmt.Errorf("tavily api key not configured")
+		return nil, fmt.Errorf("tavily api key not configured")
 	}
 
 	// 构建请求体
@@ -95,38 +95,38 @@ func (t *WebSearchTool) searchWeb(ctx context.Context, query string) (string, er
 	}
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	// 发送 HTTP 请求
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.tavily.com/search", bytes.NewReader(bodyBytes))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("tavily API request failed with status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("tavily API request failed with status: %d", resp.StatusCode)
 	}
 
 	// 解析响应
 	var result tavilyResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if len(result.Results) == 0 {
-		return "未找到相关搜索结果", nil
+		return mcp.NewToolResultText("未找到相关搜索结果"), nil
 	}
 
-	// 构建给 AI 模型消费的文本摘要（截断 snippet 节省 token）
+	// 构建文本摘要（给 AI 模型消费）
 	var sb strings.Builder
 	if result.Answer != "" {
 		sb.WriteString("搜索结果摘要: ")
@@ -143,7 +143,7 @@ func (t *WebSearchTool) searchWeb(ctx context.Context, query string) (string, er
 		sb.WriteString(fmt.Sprintf("%d. %s - %s\n   %s\n", i+1, r.Title, r.URL, snippet))
 	}
 
-	// 构建结构化来源数据（供 Service 层提取后传给前端）
+	// 构建结构化来源数据（给前端渲染）
 	sources := make([]SearchSource, 0, len(result.Results))
 	for _, r := range result.Results {
 		sources = append(sources, SearchSource{
@@ -153,12 +153,7 @@ func (t *WebSearchTool) searchWeb(ctx context.Context, query string) (string, er
 			Score:   r.Score,
 		})
 	}
-	sourcesJSON, _ := json.Marshal(sources)
 
-	// 追加标记和 JSON，Service 层通过此标记提取结构化数据
-	sb.WriteString("\n")
-	sb.WriteString(SourcesSentinel)
-	sb.WriteString(string(sourcesJSON))
-
-	return sb.String(), nil
+	// 返回 TextContent（AI 摘要）+ StructuredContent（前端结构化数据）
+	return mcp.NewToolResultStructured(sources, sb.String()), nil
 }

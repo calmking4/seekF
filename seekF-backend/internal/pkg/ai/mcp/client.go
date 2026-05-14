@@ -53,7 +53,7 @@ func GetInProcessTools(ctx context.Context) ([]tool.BaseTool, error) {
 			return
 		}
 
-		// 从MCP服务器获取可用的工具列表
+		// 从MCP服务器获取可用的工具列表，eino-ext 的适配器把 MCP 工具转成 Eino 的 BaseTool 接口
 		einoTools, err = mcpp.GetTools(ctx, &mcpp.Config{
 			Cli: mcpClient,
 		})

@@ -25,9 +25,6 @@ type DiscoverPostItem struct {
 	CommentCount int      `json:"comment_count"`
 }
 
-// DiscoverPostsSentinel 帖子数据哨兵标记，Service 层通过此标记提取结构化数据
-const DiscoverPostsSentinel = "__DISCOVER_POSTS_JSON__"
-
 // DiscoverPostsTool 查询平台发现页帖子的 MCP 工具
 type DiscoverPostsTool struct {
 	discoverDAO userdao.DiscoverDAO
@@ -57,6 +54,7 @@ func (t *DiscoverPostsTool) GetDiscoverPostsTool() mcp.Tool {
 }
 
 // HandleDiscoverPostsRequest 处理帖子查询请求
+// 返回 TextContent（文本摘要给 AI）+ EmbeddedResource（结构化 JSON 给前端）
 func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	arguments, ok := request.Params.Arguments.(map[string]any)
 	if !ok {
@@ -97,7 +95,7 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 		return mcp.NewToolResultText("未找到相关帖子"), nil
 	}
 
-	// 构建文本摘要和结构化数据
+	// 构建文本摘要（给 AI 模型）和结构化数据（给前端）
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("找到 %d 个相关帖子：\n\n", len(posts)))
 
@@ -130,7 +128,7 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 			contentSnippet = contentSnippet[:100] + "..."
 		}
 
-		// 文本摘要给 AI 模型
+		// 文本摘要
 		tagStr := ""
 		if len(tags) > 0 {
 			tagStr = "，标签：" + strings.Join(tags, "、")
@@ -138,7 +136,7 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 		sb.WriteString(fmt.Sprintf("%d. %s\n   %s%s\n   点赞：%d，评论：%d\n\n",
 			i+1, post.Title, contentSnippet, tagStr, post.LikeCount, post.CommentCount))
 
-		// 结构化数据给前端
+		// 结构化数据
 		postItems = append(postItems, DiscoverPostItem{
 			ID:           post.Uuid,
 			Src:          src,
@@ -152,13 +150,6 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 		})
 	}
 
-	// 序列化结构化数据
-	postsJSON, _ := json.Marshal(postItems)
-
-	// 追加哨兵标记和 JSON，Service 层通过此标记提取结构化数据
-	sb.WriteString("\n")
-	sb.WriteString(DiscoverPostsSentinel)
-	sb.WriteString(string(postsJSON))
-
-	return mcp.NewToolResultText(sb.String()), nil
+	// 返回 TextContent（AI 摘要）+ StructuredContent（前端结构化数据）
+	return mcp.NewToolResultStructured(postItems, sb.String()), nil
 }

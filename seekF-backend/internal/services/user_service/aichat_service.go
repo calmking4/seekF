@@ -516,6 +516,7 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 		name := tc.Function.Name
 		inv := toolByName[name]
 		var out string
+		var rawResult string
 		if inv == nil {
 			out = fmt.Sprintf("错误：未找到可执行工具 %q", name)
 		} else {
@@ -523,28 +524,23 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 			if runErr != nil {
 				out = "工具执行失败: " + runErr.Error()
 			} else {
-				out = toolCallResultToText(runOut)
+				rawResult = runOut
+				out = extractTextContent(runOut)
 			}
 		}
 
-		// 从 web_search 工具结果中提取结构化来源数据
-		if name == "web_search" {
-			extracted := extractSources(out)
-			if len(extracted) > 0 {
-				sources = append(sources, extracted...)
+		// 从工具的 返回结果 中提取结构化数据（通过 MCP 多内容项协议）
+		if rawResult != "" {
+			if name == "web_search" {
+				if extracted := extractStructuredData[toolpkg.SearchSource](rawResult); len(extracted) > 0 {
+					sources = append(sources, extracted...)
+				}
 			}
-			// 从发给模型的文本中移除标记，避免模型看到内部标记
-			out = stripSourcesSentinel(out)
-		}
-
-		// 从 get_discover_posts 工具结果中提取结构化帖子数据
-		if name == "get_discover_posts" {
-			extracted := extractPosts(out)
-			if len(extracted) > 0 {
-				posts = append(posts, extracted...)
+			if name == "get_discover_posts" {
+				if extracted := extractStructuredData[toolpkg.DiscoverPostItem](rawResult); len(extracted) > 0 {
+					posts = append(posts, extracted...)
+				}
 			}
-			// 从发给模型的文本中移除标记，避免模型看到内部标记
-			out = stripDiscoverPostsSentinel(out)
 		}
 
 		// 把工具执行结果封装为 ToolMessage 追加到 msgs2，AI 第2次调用时会看到这些结果
@@ -559,68 +555,37 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 	return finalContent, true, sources, posts, nil
 }
 
-// toolCallResultToText 将工具返回结果转换为纯文本。
-func toolCallResultToText(raw string) string {
+// extractTextContent 从 CallToolResult 中提取 TextContent 纯文本。
+func extractTextContent(raw string) string {
 	var result mcpgo.CallToolResult
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
 		return raw
 	}
-	txt := mcpgo.GetTextFromContent(result.Content) // 获取CallToolResult的Content
+	txt := mcpgo.GetTextFromContent(result.Content)
 	if txt == "" {
 		return raw
 	}
 	return txt
 }
 
-// extractSources 从工具结果文本中提取 __SOURCES_JSON__ 标记后的结构化来源数据
-func extractSources(text string) []toolpkg.SearchSource {
-	idx := strings.Index(text, toolpkg.SourcesSentinel)
-	if idx == -1 {
+// extractStructuredData 从 CallToolResult 的 StructuredContent 字段提取结构化数据。
+func extractStructuredData[T any](raw string) []T {
+	var result mcpgo.CallToolResult
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
 		return nil
 	}
-	jsonStr := text[idx+len(toolpkg.SourcesSentinel):]
-	var sources []toolpkg.SearchSource
-	// 使用 Decoder 而非 Unmarshal，避免 JSON 数组后的多余字符导致解析失败
-	decoder := json.NewDecoder(strings.NewReader(jsonStr))
-	if err := decoder.Decode(&sources); err != nil {
-		zlog.Error("parse sources json failed: " + err.Error())
+	if result.StructuredContent == nil {
 		return nil
 	}
-	return sources
-}
-
-// stripSourcesSentinel 从文本中移除 __SOURCES_JSON__ 标记及其后的 JSON 数据
-func stripSourcesSentinel(text string) string {
-	idx := strings.Index(text, toolpkg.SourcesSentinel)
-	if idx == -1 {
-		return text
-	}
-	return strings.TrimSpace(text[:idx])
-}
-
-// extractPosts 从工具结果文本中提取 __DISCOVER_POSTS_JSON__ 标记后的结构化帖子数据
-func extractPosts(text string) []toolpkg.DiscoverPostItem {
-	idx := strings.Index(text, toolpkg.DiscoverPostsSentinel)
-	if idx == -1 {
+	data, err := json.Marshal(result.StructuredContent)
+	if err != nil {
 		return nil
 	}
-	jsonStr := text[idx+len(toolpkg.DiscoverPostsSentinel):]
-	var posts []toolpkg.DiscoverPostItem
-	decoder := json.NewDecoder(strings.NewReader(jsonStr))
-	if err := decoder.Decode(&posts); err != nil {
-		zlog.Error("parse discover posts json failed: " + err.Error())
+	var items []T
+	if err := json.Unmarshal(data, &items); err != nil {
 		return nil
 	}
-	return posts
-}
-
-// stripDiscoverPostsSentinel 从文本中移除 __DISCOVER_POSTS_JSON__ 标记及其后的 JSON 数据
-func stripDiscoverPostsSentinel(text string) string {
-	idx := strings.Index(text, toolpkg.DiscoverPostsSentinel)
-	if idx == -1 {
-		return text
-	}
-	return strings.TrimSpace(text[:idx])
+	return items
 }
 
 // TextToSpeech 文本转语音
