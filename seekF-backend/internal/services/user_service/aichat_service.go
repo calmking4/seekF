@@ -32,8 +32,8 @@ type AIChatService interface {
 	CreateSession(userId string, req userreq.CreateAISessionRequest) (*userresp.CreateAISessionRespond, error)
 	// GetSessionList 获取用户AI会话列表
 	GetSessionList(userId string, page int, pageSize int) (*userresp.GetAISessionListRespond, error)
-	// GetMessageHistory 分页获取AI消息历史
-	GetMessageHistory(sessionId string, page int, pageSize int) ([]userresp.GetAIMessageHistoryRespond, int64, error)
+	// GetMessageHistory 游标分页获取AI消息历史
+	GetMessageHistory(sessionId string, pageSize int, cursor string, direction string) ([]userresp.GetAIMessageHistoryRespond, int64, error)
 	// SendMessageStream 流式发送消息，通过SSE推送实时响应
 	SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onPosts func(posts []toolpkg.DiscoverPostItem) error, onComplete func(fullContent string) error) error
 	// DeleteSession 删除AI会话
@@ -117,15 +117,11 @@ func (s *AIChatServiceImpl) GetSessionList(userId string, page int, pageSize int
 	}, nil
 }
 
-// GetMessageHistory 分页获取指定AI会话的消息历史（按时间正序）
-func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, page int, pageSize int) ([]userresp.GetAIMessageHistoryRespond, int64, error) {
-	if page < 1 {
-		page = 1
-	}
+// GetMessageHistory 游标分页获取指定AI会话的消息历史
+func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, pageSize int, cursor string, direction string) ([]userresp.GetAIMessageHistoryRespond, int64, error) {
 	if pageSize < 1 {
 		pageSize = 20
 	}
-	offset := (page - 1) * pageSize
 
 	total, err := s.messageDAO.CountMessagesBySessionId(sessionId)
 	if err != nil {
@@ -133,7 +129,7 @@ func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, page int, pageSi
 		return nil, 0, fmt.Errorf("获取消息历史失败")
 	}
 
-	messages, err := s.messageDAO.GetMessagesBySessionIdDesc(sessionId, pageSize, offset)
+	messages, err := s.messageDAO.GetMessagesBySessionIdWithCursor(sessionId, cursor, pageSize, direction)
 	if err != nil {
 		zlog.Error("get AI messages failed: " + err.Error())
 		return nil, 0, fmt.Errorf("获取消息历史失败")

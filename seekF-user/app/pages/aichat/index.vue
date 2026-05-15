@@ -260,9 +260,9 @@ const goToKnowledge = () => {
 const scrollbarRef = ref()
 const hasMore = ref(true)
 const loadingMore = ref(false)
-const currentPage = ref(1)
 const pageSize = 20
 const totalMessages = ref(0)
+const oldestCursor = ref('') // 最旧消息的时间戳游标
 let currentEventSource = null
 
 const currentSession = computed(() => {
@@ -375,21 +375,21 @@ const selectSession = async (index) => {
         currentEventSource = null
     }
 
-    currentPage.value = 1
     hasMore.value = true
     loadingMore.value = false
+    oldestCursor.value = ''
     messageList.value = []
 
     await loadMessageList(session.sessionId)
     scrollToBottom()
 }
 
-// 加载消息历史
-const loadMessageList = async (sessionId, page = 1) => {
+// 加载消息历史（游标分页）
+const loadMessageList = async (sessionId, cursor = '', direction = 'prev') => {
     try {
         if (!sessionId) return
 
-        const data = await aiChat.getMessageHistory(sessionId, page, pageSize)
+        const data = await aiChat.getMessageHistory(sessionId, pageSize, cursor, direction)
         const list = data.list || []
         totalMessages.value = data.total || 0
 
@@ -405,12 +405,21 @@ const loadMessageList = async (sessionId, page = 1) => {
             posts: msg.posts ? JSON.parse(msg.posts) : []
         }))
 
-        if (page === 1) {
-            // 后端返回倒序（最新在前），反转后最新在最后
+        if (!cursor) {
+            // 首次加载：后端返回倒序（最新在前），反转后最新在最后
             messageList.value = messages.reverse()
-        } else {
-            // 加载更多时，反转后追加到前面
+        } else if (direction === 'prev') {
+            // 向前加载更多（更旧的消息）：反转后追加到前面
             messageList.value = [...messages.reverse(), ...messageList.value]
+        } else {
+            // 向后加载（更新的消息）：追加到后面
+            messageList.value = [...messageList.value, ...messages]
+        }
+
+        // 更新游标：记录最旧消息的时间戳
+        if (list.length > 0) {
+            const oldestMsg = list[list.length - 1]
+            oldestCursor.value = oldestMsg.created_at
         }
 
         hasMore.value = messageList.value.length < totalMessages.value
@@ -419,15 +428,14 @@ const loadMessageList = async (sessionId, page = 1) => {
     }
 }
 
-// 加载更多消息
+// 加载更多消息（游标分页）
 const loadMoreMessages = async () => {
-    if (loadingMore.value || !hasMore.value || !currentSession.value) return
+    if (loadingMore.value || !hasMore.value || !currentSession.value || !oldestCursor.value) return
     loadingMore.value = true
 
     const oldScrollHeight = scrollbarRef.value?.wrapRef?.scrollHeight || 0
 
-    currentPage.value++
-    await loadMessageList(currentSession.value.sessionId, currentPage.value)
+    await loadMessageList(currentSession.value.sessionId, oldestCursor.value, 'prev')
 
     nextTick(() => {
         if (scrollbarRef.value?.wrapRef) {

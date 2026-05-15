@@ -75,7 +75,7 @@ func (c *AIChatController) GetMessageHistory(ctx *gin.Context) {
 		return
 	}
 
-	messageList, total, err := c.aiChatService.GetMessageHistory(req.SessionId, req.Page, req.PageSize)
+	messageList, total, err := c.aiChatService.GetMessageHistory(req.SessionId, req.PageSize, req.Cursor, req.Direction)
 	if err != nil {
 		zlog.Info("GetMessageHistory service err: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)

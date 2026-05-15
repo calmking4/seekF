@@ -45,13 +45,17 @@ export const useAIChat = () => {
     }
 
     /**
-     * 获取 AI 消息历史
+     * 获取 AI 消息历史（游标分页）
+     * @param {string} sessionId - 会话 ID
+     * @param {number} pageSize - 每页数量
+     * @param {string} cursor - 游标（最后一条消息的时间戳），为空则获取最新消息
+     * @param {string} direction - 翻页方向：prev=向前(更旧), next=向后(更新)
      */
-    const getMessageHistory = async (sessionId, page = 1, pageSize = 20) => {
+    const getMessageHistory = async (sessionId, pageSize = 20, cursor = '', direction = 'prev') => {
         try {
             const res = await useApi$('/user/aichat/getMessageHistory', {
                 method: 'POST',
-                body: { session_id: sessionId, page, page_size: pageSize }
+                body: { session_id: sessionId, page_size: pageSize, cursor, direction }
             })
             if (res?.code === 200) {
                 return res.data

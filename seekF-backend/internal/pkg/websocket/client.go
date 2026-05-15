@@ -3,6 +3,7 @@ package websocket
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/pkg/constants"
@@ -18,9 +19,10 @@ type MessageBack struct {
 }
 
 type Client struct {
-	Conn     *websocket.Conn
-	Uuid     string
-	SendBack chan *MessageBack // 给前端
+	Conn         *websocket.Conn
+	Uuid         string
+	SendBack     chan *MessageBack // 给前端
+	LastPongTime time.Time        // 最后一次收到 pong 的时间
 }
 
 var upgrader = websocket.Upgrader{
@@ -35,25 +37,50 @@ var upgrader = websocket.Upgrader{
 // 读取websocket消息并发送给kafka
 func (c *Client) Read() {
 	zlog.Info("ws read goroutine start")
+	defer func() {
+		ChatServer.SendClientToLogout(c)
+	}()
+
+	// 设置读取超时为 30 秒
+	c.Conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	c.Conn.SetPongHandler(func(string) error {
+		c.LastPongTime = time.Now()
+		c.Conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		return nil
+	})
+
 	for {
 		// 阻塞有一定隐患，因为下面要处理缓冲的逻辑，但是可以先不做优化，问题不大
 		_, jsonMessage, err := c.Conn.ReadMessage() // 阻塞状态
 		if err != nil {
 			zlog.Error(err.Error())
 			return // 直接断开websocket
-		} else {
-			var message = userreq.ChatMessageRequest{}
-			if err := json.Unmarshal(jsonMessage, &message); err != nil {
-				zlog.Error(err.Error())
-			}
-			// zlog.Info("接受到消息为: " + string(jsonMessage))
-
-			// 发送消息到Kafka
-			if err := SendMessageToKafka(jsonMessage); err != nil {
-				zlog.Error(err.Error())
-			}
-			// zlog.Info("已发送消息到Kafka: " + string(jsonMessage))
 		}
+
+		// 处理心跳 ping 消息
+		var wsMsg struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(jsonMessage, &wsMsg); err == nil && wsMsg.Type == "ping" {
+			// 回复 pong
+			pongMsg, _ := json.Marshal(map[string]string{"type": "pong"})
+			c.SendBack <- &MessageBack{Message: pongMsg, Uuid: ""}
+			c.LastPongTime = time.Now()
+			c.Conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+			continue
+		}
+
+		var message = userreq.ChatMessageRequest{}
+		if err := json.Unmarshal(jsonMessage, &message); err != nil {
+			zlog.Error(err.Error())
+		}
+		// zlog.Info("接受到消息为: " + string(jsonMessage))
+
+		// 发送消息到Kafka
+		if err := SendMessageToKafka(jsonMessage); err != nil {
+			zlog.Error(err.Error())
+		}
+		// zlog.Info("已发送消息到Kafka: " + string(jsonMessage))
 	}
 }
 
@@ -80,9 +107,10 @@ func NewClientInit(c *gin.Context, clientId string) error {
 		return err
 	}
 	client := &Client{
-		Conn:     conn,
-		Uuid:     clientId,
-		SendBack: make(chan *MessageBack, constants.CHANNEL_SIZE),
+		Conn:         conn,
+		Uuid:         clientId,
+		SendBack:     make(chan *MessageBack, constants.CHANNEL_SIZE),
+		LastPongTime: time.Now(),
 	}
 
 	ChatServer.SendClientToLogin(client)

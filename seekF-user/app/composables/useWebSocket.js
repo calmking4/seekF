@@ -3,8 +3,10 @@ let wsInstance = null
 let messageCallbacks = []
 let avCallCallbacks = [] // 音视频通话回调
 let reconnectAttempts = 0
+let pingInterval = null // 心跳定时器
 const maxReconnectAttempts = 5
 const reconnectInterval = 3000
+const pingIntervalTime = 25000 // 25秒发送一次心跳
 export const useWebSocket = () => {
     const config = useRuntimeConfig()
     const isConnected = ref(false)
@@ -15,6 +17,24 @@ export const useWebSocket = () => {
         const wsBase = config.public.wsBase || 'ws://localhost:8080/'
         const userUuid = user.getUser()?.uuid || ''
         return `${wsBase}user/ws/login?client_id=${userUuid}`
+    }
+
+    // 启动心跳检测
+    const startPing = () => {
+        stopPing()
+        pingInterval = setInterval(() => {
+            if (wsInstance?.readyState === WebSocket.OPEN) {
+                send({ type: 'ping' })
+            }
+        }, pingIntervalTime)
+    }
+
+    // 停止心跳检测
+    const stopPing = () => {
+        if (pingInterval) {
+            clearInterval(pingInterval)
+            pingInterval = null
+        }
     }
 
     // 连接 WebSocket
@@ -43,12 +63,17 @@ export const useWebSocket = () => {
                 console.log('WebSocket 连接成功')
                 isConnected.value = true
                 reconnectAttempts = 0
+                startPing() // 启动心跳
             }
 
             wsInstance.onmessage = (event) => {
                 console.log('收到 WebSocket 消息:', event.data)
                 try {
                     const data = JSON.parse(event.data)
+                    // 处理心跳 pong 响应
+                    if (data.type === 'pong') {
+                        return
+                    }
                     // 调用所有注册的回调函数
                     messageCallbacks.forEach(callback => callback(data))
                     // 如果是音视频消息，调用音视频回调
@@ -65,6 +90,7 @@ export const useWebSocket = () => {
                 console.log('WebSocket 连接关闭')
                 isConnected.value = false
                 wsInstance = null
+                stopPing() // 停止心跳
                 attemptReconnect()
             }
 
@@ -100,12 +126,13 @@ export const useWebSocket = () => {
 
     // 断开连接
     const disconnect = async () => {
+        stopPing() // 停止心跳
         if (wsInstance) {
             wsInstance.close()
             wsInstance = null
             isConnected.value = false
             console.log('WebSocket 已断开')
-            
+
             // 调用WebSocket登出接口
             try {
                 await useApi$('/user/ws/logout', {

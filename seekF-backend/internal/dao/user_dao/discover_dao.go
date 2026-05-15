@@ -28,6 +28,8 @@ type DiscoverDAO interface {
 	CreateLike(like *models.DiscoverLike) error
 	DeleteLike(userId, targetUuid string) error
 	FindLike(userId, targetUuid string) (*models.DiscoverLike, error)
+	// FindLikesByUserIdAndTargetUuids 批量查询用户对多个目标的点赞状态
+	FindLikesByUserIdAndTargetUuids(userId string, targetUuids []string) ([]models.DiscoverLike, error)
 
 	CreateComment(comment *models.DiscoverComment) error
 	FindCommentById(commentId int64) (*models.DiscoverComment, error)
@@ -49,6 +51,8 @@ type DiscoverDAO interface {
 	DeleteCollection(userId string, folderId int64, targetUuid string) error
 	FindCollectionInFolder(userId string, folderId int64, targetUuid string) (*models.DiscoverCollection, error)
 	FindCollectionByUserAndTarget(userId, targetUuid string) (*models.DiscoverCollection, error)
+	// FindCollectionsByUserIdAndTargetUuids 批量查询用户对多个目标的收藏状态
+	FindCollectionsByUserIdAndTargetUuids(userId string, targetUuids []string) ([]models.DiscoverCollection, error)
 	IncrementFolderPostCount(folderId int64) error
 	DecrementFolderPostCount(folderId int64) error
 	IncrementCollectCount(postId int64) error
@@ -181,6 +185,16 @@ func (d *DiscoverDAOImpl) FindLike(userId, targetUuid string) (*models.DiscoverL
 	return &like, nil
 }
 
+// FindLikesByUserIdAndTargetUuids 批量查询用户对多个目标的点赞状态
+func (d *DiscoverDAOImpl) FindLikesByUserIdAndTargetUuids(userId string, targetUuids []string) ([]models.DiscoverLike, error) {
+	if len(targetUuids) == 0 {
+		return nil, nil
+	}
+	var likes []models.DiscoverLike
+	result := db.GormDB.Where("user_id = ? AND target_uuid IN ?", userId, targetUuids).Find(&likes)
+	return likes, result.Error
+}
+
 func (d *DiscoverDAOImpl) FindCommentById(commentId int64) (*models.DiscoverComment, error) {
 	var comment models.DiscoverComment
 	result := db.GormDB.Where("id = ?", commentId).First(&comment)
@@ -289,6 +303,16 @@ func (d *DiscoverDAOImpl) FindCollectionByUserAndTarget(userId, targetUuid strin
 		return nil, nil
 	}
 	return &col, result.Error
+}
+
+// FindCollectionsByUserIdAndTargetUuids 批量查询用户对多个目标的收藏状态
+func (d *DiscoverDAOImpl) FindCollectionsByUserIdAndTargetUuids(userId string, targetUuids []string) ([]models.DiscoverCollection, error) {
+	if len(targetUuids) == 0 {
+		return nil, nil
+	}
+	var collections []models.DiscoverCollection
+	result := db.GormDB.Where("user_id = ? AND target_uuid IN ?", userId, targetUuids).Find(&collections)
+	return collections, result.Error
 }
 
 func (d *DiscoverDAOImpl) IncrementFolderPostCount(folderId int64) error {

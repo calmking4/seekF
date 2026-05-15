@@ -18,6 +18,8 @@ type MessageDAO interface {
 	GetMessagesBySessionIdDesc(sessionId string, limit int, offset int) ([]models.Message, error)
 	CountMessagesBySessionId(sessionId string) (int64, error)
 	DeleteMessagesBySessionId(sessionId string) error
+	// GetMessagesBySessionIdWithCursor 游标分页，基于 created_at 时间戳
+	GetMessagesBySessionIdWithCursor(sessionId string, cursor string, limit int, direction string) ([]models.Message, error)
 }
 
 // MessageDAOImpl 消息DAO实现
@@ -99,4 +101,35 @@ func (d *MessageDAOImpl) CountMessagesBySessionId(sessionId string) (int64, erro
 func (d *MessageDAOImpl) DeleteMessagesBySessionId(sessionId string) error {
 	result := db.GormDB.Where("session_id = ?", sessionId).Delete(&models.Message{})
 	return result.Error
+}
+
+// GetMessagesBySessionIdWithCursor 游标分页，基于 created_at 时间戳
+// direction: "prev" 向前翻页（更旧的消息），"next" 向后翻页（更新的消息）
+func (d *MessageDAOImpl) GetMessagesBySessionIdWithCursor(sessionId string, cursor string, limit int, direction string) ([]models.Message, error) {
+	var messageList []models.Message
+	query := db.GormDB.Where("session_id = ?", sessionId)
+
+	if cursor != "" {
+		if direction == "prev" {
+			// 向前翻页：获取比 cursor 更旧的消息
+			query = query.Where("created_at < ?", cursor).Order("created_at DESC")
+		} else {
+			// 向后翻页：获取比 cursor 更新的消息
+			query = query.Where("created_at > ?", cursor).Order("created_at ASC")
+		}
+	} else {
+		// 无游标时默认按时间倒序
+		query = query.Order("created_at DESC")
+	}
+
+	result := query.Limit(limit).Find(&messageList)
+
+	// 如果是向后翻页，需要反转顺序以保持时间倒序
+	if direction == "next" && cursor != "" {
+		for i, j := 0, len(messageList)-1; i < j; i, j = i+1, j-1 {
+			messageList[i], messageList[j] = messageList[j], messageList[i]
+		}
+	}
+
+	return messageList, result.Error
 }

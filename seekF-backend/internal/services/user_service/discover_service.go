@@ -184,43 +184,68 @@ func (s *DiscoverServiceImpl) ListPosts(ctx context.Context, userId string, page
 		return nil, 0, err
 	}
 
+	if len(posts) == 0 {
+		return []PostInfo{}, total, nil
+	}
+
+	// 收集所有帖子ID和用户ID，用于批量查询
+	postIds := make([]int64, 0, len(posts))
+	userIds := make([]string, 0, len(posts))
+	postUuids := make([]string, 0, len(posts))
+	for _, post := range posts {
+		postIds = append(postIds, post.Id)
+		userIds = append(userIds, post.UserId)
+		postUuids = append(postUuids, post.Uuid)
+	}
+
+	// 批量查询媒体，构建 postId -> firstUrl 映射
+	mediaList, _ := s.discoverDAO.FindMediaByPostIds(postIds)
+	mediaMap := make(map[int64]string)
+	for _, media := range mediaList {
+		if _, exists := mediaMap[media.PostId]; !exists {
+			mediaMap[media.PostId] = media.Url
+		}
+	}
+
+	// 批量查询用户信息，构建 userId -> 用户信息映射
+	users, _ := s.userInfoDAO.FindUsersByUuids(userIds)
+	userMap := make(map[string]*models.UserInfo)
+	for i := range users {
+		userMap[users[i].Uuid] = &users[i]
+	}
+
+	// 批量查询点赞状态，构建 targetUuid -> 是否点赞映射
+	likedMap := make(map[string]bool)
+	if userId != "" {
+		likes, _ := s.discoverDAO.FindLikesByUserIdAndTargetUuids(userId, postUuids)
+		for _, like := range likes {
+			likedMap[like.TargetUuid] = true
+		}
+	}
+
+	// 批量查询收藏状态，构建 targetUuid -> 是否收藏映射
+	collectedMap := make(map[string]bool)
+	if userId != "" {
+		collections, _ := s.discoverDAO.FindCollectionsByUserIdAndTargetUuids(userId, postUuids)
+		for _, col := range collections {
+			collectedMap[col.TargetUuid] = true
+		}
+	}
+
 	var result []PostInfo
 	for _, post := range posts {
-		mediaList, _ := s.discoverDAO.FindMediaByPostId(post.Id)
-		firstUrl := ""
-		if len(mediaList) > 0 {
-			firstUrl = mediaList[0].Url
-		}
+		firstUrl := mediaMap[post.Id]
 
 		var tags []string
 		if len(post.Tags) > 0 {
 			json.Unmarshal(post.Tags, &tags)
 		}
 
-		user, _ := s.userInfoDAO.FindUserByUuid(post.UserId)
 		nickname := ""
 		avatar := ""
-		if user != nil {
+		if user, exists := userMap[post.UserId]; exists {
 			nickname = user.Nickname
 			avatar = user.Avatar
-		}
-
-		// 查询当前用户是否点赞了该帖子
-		isLiked := false
-		if userId != "" {
-			like, _ := s.discoverDAO.FindLike(userId, post.Uuid)
-			if like != nil {
-				isLiked = true
-			}
-		}
-
-		// 查询当前用户是否收藏了该帖子
-		isCollected := false
-		if userId != "" {
-			col, _ := s.discoverDAO.FindCollectionByUserAndTarget(userId, post.Uuid)
-			if col != nil {
-				isCollected = true
-			}
 		}
 
 		result = append(result, PostInfo{
@@ -236,8 +261,8 @@ func (s *DiscoverServiceImpl) ListPosts(ctx context.Context, userId string, page
 			LikeCount:    post.LikeCount,
 			CommentCount: post.CommentCount,
 			CollectCount: post.CollectCount,
-			IsLiked:      isLiked,
-			IsCollected:  isCollected,
+			IsLiked:      likedMap[post.Uuid],
+			IsCollected:  collectedMap[post.Uuid],
 			CreatedAt:    post.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}

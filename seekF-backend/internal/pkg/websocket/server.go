@@ -67,6 +67,9 @@ func (s *Server) Start() {
 	// 启动Kafka消息读取协程
 	go s.readKafkaMessages()
 
+	// 启动心跳检测协程，清理超时连接
+	go s.heartbeatCheck()
+
 	// 处理登录和登出
 	for {
 		select {
@@ -75,6 +78,24 @@ func (s *Server) Start() {
 		case client := <-s.Logout:
 			s.handleLogout(client)
 		}
+	}
+}
+
+// heartbeatCheck 定期检查客户端心跳，清理超时连接
+func (s *Server) heartbeatCheck() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.mutex.Lock()
+		for uuid, client := range s.Clients {
+			if time.Since(client.LastPongTime) > 60*time.Second {
+				zlog.Info(fmt.Sprintf("用户 %s 心跳超时，断开连接", uuid))
+				client.Conn.Close()
+				delete(s.Clients, uuid)
+			}
+		}
+		s.mutex.Unlock()
 	}
 }
 
