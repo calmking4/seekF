@@ -47,7 +47,7 @@ func InitAICommentConsumer(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.
 func SendAICommentTask(payload AICommentPayload) {
 	data, err := json.Marshal(payload)
 	if err != nil {
-		zlog.Error("marshal AI comment payload failed: " + err.Error())
+		zlog.Error("序列化AI评论负载失败: " + err.Error())
 		return
 	}
 
@@ -55,16 +55,16 @@ func SendAICommentTask(payload AICommentPayload) {
 		Value: data,
 	})
 	if err != nil {
-		zlog.Error("send AI comment task to kafka failed: " + err.Error())
+		zlog.Error("发送AI评论任务到Kafka失败: " + err.Error())
 	} else {
-		zlog.Info("AI comment task sent to kafka, post: " + payload.PostUuid)
+		zlog.Info("AI评论任务已发送到Kafka，帖子: " + payload.PostUuid)
 	}
 }
 
 // StartAICommentConsumer 启动AI评论消费者
 func StartAICommentConsumer() {
 	if aiCommentCons == nil {
-		zlog.Error("AI comment consumer not initialized, call InitAICommentConsumer first")
+		zlog.Error("AI评论消费者未初始化，请先调用InitAICommentConsumer")
 		return
 	}
 
@@ -72,14 +72,14 @@ func StartAICommentConsumer() {
 		for {
 			msg, err := mykafka.KafkaServiceInstance.AICommentReader.ReadMessage(context.Background())
 			if err != nil {
-				zlog.Error("read AI comment task from kafka failed: " + err.Error())
+				zlog.Error("从Kafka读取AI评论任务失败: " + err.Error())
 				time.Sleep(time.Second)
 				continue
 			}
 
 			var payload AICommentPayload
 			if err := json.Unmarshal(msg.Value, &payload); err != nil {
-				zlog.Error("unmarshal AI comment payload failed: " + err.Error())
+				zlog.Error("反序列化AI评论负载失败: " + err.Error())
 				continue
 			}
 
@@ -96,7 +96,7 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 	// 1. 查帖子详情
 	post, err := c.discoverDAO.FindPostByUuid(payload.PostUuid)
 	if err != nil || post == nil {
-		zlog.Error("AI comment: find post failed: " + payload.PostUuid)
+		zlog.Error("AI评论: 查找帖子失败: " + payload.PostUuid)
 		return
 	}
 
@@ -142,7 +142,7 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 	// 6. 调用glm-4v多模态模型（非流式）
 	chatModel := GetModelPool().GetModel("glm-4v")
 	if chatModel == nil {
-		zlog.Error("AI comment: glm-4v model not available")
+		zlog.Error("AI评论: glm-4v模型不可用")
 		return
 	}
 
@@ -153,13 +153,13 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 
 	result, err := chatModel.Generate(ctx, messages)
 	if err != nil {
-		zlog.Error("AI comment: generate failed: " + err.Error())
+		zlog.Error("AI评论: 生成失败: " + err.Error())
 		return
 	}
 
 	aiReply := strings.TrimSpace(result.Content)
 	if aiReply == "" {
-		zlog.Error("AI comment: empty reply")
+		zlog.Error("AI评论: 空回复")
 		return
 	}
 
@@ -180,7 +180,7 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 	}
 
 	if err := c.discoverDAO.CreateComment(comment); err != nil {
-		zlog.Error("AI comment: save comment failed: " + err.Error())
+		zlog.Error("AI评论: 保存评论失败: " + err.Error())
 		return
 	}
 

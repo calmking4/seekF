@@ -40,7 +40,7 @@ func (c *AIChatController) CreateSession(ctx *gin.Context) {
 	userId := ctx.GetString("Uuid")
 	result, err := c.aiChatService.CreateSession(userId, req)
 	if err != nil {
-		zlog.Info("CreateSession service err: " + err.Error())
+		zlog.Info("创建会话服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -59,7 +59,7 @@ func (c *AIChatController) GetSessionList(ctx *gin.Context) {
 	userId := ctx.GetString("Uuid")
 	result, err := c.aiChatService.GetSessionList(userId, req.Page, req.PageSize)
 	if err != nil {
-		zlog.Info("GetSessionList service err: " + err.Error())
+		zlog.Info("获取会话列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -77,7 +77,7 @@ func (c *AIChatController) GetMessageHistory(ctx *gin.Context) {
 
 	messageList, total, err := c.aiChatService.GetMessageHistory(req.SessionId, req.PageSize, req.Cursor, req.Direction)
 	if err != nil {
-		zlog.Info("GetMessageHistory service err: " + err.Error())
+		zlog.Info("获取消息历史服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -100,7 +100,7 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 	if file, err := ctx.FormFile("image"); err == nil {
 		result, err := c.fileService.UploadFile(ctx.Request.Context(), file, oss.MessageImage)
 		if err != nil {
-			zlog.Error("upload image failed: " + err.Error())
+			zlog.Error("上传图片失败: " + err.Error())
 			resp.Error(ctx, "图片上传失败", http.StatusInternalServerError)
 			return
 		}
@@ -161,7 +161,7 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 
 	err := c.aiChatService.SendMessageStream(ctx.Request.Context(), userId, req, onChunk, onSources, onPosts, onComplete)
 	if err != nil {
-		zlog.Info("SendMessageStream service err: " + err.Error())
+		zlog.Info("发送消息服务错误: " + err.Error())
 		fmt.Fprintf(ctx.Writer, "data: {\"error\": \"%s\"}\n\n", err.Error())
 		ctx.Writer.Flush()
 	}
@@ -177,7 +177,7 @@ func (c *AIChatController) TextToSpeech(ctx *gin.Context) {
 
 	wavData, err := c.aiChatService.TextToSpeech(ctx.Request.Context(), req.Content, req.Voice)
 	if err != nil {
-		zlog.Error("TTS synthesize failed: " + err.Error())
+		zlog.Error("语音合成失败: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusInternalServerError)
 		return
 	}

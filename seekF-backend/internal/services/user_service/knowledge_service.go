@@ -84,7 +84,7 @@ func (s *KnowledgeServiceImpl) AddDocument(ctx context.Context, userId, fileName
 
 	err = s.knowledgeDAO.Create(doc)
 	if err != nil {
-		zlog.Error("save knowledge record failed: " + err.Error())
+		zlog.Error("保存知识库记录失败: " + err.Error())
 		return nil, fmt.Errorf("保存记录失败")
 	}
 
@@ -137,7 +137,7 @@ func (s *KnowledgeServiceImpl) RemoveDocument(ctx context.Context, userId, uuid 
 	collectionName := s.collectionName(userId)
 	err = ragInst.DeleteChunks(ctx, collectionName, uuid)
 	if err != nil {
-		zlog.Error("delete chunks from qdrant failed: " + err.Error())
+		zlog.Error("从向量数据库删除数据失败: " + err.Error())
 	}
 
 	err = s.knowledgeDAO.Delete(uuid)

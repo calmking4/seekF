@@ -24,14 +24,14 @@ func NewUserInfoController(userInfoService userservice.UserInfoService) *UserInf
 func (c *UserInfoController) GetUserInfo(ctx *gin.Context) {
 	var req userreq.GetUserInfoRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		zlog.Info("GetUserInfo err: " + err.Error())
+		zlog.Info("获取用户信息参数错误: " + err.Error())
 		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
 
 	result, err := c.userInfoService.GetUserInfo(&req)
 	if err != nil {
-		zlog.Info("GetUserInfo service err: " + err.Error())
+		zlog.Info("获取用户信息服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -44,7 +44,7 @@ func (c *UserInfoController) GetMyInfo(ctx *gin.Context) {
 	// 从上下文获取当前用户的 UUID
 	currentUserUuid, exists := ctx.Get("Uuid")
 	if !exists {
-		zlog.Info("GetMyInfo err: Unable to get user UUID from context")
+		zlog.Info("获取我的信息错误: 无法从上下文获取用户UUID")
 		resp.Error(ctx, "无法获取用户信息", http.StatusInternalServerError)
 		return
 	}
@@ -56,7 +56,7 @@ func (c *UserInfoController) GetMyInfo(ctx *gin.Context) {
 
 	result, err := c.userInfoService.GetUserInfo(req)
 	if err != nil {
-		zlog.Info("GetMyInfo service err: " + err.Error())
+		zlog.Info("获取我的信息服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -68,7 +68,7 @@ func (c *UserInfoController) GetMyInfo(ctx *gin.Context) {
 func (c *UserInfoController) UpdateUserInfo(ctx *gin.Context) {
 	var req userreq.UpdateUserInfoRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		zlog.Info("UpdateUserInfo err: " + err.Error())
+		zlog.Info("更新用户信息参数错误: " + err.Error())
 		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
@@ -76,21 +76,21 @@ func (c *UserInfoController) UpdateUserInfo(ctx *gin.Context) {
 	// 从上下文获取当前用户的 UUID
 	currentUserUuid, exists := ctx.Get("Uuid")
 	if !exists {
-		zlog.Info("UpdateUserInfo err: Unable to get user UUID from context")
+		zlog.Info("更新用户信息错误: 无法从上下文获取用户UUID")
 		resp.Error(ctx, "无法获取用户信息", http.StatusInternalServerError)
 		return
 	}
 
 	// 验证用户只能更新自己的信息
 	if req.Uuid != currentUserUuid.(string) {
-		zlog.Info("UpdateUserInfo err: User can only update their own info")
+		zlog.Info("更新用户信息错误: 用户只能更新自己的信息")
 		resp.Error(ctx, "只能更新自己的用户信息", http.StatusForbidden)
 		return
 	}
 
 	err := c.userInfoService.UpdateUserInfo(&req)
 	if err != nil {
-		zlog.Info("UpdateUserInfo service err: " + err.Error())
+		zlog.Info("更新用户信息服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}

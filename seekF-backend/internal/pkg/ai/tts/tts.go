@@ -55,7 +55,7 @@ func Synthesize(ctx context.Context, content string, voice string) ([]byte, erro
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		zlog.Error("TTS API call failed: " + err.Error())
+		zlog.Error("TTS API调用失败: " + err.Error())
 		return nil, fmt.Errorf("调用TTS服务失败")
 	}
 	defer resp.Body.Close()

@@ -41,7 +41,7 @@ func (c *SessionController) OpenSession(ctx *gin.Context) {
 	// 调用服务层方法
 	sessionId, err := c.sessionService.OpenSession(userUuid.(string), openSessionReq.ReceiveId)
 	if err != nil {
-		zlog.Info("OpenSession service err: " + err.Error())
+		zlog.Info("打开会话服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -61,7 +61,7 @@ func (c *SessionController) GetSessionList(ctx *gin.Context) {
 	// 调用服务层方法
 	sessionList, err := c.sessionService.GetSessionList(userUuid.(string))
 	if err != nil {
-		zlog.Info("GetSessionList service err: " + err.Error())
+		zlog.Info("获取会话列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -89,7 +89,7 @@ func (c *SessionController) DeleteSession(ctx *gin.Context) {
 	// 调用服务层方法
 	err := c.sessionService.DeleteSession(userUuid.(string), deleteSessionReq.SessionId)
 	if err != nil {
-		zlog.Info("DeleteSession service err: " + err.Error())
+		zlog.Info("删除会话服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -117,7 +117,7 @@ func (c *SessionController) CheckOpenSessionAllowed(ctx *gin.Context) {
 	// 调用服务层方法
 	allowed, err := c.sessionService.CheckOpenSessionAllowed(userUuid.(string), openSessionReq.ReceiveId)
 	if err != nil {
-		zlog.Info("CheckOpenSessionAllowed service err: " + err.Error())
+		zlog.Info("检查会话权限服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}

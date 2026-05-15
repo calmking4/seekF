@@ -80,7 +80,7 @@ func (k *KafkaService) Init() {
 		StartOffset:    kafka.LastOffset,
 	})
 
-	zlog.Info("Kafka service initialized, chat topic: " + kafkaConfig.ChatTopic + ", ai chat topic: " + kafkaConfig.AIChatTopic)
+	zlog.Info("Kafka服务初始化完成，聊天主题: " + kafkaConfig.ChatTopic + "，AI聊天主题: " + kafkaConfig.AIChatTopic)
 }
 
 // Close 关闭Kafka连接

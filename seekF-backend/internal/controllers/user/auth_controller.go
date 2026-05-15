@@ -25,14 +25,14 @@ func NewAuthController(authService userservice.AuthService) *AuthController {
 func (c *AuthController) Register(ctx *gin.Context) {
 	var req userservice.RegisterRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		zlog.Info("Register err: " + err.Error())
+		zlog.Info("注册参数错误: " + err.Error())
 		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
 
 	err := c.authService.Register(&req)
 	if err != nil {
-		zlog.Info("Register service err: " + err.Error())
+		zlog.Info("注册服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -44,14 +44,14 @@ func (c *AuthController) Register(ctx *gin.Context) {
 func (c *AuthController) Login(ctx *gin.Context) {
 	var req userservice.LoginRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		zlog.Info("Login err: " + err.Error())
+		zlog.Info("登录参数错误: " + err.Error())
 		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
 
 	result, err := c.authService.Login(&req)
 	if err != nil {
-		zlog.Info("Login service err: " + err.Error())
+		zlog.Info("登录服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -82,7 +82,7 @@ func (c *AuthController) Logout(ctx *gin.Context) {
 	// 调用service层执行登出操作
 	err := c.authService.Logout(tokenString)
 	if err != nil {
-		zlog.Info("Logout service err: " + err.Error())
+		zlog.Info("登出服务错误: " + err.Error())
 		resp.Error(ctx, "退出登录失败", http.StatusInternalServerError)
 		return
 	}
@@ -97,7 +97,7 @@ func (c *AuthController) Logout(ctx *gin.Context) {
 func (c *AuthController) SendVerifyCode(ctx *gin.Context) {
 	var req userreq.SendVerifyCodeRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		zlog.Info("SendVerifyCode err: " + err.Error())
+		zlog.Info("发送验证码参数错误: " + err.Error())
 		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
@@ -105,7 +105,7 @@ func (c *AuthController) SendVerifyCode(ctx *gin.Context) {
 	// 调用service层发送验证码
 	err := c.authService.SendVerifyCode(req.Telephone)
 	if err != nil {
-		zlog.Info("SendVerifyCode service err: " + err.Error())
+		zlog.Info("发送验证码服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -117,7 +117,7 @@ func (c *AuthController) SendVerifyCode(ctx *gin.Context) {
 func (c *AuthController) LoginByCode(ctx *gin.Context) {
 	var req userreq.LoginByCodeRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		zlog.Info("LoginByCode err: " + err.Error())
+		zlog.Info("验证码登录参数错误: " + err.Error())
 		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
@@ -125,7 +125,7 @@ func (c *AuthController) LoginByCode(ctx *gin.Context) {
 	// 调用service层执行验证码登录
 	result, err := c.authService.LoginByCode(req.Telephone, req.Code)
 	if err != nil {
-		zlog.Info("LoginByCode service err: " + err.Error())
+		zlog.Info("验证码登录服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}

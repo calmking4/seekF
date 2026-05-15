@@ -68,7 +68,7 @@ func (t *ExchangeRateTool) HandleExchangeRateRequest(ctx context.Context, reques
 
 	rateInfo, err := t.queryExchangeRate(ctx, baseCurrency, targetCurrency)
 	if err != nil {
-		zlog.Error("query exchange rate failed: " + err.Error())
+		zlog.Error("查询汇率失败: " + err.Error())
 		return mcp.NewToolResultText("查询汇率失败: " + err.Error()), nil
 	}
 

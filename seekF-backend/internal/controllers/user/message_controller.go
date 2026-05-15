@@ -36,7 +36,7 @@ func (c *MessageController) GetUserMessageList(ctx *gin.Context) {
 	// 调用服务层方法
 	messageList, total, err := c.messageService.GetUserMessageList(req.UserOneId, req.UserTwoId, req.Page, req.PageSize)
 	if err != nil {
-		zlog.Info("GetUserMessageList service err: " + err.Error())
+		zlog.Info("获取用户消息列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -60,7 +60,7 @@ func (c *MessageController) GetGroupMessageList(ctx *gin.Context) {
 	// 调用服务层方法
 	messageList, total, err := c.messageService.GetGroupMessageList(req.GroupId, req.Page, req.PageSize)
 	if err != nil {
-		zlog.Info("GetGroupMessageList service err: " + err.Error())
+		zlog.Info("获取群组消息列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}

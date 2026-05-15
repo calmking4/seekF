@@ -27,7 +27,7 @@ func GetRAG() *RAG {
 	ragOnce.Do(func() {
 		cfg := configs.GetConfig()
 
-		zlog.Info("initializing RAG...")
+		zlog.Info("正在初始化RAG...")
 
 		emb := NewEmbedding(
 			cfg.AIModelConfig.GlmApiKey,
@@ -42,7 +42,7 @@ func GetRAG() *RAG {
 			splitter:  spl,
 		}
 
-		zlog.Info("RAG initialization completed")
+		zlog.Info("RAG初始化完成")
 	})
 	return ragInstance
 }

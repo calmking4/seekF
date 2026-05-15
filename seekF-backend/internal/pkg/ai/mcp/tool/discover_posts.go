@@ -88,7 +88,7 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 	// 查询帖子
 	posts, err := t.discoverDAO.SearchPostsByKeyword(keyword, limit)
 	if err != nil {
-		zlog.Error("search discover posts failed: " + err.Error())
+		zlog.Error("搜索帖子失败: " + err.Error())
 		return mcp.NewToolResultText("查询帖子失败: " + err.Error()), nil
 	}
 
@@ -115,7 +115,7 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 	firstMediaURLByPostID := make(map[int64]string, len(posts))
 	mediaRows, mErr := t.discoverDAO.FindMediaByPostIds(postIDs)
 	if mErr != nil {
-		zlog.Error("batch load discover media failed: " + mErr.Error())
+		zlog.Error("批量加载帖子媒体失败: " + mErr.Error())
 	} else {
 		for _, row := range mediaRows {
 			if _, exists := firstMediaURLByPostID[row.PostId]; !exists {
@@ -128,7 +128,7 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 	if len(userUUIDs) > 0 {
 		users, uErr := t.userInfoDAO.FindUsersByUuids(userUUIDs)
 		if uErr != nil {
-			zlog.Error("batch load user info failed: " + uErr.Error())
+			zlog.Error("批量加载用户信息失败: " + uErr.Error())
 		} else {
 			for i := range users {
 				u := &users[i]
@@ -157,7 +157,7 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 		var tags []string
 		if len(post.Tags) > 0 {
 			if jerr := json.Unmarshal(post.Tags, &tags); jerr != nil {
-				zlog.Error("unmarshal post tags failed: " + jerr.Error())
+				zlog.Error("反序列化帖子标签失败: " + jerr.Error())
 			}
 		}
 

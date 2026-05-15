@@ -36,7 +36,7 @@ var upgrader = websocket.Upgrader{
 
 // 读取websocket消息并发送给kafka
 func (c *Client) Read() {
-	zlog.Info("ws read goroutine start")
+	zlog.Info("WebSocket读取协程启动")
 	defer func() {
 		ChatServer.SendClientToLogout(c)
 	}()
@@ -86,7 +86,7 @@ func (c *Client) Read() {
 
 // 从send通道读取消息发送给websocket
 func (c *Client) Write() {
-	zlog.Info("ws write goroutine start")
+	zlog.Info("WebSocket写入协程启动")
 	for messageBack := range c.SendBack { // 阻塞状态
 		// 通过 WebSocket 发送消息
 		err := c.Conn.WriteMessage(websocket.TextMessage, messageBack.Message)

@@ -29,7 +29,7 @@ type AIMessagePayload struct {
 func SendAIMessage(payload AIMessagePayload) {
 	data, err := json.Marshal(payload)
 	if err != nil {
-		zlog.Error("marshal AI message payload failed: " + err.Error())
+		zlog.Error("序列化AI消息负载失败: " + err.Error())
 		return
 	}
 
@@ -37,7 +37,7 @@ func SendAIMessage(payload AIMessagePayload) {
 		Value: data,
 	})
 	if err != nil {
-		zlog.Error("send AI message to kafka failed: " + err.Error())
+		zlog.Error("发送AI消息到Kafka失败: " + err.Error())
 	}
 }
 
@@ -47,14 +47,14 @@ func StartAIConsumer() {
 		for {
 			msg, err := mykafka.KafkaServiceInstance.AIChatReader.ReadMessage(context.Background())
 			if err != nil {
-				zlog.Error("read AI message from kafka failed: " + err.Error())
+				zlog.Error("从Kafka读取AI消息失败: " + err.Error())
 				time.Sleep(time.Second)
 				continue
 			}
 
 			var payload AIMessagePayload
 			if err := json.Unmarshal(msg.Value, &payload); err != nil {
-				zlog.Error("unmarshal AI message payload failed: " + err.Error())
+				zlog.Error("反序列化AI消息负载失败: " + err.Error())
 				continue
 			}
 
@@ -74,9 +74,9 @@ func StartAIConsumer() {
 			}
 
 			if err := db.GormDB.Create(aiMessage).Error; err != nil {
-				zlog.Error("save AI message to DB failed: " + err.Error())
+				zlog.Error("保存AI消息到数据库失败: " + err.Error())
 			} else {
-				zlog.Info("AI message saved to DB from kafka, uuid: " + aiMsgId)
+				zlog.Info("AI消息已从Kafka保存到数据库，UUID: " + aiMsgId)
 			}
 		}
 	}()

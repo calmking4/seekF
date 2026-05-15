@@ -66,7 +66,7 @@ func (t *WebSearchTool) HandleWebSearchRequest(ctx context.Context, request mcp.
 
 	result, err := t.searchWeb(ctx, query)
 	if err != nil {
-		zlog.Error("web search failed: " + err.Error())
+		zlog.Error("网页搜索失败: " + err.Error())
 		return mcp.NewToolResultText("搜索失败: " + err.Error()), nil
 	}
 

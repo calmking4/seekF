@@ -24,7 +24,7 @@ func NewGroupController(groupService userservice.GroupService) *GroupController 
 func (c *GroupController) CreateGroup(ctx *gin.Context) {
 	var createGroupReq userreq.CreateGroupRequest
 	if err := ctx.ShouldBindJSON(&createGroupReq); err != nil {
-		zlog.Info("CreateGroup err: " + err.Error())
+		zlog.Info("创建群组参数错误: " + err.Error())
 		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
@@ -39,7 +39,7 @@ func (c *GroupController) CreateGroup(ctx *gin.Context) {
 
 	err := c.groupService.CreateGroup(&createGroupReq)
 	if err != nil {
-		zlog.Info("CreateGroup service err: " + err.Error())
+		zlog.Info("创建群组服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -58,7 +58,7 @@ func (c *GroupController) LoadMyGroup(ctx *gin.Context) {
 
 	groupList, err := c.groupService.LoadMyGroup(userUuid.(string))
 	if err != nil {
-		zlog.Info("LoadMyGroup service err: " + err.Error())
+		zlog.Info("获取我的群组服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -77,7 +77,7 @@ func (c *GroupController) LoadMyJoinedGroup(ctx *gin.Context) {
 
 	groupList, err := c.groupService.LoadMyJoinedGroup(userUuid.(string))
 	if err != nil {
-		zlog.Info("LoadMyJoinedGroup service err: " + err.Error())
+		zlog.Info("获取我加入的群组服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -96,7 +96,7 @@ func (c *GroupController) CheckGroupAddMode(ctx *gin.Context) {
 
 	addMode, err := c.groupService.CheckGroupAddMode(req.GroupId)
 	if err != nil {
-		zlog.Info("CheckGroupAddMode service err: " + err.Error())
+		zlog.Info("检查群聊加群方式服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -115,7 +115,7 @@ func (c *GroupController) GetGroupInfo(ctx *gin.Context) {
 
 	groupInfo, err := c.groupService.GetGroupInfo(req.GroupId)
 	if err != nil {
-		zlog.Info("GetGroupInfo service err: " + err.Error())
+		zlog.Info("获取群组信息服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -141,7 +141,7 @@ func (c *GroupController) UpdateGroupInfo(ctx *gin.Context) {
 
 	err := c.groupService.UpdateGroupInfo(req, userId.(string))
 	if err != nil {
-		zlog.Info("UpdateGroupInfo service err: " + err.Error())
+		zlog.Info("更新群组信息服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -160,7 +160,7 @@ func (c *GroupController) GetGroupMemberList(ctx *gin.Context) {
 
 	groupMemberList, err := c.groupService.GetGroupMemberList(req.GroupId)
 	if err != nil {
-		zlog.Info("GetGroupMemberList service err: " + err.Error())
+		zlog.Info("获取群组成员列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -186,7 +186,7 @@ func (c *GroupController) RemoveGroupMembers(ctx *gin.Context) {
 
 	err := c.groupService.RemoveGroupMembers(req, userId.(string))
 	if err != nil {
-		zlog.Info("RemoveGroupMembers service err: " + err.Error())
+		zlog.Info("移除群组成员服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -212,7 +212,7 @@ func (c *GroupController) EnterGroupDirectly(ctx *gin.Context) {
 
 	err := c.groupService.EnterGroupDirectly(req.GroupId, userId.(string))
 	if err != nil {
-		zlog.Info("EnterGroupDirectly service err: " + err.Error())
+		zlog.Info("加入群聊服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -238,7 +238,7 @@ func (c *GroupController) LeaveGroup(ctx *gin.Context) {
 
 	err := c.groupService.LeaveGroup(req.GroupId, userId.(string))
 	if err != nil {
-		zlog.Info("LeaveGroup service err: " + err.Error())
+		zlog.Info("退出群聊服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -264,7 +264,7 @@ func (c *GroupController) DismissGroup(ctx *gin.Context) {
 
 	err := c.groupService.DismissGroup(req.GroupId, userId.(string))
 	if err != nil {
-		zlog.Info("DismissGroup service err: " + err.Error())
+		zlog.Info("解散群聊服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -292,7 +292,7 @@ func (c *GroupController) SearchGroups(ctx *gin.Context) {
 
 	groupList, err := c.groupService.SearchGroups(req.Keyword, userId.(string))
 	if err != nil {
-		zlog.Info("SearchGroups service err: " + err.Error())
+		zlog.Info("搜索群组服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}

@@ -36,7 +36,7 @@ func GetInProcessTools(ctx context.Context) ([]einotool.BaseTool, error) {
 		mcpClient, err := client.NewInProcessClient(mcpServer) //同一进程内直接调用
 		if err != nil {
 			toolsErr = err
-			zlog.Error("create in-process MCP client failed: " + err.Error())
+			zlog.Error("创建进程内MCP客户端失败: " + err.Error())
 			return
 		}
 
@@ -52,7 +52,7 @@ func GetInProcessTools(ctx context.Context) ([]einotool.BaseTool, error) {
 		_, err = mcpClient.Initialize(ctx, initRequest)
 		if err != nil {
 			toolsErr = err
-			zlog.Error("initialize MCP client failed: " + err.Error())
+			zlog.Error("初始化MCP客户端失败: " + err.Error())
 			return
 		}
 
@@ -62,7 +62,7 @@ func GetInProcessTools(ctx context.Context) ([]einotool.BaseTool, error) {
 		})
 		if err != nil {
 			toolsErr = err
-			zlog.Error("get MCP tools failed: " + err.Error())
+			zlog.Error("获取MCP工具失败: " + err.Error())
 			return
 		}
 
@@ -73,7 +73,7 @@ func GetInProcessTools(ctx context.Context) ([]einotool.BaseTool, error) {
 		for _, t := range einoTools {
 			info, ierr := t.Info(metaCtx)
 			if ierr != nil {
-				zlog.Error("tool Info failed: " + ierr.Error())
+				zlog.Error("获取工具信息失败: " + ierr.Error())
 				continue
 			}
 			allToolInfos = append(allToolInfos, info)

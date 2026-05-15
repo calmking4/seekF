@@ -37,10 +37,10 @@ func GetModelPool() *ModelPool {
 				BaseURL: cfg.DeepseekUrl,
 			})
 			if err != nil {
-				zlog.Error("init deepseek model failed: " + err.Error())
+				zlog.Error("初始化deepseek模型失败: " + err.Error())
 			} else {
 				modelPool.DeepSeek = ds
-				zlog.Info("deepseek model initialized successfully")
+				zlog.Info("deepseek模型初始化成功")
 			}
 		}
 
@@ -51,10 +51,10 @@ func GetModelPool() *ModelPool {
 				BaseURL: cfg.QwenBaseUrl,
 			})
 			if err != nil {
-				zlog.Error("init qwen model failed: " + err.Error())
+				zlog.Error("初始化qwen模型失败: " + err.Error())
 			} else {
 				modelPool.Qwen = qw
-				zlog.Info("qwen model initialized successfully")
+				zlog.Info("qwen模型初始化成功")
 			}
 		}
 
@@ -65,10 +65,10 @@ func GetModelPool() *ModelPool {
 				BaseURL: cfg.GlmBaseUrl,
 			})
 			if err != nil {
-				zlog.Error("init glm model failed: " + err.Error())
+				zlog.Error("初始化glm模型失败: " + err.Error())
 			} else {
 				modelPool.GLM = gm
-				zlog.Info("glm model initialized successfully")
+				zlog.Info("glm模型初始化成功")
 			}
 		}
 
@@ -79,14 +79,14 @@ func GetModelPool() *ModelPool {
 				BaseURL: cfg.GlmBaseUrl,
 			})
 			if err != nil {
-				zlog.Error("init glm-4.6v model failed: " + err.Error())
+				zlog.Error("初始化glm-4.6v模型失败: " + err.Error())
 			} else {
 				modelPool.GLM4V = g4v
-				zlog.Info("glm-4.6v model initialized successfully")
+				zlog.Info("glm-4.6v模型初始化成功")
 			}
 		}
 
-		zlog.Info("model pool initialization completed")
+		zlog.Info("模型池初始化完成")
 	})
 	return modelPool
 }

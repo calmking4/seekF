@@ -69,7 +69,7 @@ func (s *GroupServiceImpl) CreateGroup(req *userreq.CreateGroupRequest) error {
 	members := []string{req.OwnerId}
 	membersBytes, err := json.Marshal(members)
 	if err != nil {
-		zlog.Info("Marshal members err: " + err.Error())
+		zlog.Info("序列化成员列表错误: " + err.Error())
 		return fmt.Errorf("系统错误")
 	}
 
@@ -90,7 +90,7 @@ func (s *GroupServiceImpl) CreateGroup(req *userreq.CreateGroupRequest) error {
 
 	// 创建群组
 	if err := s.groupDAO.CreateGroup(group); err != nil {
-		zlog.Info("CreateGroup dao err: " + err.Error())
+		zlog.Info("创建群组数据库错误: " + err.Error())
 		return fmt.Errorf("创建群聊失败")
 	}
 
@@ -105,7 +105,7 @@ func (s *GroupServiceImpl) CreateGroup(req *userreq.CreateGroupRequest) error {
 	}
 
 	if err := s.contactDAO.CreateUserContact(contact); err != nil {
-		zlog.Info("CreateUserContact err: " + err.Error())
+		zlog.Info("创建用户联系人错误: " + err.Error())
 		return fmt.Errorf("添加联系人失败")
 	}
 

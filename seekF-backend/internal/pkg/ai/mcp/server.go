@@ -39,7 +39,7 @@ func InitMCPServer() error {
 		mcpServer.AddTool(webSearchTool.GetWebSearchTool(), webSearchTool.HandleWebSearchRequest)
 		mcpServer.AddTool(discoverPostsTool.GetDiscoverPostsTool(), discoverPostsTool.HandleDiscoverPostsRequest)
 
-		zlog.Info("MCP server initialized with weather, exchange rate, web search and discover posts tools")
+		zlog.Info("MCP服务器初始化完成，包含天气、汇率、网页搜索和帖子搜索工具")
 	})
 	return initErr
 }
@@ -48,7 +48,7 @@ func InitMCPServer() error {
 func GetMCPServer() *server.MCPServer {
 	if mcpServer == nil {
 		if err := InitMCPServer(); err != nil {
-			zlog.Error("failed to init MCP server: " + err.Error())
+			zlog.Error("初始化MCP服务器失败: " + err.Error())
 			return nil
 		}
 	}

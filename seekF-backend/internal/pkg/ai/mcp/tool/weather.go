@@ -55,7 +55,7 @@ func (t *WeatherTool) HandleWeatherRequest(ctx context.Context, request mcp.Call
 
 	weather, err := t.queryWeather(ctx, location)
 	if err != nil {
-		zlog.Error("query weather failed: " + err.Error())
+		zlog.Error("查询天气失败: " + err.Error())
 		return mcp.NewToolResultText("查询天气失败: " + err.Error()), nil
 	}
 

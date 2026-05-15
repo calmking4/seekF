@@ -62,7 +62,7 @@ func NewAIChatService(sessionDAO userdao.SessionDAO, messageDAO userdao.MessageD
 func (s *AIChatServiceImpl) CreateSession(userId string, req userreq.CreateAISessionRequest) (*userresp.CreateAISessionRespond, error) {
 	session, err := s.sessionDAO.CreateAISession(userId, req.ModelType)
 	if err != nil {
-		zlog.Error("create AI session failed: " + err.Error())
+		zlog.Error("创建AI会话失败: " + err.Error())
 		return nil, fmt.Errorf("创建会话失败")
 	}
 
@@ -84,7 +84,7 @@ func (s *AIChatServiceImpl) GetSessionList(userId string, page int, pageSize int
 
 	sessions, err := s.sessionDAO.GetAISessionList(userId)
 	if err != nil {
-		zlog.Error("get AI session list failed: " + err.Error())
+		zlog.Error("获取AI会话列表失败: " + err.Error())
 		return nil, fmt.Errorf("获取会话列表失败")
 	}
 
@@ -125,13 +125,13 @@ func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, pageSize int, cu
 
 	total, err := s.messageDAO.CountMessagesBySessionId(sessionId)
 	if err != nil {
-		zlog.Error("count AI messages failed: " + err.Error())
+		zlog.Error("统计AI消息失败: " + err.Error())
 		return nil, 0, fmt.Errorf("获取消息历史失败")
 	}
 
 	messages, err := s.messageDAO.GetMessagesBySessionIdWithCursor(sessionId, cursor, pageSize, direction)
 	if err != nil {
-		zlog.Error("get AI messages failed: " + err.Error())
+		zlog.Error("获取AI消息失败: " + err.Error())
 		return nil, 0, fmt.Errorf("获取消息历史失败")
 	}
 
@@ -161,14 +161,14 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	// 校验AI会话是否存在
 	session, err := s.sessionDAO.GetAISessionByUuid(req.SessionId)
 	if err != nil {
-		zlog.Error("get AI session failed: " + err.Error())
+		zlog.Error("获取AI会话失败: " + err.Error())
 		return fmt.Errorf("会话不存在")
 	}
 
 	// 获取用户信息
 	user, err := s.userInfoDAO.FindUserByUuid(userId)
 	if err != nil {
-		zlog.Error("get user info failed: " + err.Error())
+		zlog.Error("获取用户信息失败: " + err.Error())
 		return fmt.Errorf("系统错误")
 	}
 
@@ -206,7 +206,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	}
 
 	if err := s.messageDAO.CreateMessage(userMessage); err != nil {
-		zlog.Error("save user message failed: " + err.Error())
+		zlog.Error("保存用户消息失败: " + err.Error())
 		return fmt.Errorf("发送消息失败")
 	}
 
@@ -220,7 +220,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	// 从DB读取历史消息构建上下文（最近100条）
 	messages, err := s.messageDAO.GetMessagesBySessionId(req.SessionId, 100, 0)
 	if err != nil {
-		zlog.Error("get message history for context failed: " + err.Error())
+		zlog.Error("获取消息历史上下文失败: " + err.Error())
 		messages = []models.Message{}
 	}
 
@@ -253,7 +253,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 			}
 			knowledgeContext += "请根据以上知识库内容回答用户的问题。如果知识库没有相关信息，请忽略并按你原来的知识回答。"
 			systemPrompt = knowledgeContext + "\n\n" + systemPrompt
-			zlog.Info("knowledge search found " + fmt.Sprint(len(knowledgeResults)) + " results")
+			zlog.Info("知识库搜索找到 " + fmt.Sprint(len(knowledgeResults)) + " 条结果")
 		}
 	}
 
@@ -311,7 +311,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	pool := aipkg.GetModelPool()
 	chatModel := pool.GetModel(req.ModelType)
 	if chatModel == nil {
-		zlog.Error("model not available: " + req.ModelType)
+		zlog.Error(req.ModelType + " 模型不可用")
 		return fmt.Errorf("模型不可用")
 	}
 
@@ -319,20 +319,20 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	// 若 MCP 工具不可用/初始化失败，则回退为普通单轮流式。
 	finalContent, handled, sources, posts, err := runMCPAgentFlow(ctx, chatModel, chatMessages, onChunk, req.UseWebSearch)
 	if err != nil {
-		zlog.Error("MCP agent flow failed: " + err.Error())
+		zlog.Error("MCP代理流程失败: " + err.Error())
 		return fmt.Errorf("AI响应失败")
 	}
 	if handled {
 		// 如果有搜索来源数据，通过 onSources 回调推送给前端
 		if len(sources) > 0 && onSources != nil {
 			if err := onSources(sources); err != nil {
-				zlog.Error("send sources to client failed: " + err.Error())
+				zlog.Error("发送搜索来源到客户端失败: " + err.Error())
 			}
 		}
 		// 如果有帖子数据，通过 onPosts 回调推送给前端
 		if len(posts) > 0 && onPosts != nil {
 			if err := onPosts(posts); err != nil {
-				zlog.Error("send posts to client failed: " + err.Error())
+				zlog.Error("发送帖子到客户端失败: " + err.Error())
 			}
 		}
 		return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, sources, posts, onChunk, onComplete)
@@ -340,7 +340,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 
 	finalContent, err = streamChatModelToSSE(ctx, chatModel, chatMessages, onChunk)
 	if err != nil {
-		zlog.Error("call AI model stream failed: " + err.Error())
+		zlog.Error("调用AI模型流失败: " + err.Error())
 		return fmt.Errorf("AI响应失败")
 	}
 
@@ -353,7 +353,7 @@ func (s *AIChatServiceImpl) persistAndCompleteAIMessage(req userreq.SendAIMessag
 	if finalContent == "" {
 		finalContent = "抱歉，我暂时无法回答这个问题。"
 		if err := onChunk(finalContent); err != nil {
-			zlog.Error("send final chunk failed: " + err.Error())
+			zlog.Error("发送最终数据块失败: " + err.Error())
 		}
 	}
 
@@ -422,14 +422,14 @@ func streamChatModelToSSE(ctx context.Context, m einomodel.ToolCallingChatModel,
 			break
 		}
 		if err != nil {
-			zlog.Error("read stream chunk failed: " + err.Error())
+			zlog.Error("读取流数据块失败: " + err.Error())
 			break
 		}
 
 		if chunk != nil && len(chunk.Content) > 0 {
 			fullContent.WriteString(chunk.Content)
 			if err := onChunk(chunk.Content); err != nil {
-				zlog.Error("send chunk to client failed: " + err.Error())
+				zlog.Error("发送数据块到客户端失败: " + err.Error())
 				break
 			}
 		}
@@ -447,7 +447,7 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 	onChunk func(chunk string) error, enableWebSearch bool) (finalContent string, handled bool, sources []toolpkg.SearchSource, posts []toolpkg.DiscoverPostItem, err error) {
 	toolInfos, toolByName, err := mcppkg.FilteredMCPToolBinding(ctx, enableWebSearch)
 	if err != nil {
-		zlog.Error("get MCP tools failed: " + err.Error())
+		zlog.Error("获取MCP工具失败: " + err.Error())
 		return "", false, nil, nil, nil
 	}
 	if len(toolInfos) == 0 {
@@ -456,7 +456,7 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 
 	modelWithTools, err := chatModel.WithTools(toolInfos)
 	if err != nil {
-		zlog.Error("WithTools failed: " + err.Error())
+		zlog.Error("绑定工具失败: " + err.Error())
 		return "", false, nil, nil, nil
 	}
 
@@ -471,7 +471,7 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 	// 如果 AI 觉得不需要工具（比如问"1+1=?"），ToolCalls 为空，回退到普通流式回答。
 	first, err := modelWithTools.Generate(ctx, chatMessages)
 	if err != nil {
-		zlog.Error("MCP agent Generate (tool decision) failed: " + err.Error())
+		zlog.Error("MCP代理生成(工具决策)失败: " + err.Error())
 		return "", false, nil, nil, nil
 	}
 
@@ -570,15 +570,15 @@ func (s *AIChatServiceImpl) TextToSpeech(ctx context.Context, content string, vo
 // DeleteSession 删除AI会话及其所有消息
 func (s *AIChatServiceImpl) DeleteSession(sessionId string) error {
 	if err := s.messageDAO.DeleteMessagesBySessionId(sessionId); err != nil {
-		zlog.Error("delete AI session messages failed: " + err.Error())
+		zlog.Error("删除AI会话消息失败: " + err.Error())
 		return fmt.Errorf("删除会话消息失败")
 	}
 
 	if err := s.sessionDAO.DeleteAISession(sessionId); err != nil {
-		zlog.Error("delete AI session failed: " + err.Error())
+		zlog.Error("删除AI会话失败: " + err.Error())
 		return fmt.Errorf("删除会话失败")
 	}
 
-	zlog.Info("delete AI session success: " + sessionId)
+	zlog.Info("删除AI会话成功: " + sessionId)
 	return nil
 }

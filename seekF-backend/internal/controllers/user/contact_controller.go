@@ -31,7 +31,7 @@ func (c *ContactController) GetUserList(ctx *gin.Context) {
 
 	userList, err := c.contactService.GetUserList(userUuid.(string))
 	if err != nil {
-		zlog.Info("GetUserList service err: " + err.Error())
+		zlog.Info("获取联系人列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -43,14 +43,14 @@ func (c *ContactController) GetUserList(ctx *gin.Context) {
 func (c *ContactController) GetContactInfo(ctx *gin.Context) {
 	var getContactInfoReq userreq.GetContactInfoRequest
 	if err := ctx.ShouldBindJSON(&getContactInfoReq); err != nil {
-		zlog.Info("GetContactInfo err: " + err.Error())
+		zlog.Info("获取联系人信息参数错误: " + err.Error())
 		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
 
 	contactInfo, err := c.contactService.GetContactInfo(getContactInfoReq.ContactId)
 	if err != nil {
-		zlog.Info("GetContactInfo service err: " + err.Error())
+		zlog.Info("获取联系人信息服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -62,7 +62,7 @@ func (c *ContactController) GetContactInfo(ctx *gin.Context) {
 func (c *ContactController) DeleteContact(ctx *gin.Context) {
 	var deleteContactReq userreq.DeleteContactRequest
 	if err := ctx.ShouldBindJSON(&deleteContactReq); err != nil {
-		zlog.Info("DeleteContact err: " + err.Error())
+		zlog.Info("删除联系人参数错误: " + err.Error())
 		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
@@ -75,7 +75,7 @@ func (c *ContactController) DeleteContact(ctx *gin.Context) {
 
 	err := c.contactService.DeleteContact(userUuid.(string), deleteContactReq.ContactId)
 	if err != nil {
-		zlog.Info("DeleteContact service err: " + err.Error())
+		zlog.Info("删除联系人服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -87,7 +87,7 @@ func (c *ContactController) DeleteContact(ctx *gin.Context) {
 func (c *ContactController) ApplyContact(ctx *gin.Context) {
 	var applyContactReq userreq.ApplyContactRequest
 	if err := ctx.ShouldBindJSON(&applyContactReq); err != nil {
-		zlog.Info("ApplyContact err: " + err.Error())
+		zlog.Info("申请添加联系人参数错误: " + err.Error())
 		resp.Error(ctx, "参数绑定失败", http.StatusBadRequest)
 		return
 	}
@@ -100,7 +100,7 @@ func (c *ContactController) ApplyContact(ctx *gin.Context) {
 
 	err := c.contactService.ApplyContact(userUuid.(string), applyContactReq.ContactId, applyContactReq.Message)
 	if err != nil {
-		zlog.Info("ApplyContact service err: " + err.Error())
+		zlog.Info("申请添加联系人服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -119,7 +119,7 @@ func (c *ContactController) GetNewContactList(ctx *gin.Context) {
 
 	contactList, err := c.contactService.GetNewContactList(userUuid.(string))
 	if err != nil {
-		zlog.Info("GetNewContactList service err: " + err.Error())
+		zlog.Info("获取新联系人申请列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -155,7 +155,7 @@ func (c *ContactController) PassContactApply(ctx *gin.Context) {
 	}
 
 	if err != nil {
-		zlog.Info("PassContactApply service err: " + err.Error())
+		zlog.Info("通过联系人申请服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -183,7 +183,7 @@ func (c *ContactController) BlackContact(ctx *gin.Context) {
 	// 调用服务层方法
 	err := c.contactService.BlackContact(userUuid.(string), blackContactReq.ContactId)
 	if err != nil {
-		zlog.Info("BlackContact service err: " + err.Error())
+		zlog.Info("拉黑联系人服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -211,7 +211,7 @@ func (c *ContactController) CancelBlackContact(ctx *gin.Context) {
 	// 调用服务层方法
 	err := c.contactService.CancelBlackContact(userUuid.(string), blackContactReq.ContactId)
 	if err != nil {
-		zlog.Info("CancelBlackContact service err: " + err.Error())
+		zlog.Info("解除拉黑联系人服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -239,7 +239,7 @@ func (c *ContactController) GetApplyGroupList(ctx *gin.Context) {
 	// 调用服务层方法
 	data, err := c.contactService.GetApplyGroupList(getApplyGroupListReq.GroupId, userUuid.(string))
 	if err != nil {
-		zlog.Info("GetApplyGroupList service err: " + err.Error())
+		zlog.Info("获取群聊申请列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -275,7 +275,7 @@ func (c *ContactController) RefuseContactApply(ctx *gin.Context) {
 	}
 
 	if err != nil {
-		zlog.Info("RefuseContactApply service err: " + err.Error())
+		zlog.Info("拒绝联系人申请服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -303,7 +303,7 @@ func (c *ContactController) BlackApply(ctx *gin.Context) {
 	// 调用服务层方法
 	err := c.contactService.BlackApply(userUuid.(string), blackApplyReq.ContactId)
 	if err != nil {
-		zlog.Info("BlackApply service err: " + err.Error())
+		zlog.Info("拉黑申请服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -331,7 +331,7 @@ func (c *ContactController) SearchUsers(ctx *gin.Context) {
 
 	userList, err := c.contactService.SearchUsers(req.Keyword, userUuid.(string))
 	if err != nil {
-		zlog.Info("SearchUsers service err: " + err.Error())
+		zlog.Info("搜索用户服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -350,7 +350,7 @@ func (c *ContactController) GetMyApplyList(ctx *gin.Context) {
 
 	applyList, err := c.contactService.GetMyApplyList(userUuid.(string))
 	if err != nil {
-		zlog.Info("GetMyApplyList service err: " + err.Error())
+		zlog.Info("获取我的申请列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
