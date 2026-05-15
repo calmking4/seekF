@@ -78,7 +78,7 @@ func (t *ExchangeRateTool) HandleExchangeRateRequest(ctx context.Context, reques
 // queryExchangeRate 查询两种货币之间的汇率
 func (t *ExchangeRateTool) queryExchangeRate(ctx context.Context, baseCurrency, targetCurrency string) (string, error) {
 	if t.apiKey == "" {
-		return "", fmt.Errorf("exchange rate api key not configured")
+		return "", fmt.Errorf("汇率API密钥未配置")
 	}
 
 	// 构建ExchangeRate-API请求URL
@@ -98,7 +98,7 @@ func (t *ExchangeRateTool) queryExchangeRate(ctx context.Context, baseCurrency, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+		return "", fmt.Errorf("API请求失败，状态码: %d", resp.StatusCode)
 	}
 
 	// 定义响应数据结构体
@@ -124,7 +124,7 @@ func (t *ExchangeRateTool) queryExchangeRate(ctx context.Context, baseCurrency, 
 	// 检查API返回的错误
 	if result.Result == "error" {
 		errorMsg := getExchangeRateErrorMessage(result.ErrorType)
-		return "", fmt.Errorf("API error: %s", errorMsg)
+		return "", fmt.Errorf("API错误: %s", errorMsg)
 	}
 
 	// 获取货币中文名称

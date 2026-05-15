@@ -52,7 +52,7 @@ func GetSession(token string) (*Session, error) {
 	}
 	var sess Session
 	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
-		return nil, fmt.Errorf("invalid session payload: %w", err)
+		return nil, fmt.Errorf("无效的会话数据: %w", err)
 	}
 	return &sess, nil
 }

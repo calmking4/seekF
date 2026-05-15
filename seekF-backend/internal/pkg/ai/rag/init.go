@@ -75,7 +75,7 @@ func (r *RAG) Search(ctx context.Context, collectionName string, query string, t
 	}
 
 	if len(vectors) == 0 {
-		return nil, fmt.Errorf("embedding failed")
+		return nil, fmt.Errorf("向量化失败")
 	}
 
 	return db.GetQdrant().Search(ctx, collectionName, vectors[0], topK)

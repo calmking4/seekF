@@ -97,8 +97,8 @@ func (e *Embedding) embedSingle(ctx context.Context, text string) ([]float32, er
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		zlog.Error("embedding request failed: " + string(body))
-		return nil, fmt.Errorf("embedding request failed with status: %d", resp.StatusCode)
+		zlog.Error("向量化请求失败: " + string(body))
+		return nil, fmt.Errorf("向量化请求失败，状态码: %d", resp.StatusCode)
 	}
 
 	var result EmbeddingResponse
@@ -107,7 +107,7 @@ func (e *Embedding) embedSingle(ctx context.Context, text string) ([]float32, er
 	}
 
 	if len(result.Data) == 0 {
-		return nil, fmt.Errorf("no embedding returned")
+		return nil, fmt.Errorf("未返回向量化结果")
 	}
 
 	return result.Data[0].Embedding, nil

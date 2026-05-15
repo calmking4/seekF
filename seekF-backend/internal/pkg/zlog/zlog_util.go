@@ -23,8 +23,8 @@ func init() {
 	encoder := zapcore.NewJSONEncoder(encoderConfig)
 	conf := configs.GetConfig()
 	logPath = conf.LogPath
-	file, _ := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	fileWriteSyncer := zapcore.AddSync(file)
+	// 使用 lumberjack 实现日志轮转
+	fileWriteSyncer := getFileLogWriter()
 	core := zapcore.NewTee(
 		zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), zapcore.DebugLevel),
 		zapcore.NewCore(encoder, fileWriteSyncer, zapcore.DebugLevel),

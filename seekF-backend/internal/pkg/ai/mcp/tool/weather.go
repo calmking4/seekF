@@ -65,7 +65,7 @@ func (t *WeatherTool) HandleWeatherRequest(ctx context.Context, request mcp.Call
 // queryWeather 查询指定位置的天气信息
 func (t *WeatherTool) queryWeather(ctx context.Context, location string) (string, error) {
 	if t.apiKey == "" {
-		return "", fmt.Errorf("seniverse api key not configured")
+		return "", fmt.Errorf("心知天气API密钥未配置")
 	}
 
 	// 构建心知天气API请求URL
@@ -85,7 +85,7 @@ func (t *WeatherTool) queryWeather(ctx context.Context, location string) (string
 	defer resp.Body.Close() //在Go语言中，当发起HTTP请求后，需要手动关闭响应体以释放系统资源
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+		return "", fmt.Errorf("API请求失败，状态码: %d", resp.StatusCode)
 	}
 
 	// 定义响应数据结构体

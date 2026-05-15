@@ -88,7 +88,7 @@ type tavilyResponse struct {
 // 返回包含 TextContent + EmbeddedResource 的 CallToolResult
 func (t *WebSearchTool) searchWeb(ctx context.Context, query string) (*mcp.CallToolResult, error) {
 	if t.apiKey == "" {
-		return nil, fmt.Errorf("tavily api key not configured")
+		return nil, fmt.Errorf("Tavily搜索API密钥未配置")
 	}
 
 	// 构建请求体
@@ -117,7 +117,7 @@ func (t *WebSearchTool) searchWeb(ctx context.Context, query string) (*mcp.CallT
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tavily API request failed with status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("Tavily API请求失败，状态码: %d", resp.StatusCode)
 	}
 
 	// 解析响应

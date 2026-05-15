@@ -75,7 +75,7 @@ func initOSSClient() {
 	accessKeySecret := cfg.OSSConfig.AccessKeySecret
 
 	if region == "" || accessKeyID == "" || accessKeySecret == "" || bucketName == "" {
-		clientErr = fmt.Errorf("OSS config missing, please set [ossConfig] AccessKeyID/AccessKeySecret/Region/Bucket")
+		clientErr = fmt.Errorf("OSS配置缺失，请设置 [ossConfig] AccessKeyID/AccessKeySecret/Region/Bucket")
 		return
 	}
 
@@ -97,7 +97,7 @@ func getClient() (*oss.Client, error) {
 	}
 
 	if ossClient == nil {
-		return nil, fmt.Errorf("OSS client not initialized")
+		return nil, fmt.Errorf("OSS客户端未初始化")
 	}
 
 	return ossClient, nil
@@ -152,7 +152,7 @@ func buildFileURL(objectKey string) string {
 
 func UploadReader(ctx context.Context, r io.Reader, filename string, category FileCategory) (*UploadResult, error) {
 	if r == nil {
-		return nil, fmt.Errorf("reader is nil")
+		return nil, fmt.Errorf("读取器为空")
 	}
 
 	client, err := getClient()
@@ -172,7 +172,7 @@ func UploadReader(ctx context.Context, r io.Reader, filename string, category Fi
 		Body:   r,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("put object to OSS failed: %w", err)
+		return nil, fmt.Errorf("上传文件到OSS失败: %w", err)
 	}
 
 	return &UploadResult{
@@ -183,12 +183,12 @@ func UploadReader(ctx context.Context, r io.Reader, filename string, category Fi
 
 func UploadMultipartFile(ctx context.Context, fileHeader *multipart.FileHeader, category FileCategory) (*UploadResult, error) {
 	if fileHeader == nil {
-		return nil, fmt.Errorf("file header is nil")
+		return nil, fmt.Errorf("文件头为空")
 	}
 
 	src, err := fileHeader.Open()
 	if err != nil {
-		return nil, fmt.Errorf("open multipart file failed: %w", err)
+		return nil, fmt.Errorf("打开上传文件失败: %w", err)
 	}
 	defer src.Close()
 
