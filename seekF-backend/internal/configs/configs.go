@@ -46,7 +46,9 @@ type OSSConfig struct {
 }
 
 type LogConfig struct {
-	LogPath string `toml:"logPath"`
+	LogPath      string `toml:"logPath"`      // 日志文件路径，如 "./logs/app.log"
+	MaxAge       int    `toml:"maxAge"`       // 保留旧日志的最大天数，默认 30
+	RotationTime int    `toml:"rotationTime"` // 轮转间隔（小时），默认 24
 }
 
 type KafkaConfig struct {

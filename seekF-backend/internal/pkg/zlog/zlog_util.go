@@ -1,12 +1,16 @@
 package zlog
 
 import (
+	"log"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime"
 	"seekF-backend/internal/configs"
+	"strings"
+	"time"
 
-	"github.com/natefinch/lumberjack"
+	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -23,7 +27,14 @@ func init() {
 	encoder := zapcore.NewJSONEncoder(encoderConfig)
 	conf := configs.GetConfig()
 	logPath = conf.LogPath
-	// 使用 lumberjack 实现日志轮转
+
+	// 确保日志目录存在
+	logDir := filepath.Dir(logPath)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		log.Printf("创建日志目录失败: %v", err)
+	}
+
+	// 使用 file-rotatelogs 实现按天日志轮转
 	fileWriteSyncer := getFileLogWriter()
 	core := zapcore.NewTee(
 		zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), zapcore.DebugLevel),
@@ -33,15 +44,28 @@ func init() {
 }
 
 func getFileLogWriter() (writeSyncer zapcore.WriteSyncer) {
-	lumberJackLogger := &lumberjack.Logger{
-		Filename:   logPath,
-		MaxSize:    100, // 单个文件最大100M
-		MaxBackups: 60,  // 多于60个日志文件后，清理较旧的日志
-		MaxAge:     1,   // 一天一切割
-		Compress:   false,
+	conf := configs.GetConfig()
+
+	// 配置轮转参数
+	maxAge := time.Duration(conf.MaxAge) * 24 * time.Hour       // 保留天数
+	rotationTime := time.Duration(conf.RotationTime) * time.Hour // 轮转间隔
+
+	// 生成带日期的文件名模式: ./logs/app.log -> ./logs/app.%Y%m%d.log
+	ext := filepath.Ext(logPath)
+	pattern := strings.TrimSuffix(logPath, ext) + ".%Y%m%d" + ext
+
+	writer, err := rotatelogs.New(
+		pattern,
+		rotatelogs.WithMaxAge(maxAge),         // 清理超过 maxAge 的旧文件
+		rotatelogs.WithRotationTime(rotationTime), // 轮转间隔
+	)
+	if err != nil {
+		// 轮转日志初始化失败，回退到 stdout，避免程序崩溃
+		log.Printf("初始化日志轮转失败: %v，回退到仅输出到 stdout", err)
+		return zapcore.AddSync(os.Stdout)
 	}
 
-	return zapcore.AddSync(lumberJackLogger)
+	return zapcore.AddSync(writer)
 }
 
 // getCallerInfoForLog 获得调用方的日志信息，包括函数名，文件名，行号

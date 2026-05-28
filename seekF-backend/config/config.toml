@@ -42,6 +42,8 @@ baseURL = "https://seekf.oss-cn-shenzhen.aliyuncs.com"
 
 [logConfig]
 logPath = "./logs/app.log"
+maxAge = 30
+rotationTime = 24
 
 [kafkaConfig]
 hostPort = "127.0.0.1:9092" # "127.0.0.1:9092,127.0.0.1:9093,127.0.0.1:9094" 多个kafka服务器
