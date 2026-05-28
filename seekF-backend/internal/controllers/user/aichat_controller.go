@@ -1,11 +1,13 @@
 package user
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	userreq "seekF-backend/internal/dto/user/user_req"
 	tool "seekF-backend/internal/pkg/ai/mcp/tool"
@@ -159,7 +161,11 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 		return nil
 	}
 
-	err := c.aiChatService.SendMessageStream(ctx.Request.Context(), userId, req, onChunk, onSources, onPosts, onComplete)
+	// 与 HTTP 连接解耦：用户切换会话导致连接断开时，仍继续生成并持久化
+	genCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), 15*time.Minute)
+	defer cancel()
+
+	err := c.aiChatService.SendMessageStream(genCtx, userId, req, onChunk, onSources, onPosts, onComplete)
 	if err != nil {
 		zlog.Info("发送消息服务错误: " + err.Error())
 		fmt.Fprintf(ctx.Writer, "data: {\"error\": \"%s\"}\n\n", err.Error())

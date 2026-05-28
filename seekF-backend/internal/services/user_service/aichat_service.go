@@ -429,8 +429,9 @@ func streamChatModelToSSE(ctx context.Context, m einomodel.ToolCallingChatModel,
 		if chunk != nil && len(chunk.Content) > 0 {
 			fullContent.WriteString(chunk.Content)
 			if err := onChunk(chunk.Content); err != nil {
-				zlog.Error("发送数据块到客户端失败: " + err.Error())
-				break
+				// 客户端断开（如切换会话）时不中断模型生成，继续聚合完整回复以便持久化
+				zlog.Warn("发送数据块到客户端失败，继续生成: " + err.Error())
+				continue
 			}
 		}
 	}

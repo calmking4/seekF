@@ -40,7 +40,10 @@
                                 </button>
                             </div>
                         </div>
-                        <p class="text-xs text-gray-500 truncate">{{ item.firstMessage || '点击开始对话' }}</p>
+                        <p class="text-xs text-gray-500 truncate flex items-center gap-1">
+                            <span v-if="activeStreamSessions.has(item.sessionId)" class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse flex-shrink-0"></span>
+                            <span class="truncate">{{ item.firstMessage || '点击开始对话' }}</span>
+                        </p>
                     </div>
                 </div>
             </div>
@@ -270,7 +273,11 @@ const sessionList = ref([])
 const activeIndex = ref(-1)
 const messageList = ref([])
 const inputMessage = ref('')
-const isStreaming = ref(false)
+const activeStreamSessions = ref(new Set())
+const isStreaming = computed(() => {
+    const sid = currentSession.value?.sessionId
+    return sid ? activeStreamSessions.value.has(sid) : false
+})
 const selectedImage = ref(null)
 const useKnowledgeBase = ref(false)
 const useWebSearch = ref(false)
@@ -287,7 +294,82 @@ const loadingMore = ref(false)
 const pageSize = 20
 const totalMessages = ref(0)
 const oldestCursor = ref('') // 最旧消息的时间戳游标
-let currentEventSource = null
+/** @type {Map<string, { close: () => void }>} */
+const activeStreams = new Map()
+/** @type {Map<string, { messages: any[], oldestCursor: string, hasMore: boolean, totalMessages: number }>} */
+const sessionCaches = new Map()
+
+const cloneSessionMessages = (messages) =>
+    messages.map(m => ({
+        ...m,
+        sources: m.sources ? [...m.sources] : [],
+        posts: m.posts ? [...m.posts] : []
+    }))
+
+const saveCurrentSessionCache = () => {
+    const session = currentSession.value
+    if (!session) return
+    sessionCaches.set(session.sessionId, {
+        messages: cloneSessionMessages(messageList.value),
+        oldestCursor: oldestCursor.value,
+        hasMore: hasMore.value,
+        totalMessages: totalMessages.value
+    })
+}
+
+const restoreSessionCache = (sessionId) => {
+    const cache = sessionCaches.get(sessionId)
+    if (!cache) return false
+    messageList.value = cloneSessionMessages(cache.messages)
+    oldestCursor.value = cache.oldestCursor
+    hasMore.value = cache.hasMore
+    totalMessages.value = cache.totalMessages
+    return true
+}
+
+const mergeCacheTailIfNewer = (sessionId) => {
+    const cache = sessionCaches.get(sessionId)
+    if (!cache?.messages?.length) return
+    const lastCache = cache.messages[cache.messages.length - 1]
+    if (!lastCache || lastCache.isSelf || !lastCache.content) return
+    const lastLocal = messageList.value[messageList.value.length - 1]
+    const cacheLen = lastCache.content.length
+    const localLen = lastLocal?.isSelf ? 0 : (lastLocal?.content?.length || 0)
+    if (cacheLen > localLen) {
+        if (lastLocal && !lastLocal.isSelf) {
+            messageList.value[messageList.value.length - 1] = { ...lastCache }
+        } else {
+            messageList.value.push({ ...lastCache })
+        }
+    }
+}
+
+const updateCachedMessage = (sessionId, aiMsgIndex, updater) => {
+    const cache = sessionCaches.get(sessionId)
+    const cacheMsg = cache?.messages[aiMsgIndex]
+    const listMsg = currentSession.value?.sessionId === sessionId
+        ? messageList.value[aiMsgIndex]
+        : null
+
+    // 浅拷贝缓存时可能与 messageList 共享同一对象，避免对同一引用执行两次 updater
+    if (cacheMsg && listMsg && cacheMsg === listMsg) {
+        updater(cacheMsg)
+    } else {
+        if (cacheMsg) updater(cacheMsg)
+        if (listMsg) updater(listMsg)
+    }
+    if (cache) sessionCaches.set(sessionId, cache)
+}
+
+const stopSessionStream = (sessionId) => {
+    const stream = activeStreams.get(sessionId)
+    if (stream) {
+        stream.close()
+        activeStreams.delete(sessionId)
+    }
+    activeStreamSessions.value.delete(sessionId)
+    activeStreamSessions.value = new Set(activeStreamSessions.value)
+}
 
 const currentSession = computed(() => {
     if (activeIndex.value === -1) return null
@@ -387,16 +469,24 @@ const loadSessionList = async () => {
     }
 }
 
-// 选择会话
+// 选择会话（不中断其它会话正在进行的 AI 生成）
 const selectSession = async (index) => {
+    saveCurrentSessionCache()
     activeIndex.value = index
     const session = sessionList.value[index]
     if (!session) return
 
-    // 关闭之前的 SSE 连接
-    if (currentEventSource) {
-        currentEventSource.close()
-        currentEventSource = null
+    const sessionId = session.sessionId
+
+    if (sessionCaches.has(sessionId)) {
+        restoreSessionCache(sessionId)
+        scrollToBottom()
+        if (!activeStreams.has(sessionId)) {
+            await loadMessageList(sessionId)
+            mergeCacheTailIfNewer(sessionId)
+            saveCurrentSessionCache()
+        }
+        return
     }
 
     hasMore.value = true
@@ -404,7 +494,8 @@ const selectSession = async (index) => {
     oldestCursor.value = ''
     messageList.value = []
 
-    await loadMessageList(session.sessionId)
+    await loadMessageList(sessionId)
+    saveCurrentSessionCache()
     scrollToBottom()
 }
 
@@ -515,16 +606,16 @@ const sendMessage = async () => {
         posts: []
     })
 
-    isStreaming.value = true
+    const sessionId = session.sessionId
+    const timeStr = () => new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+
+    saveCurrentSessionCache()
+    activeStreamSessions.value.add(sessionId)
+    activeStreamSessions.value = new Set(activeStreamSessions.value)
     scrollToBottom()
 
-    // 关闭之前的 SSE 连接
-    if (currentEventSource) {
-        currentEventSource.close()
-    }
-
-    currentEventSource = aiChat.sendMessage(
-        session.sessionId,
+    const streamHandle = aiChat.sendMessage(
+        sessionId,
         content,
         session.modelType,
         imageFile,
@@ -532,52 +623,63 @@ const sendMessage = async () => {
         useWebSearch.value,
         // onChunk
         (chunk) => {
-            const aiMsg = messageList.value[aiMsgIndex]
-            if (aiMsg) {
+            updateCachedMessage(sessionId, aiMsgIndex, (aiMsg) => {
                 aiMsg.content += chunk
+            })
+            if (currentSession.value?.sessionId === sessionId) {
                 scrollToBottom()
             }
         },
         // onSources
         (sources) => {
-            const aiMsg = messageList.value[aiMsgIndex]
-            if (aiMsg) {
+            updateCachedMessage(sessionId, aiMsgIndex, (aiMsg) => {
                 aiMsg.sources = sources
-            }
+            })
         },
         // onPosts
         (posts) => {
-            const aiMsg = messageList.value[aiMsgIndex]
-            if (aiMsg) {
+            updateCachedMessage(sessionId, aiMsgIndex, (aiMsg) => {
                 aiMsg.posts = posts
-            }
+            })
         },
         // onComplete
         () => {
-            const aiMsg = messageList.value[aiMsgIndex]
-            if (aiMsg) {
+            updateCachedMessage(sessionId, aiMsgIndex, (aiMsg) => {
                 aiMsg.isStreaming = false
-                aiMsg.sendTime = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                aiMsg.sendTime = timeStr()
+            })
+            activeStreams.delete(sessionId)
+            activeStreamSessions.value.delete(sessionId)
+            activeStreamSessions.value = new Set(activeStreamSessions.value)
+            const aiMsg = sessionCaches.get(sessionId)?.messages[aiMsgIndex]
+            const s = sessionList.value.find(item => item.sessionId === sessionId)
+            if (s && aiMsg) {
+                s.lastMessage = aiMsg.content
             }
-            isStreaming.value = false
-            session.lastMessage = aiMsg.content
-            currentEventSource = null
-            scrollToBottom()
+            saveCurrentSessionCache()
+            if (currentSession.value?.sessionId === sessionId) {
+                scrollToBottom()
+            }
         },
         // onError
         (error) => {
-            const aiMsg = messageList.value[aiMsgIndex]
-            if (aiMsg) {
+            updateCachedMessage(sessionId, aiMsgIndex, (aiMsg) => {
                 aiMsg.isStreaming = false
                 if (!aiMsg.content) {
                     aiMsg.content = '抱歉，响应出现错误：' + error
                 }
+                aiMsg.sendTime = timeStr()
+            })
+            activeStreams.delete(sessionId)
+            activeStreamSessions.value.delete(sessionId)
+            activeStreamSessions.value = new Set(activeStreamSessions.value)
+            saveCurrentSessionCache()
+            if (currentSession.value?.sessionId === sessionId) {
+                ElMessage.error('AI 响应失败')
             }
-            isStreaming.value = false
-            currentEventSource = null
-            ElMessage.error('AI 响应失败')
         }
     )
+    activeStreams.set(sessionId, streamHandle)
 }
 
 // 创建新会话
@@ -614,6 +716,8 @@ const handleDeleteSession = async (item, index) => {
 
         const success = await aiChat.deleteSession(item.sessionId)
         if (success) {
+            stopSessionStream(item.sessionId)
+            sessionCaches.delete(item.sessionId)
             sessionList.value.splice(index, 1)
             if (activeIndex.value === index) {
                 activeIndex.value = -1
@@ -636,9 +740,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-    if (currentEventSource) {
-        currentEventSource.close()
-        currentEventSource = null
+    for (const sessionId of activeStreams.keys()) {
+        stopSessionStream(sessionId)
     }
 })
 </script>
