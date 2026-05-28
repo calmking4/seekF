@@ -144,10 +144,15 @@
                                         </div>
                                         <span class="text-xs text-blue-400 thinking-text">正在思考</span>
                                     </div>
-                                    <!-- 文本消息 -->
-                                    <p v-if="msg.content && msg.content !== '图片'" class="text-sm whitespace-pre-wrap">
-                                        <span v-if="!msg.isSelf && msg.isStreaming">{{ msg.content }}<span class="inline-block w-0.5 h-4 bg-gray-400 ml-0.5 animate-pulse">|</span></span>
-                                        <span v-else>{{ msg.content }}</span>
+                                    <!-- AI消息：Markdown渲染 -->
+                                    <MarkdownRenderer
+                                        v-if="!msg.isSelf && msg.content && msg.content !== '图片'"
+                                        :content="msg.content"
+                                        :is-streaming="msg.isStreaming"
+                                    />
+                                    <!-- 用户消息：纯文本 -->
+                                    <p v-else-if="msg.isSelf && msg.content && msg.content !== '图片'" class="text-sm whitespace-pre-wrap">
+                                        {{ msg.content }}
                                     </p>
                                     <!-- 搜索来源 -->
                                     <SearchSources v-if="!msg.isSelf && msg.sources && msg.sources.length > 0" :sources="msg.sources" />
@@ -158,6 +163,16 @@
                                         @post-click="openDiscoverDetail"
                                     />
                                     <div class="flex items-center justify-end gap-1 mt-1">
+                                        <button
+                                            v-if="!msg.isSelf && !msg.isStreaming && msg.content"
+                                            class="inline-flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 text-blue-500 hover:text-blue-600 hover:bg-blue-50 active:scale-95"
+                                            :class="{ 'copy-success': copiedMap[msg.messageId] }"
+                                            title="复制"
+                                            @click="copyMessage(msg)"
+                                        >
+                                            <Icon v-if="copiedMap[msg.messageId]" name="uil:check" class="text-base" />
+                                            <Icon v-else name="ph:copy-simple-bold" class="text-base" />
+                                        </button>
                                         <TTSButton
                                             v-if="!msg.isSelf && !msg.isStreaming && msg.content"
                                             :playing="tts.isMessagePlaying(msg.messageId)"
@@ -240,6 +255,15 @@ const aiChat = useAIChat()
 const knowledge = useKnowledge()
 const tts = useTTS()
 const aiAvatarUrl = 'https://seekf.oss-cn-shenzhen.aliyuncs.com/common/ai_avatar/AI%E5%8A%A9%E6%89%8B%E5%A4%B4%E5%83%8F.png'
+
+// AI消息复制功能
+const copiedMap = ref({})
+function copyMessage(msg) {
+    navigator.clipboard.writeText(msg.content).then(() => {
+        copiedMap.value[msg.messageId] = true
+        setTimeout(() => { copiedMap.value[msg.messageId] = false }, 1500)
+    })
+}
 
 const currentUserAvatar = ref('')
 const sessionList = ref([])
@@ -658,5 +682,16 @@ onUnmounted(() => {
     50% {
         opacity: 1;
     }
+}
+
+.copy-success {
+    color: #10b981 !important;
+    animation: copy-pop 0.3s ease;
+}
+
+@keyframes copy-pop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.3); }
+    100% { transform: scale(1); }
 }
 </style>

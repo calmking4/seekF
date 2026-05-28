@@ -158,7 +158,8 @@ export const useAIChat = () => {
                                     return
                                 }
                             } catch (e) {
-                                console.error('解析 SSE 数据失败:', e)
+                                // JSON可能被chunk截断，拼回buffer等下一次读取
+                                buffer = line + '\n' + buffer
                             }
                         }
                     }
