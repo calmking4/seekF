@@ -7,20 +7,30 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"seekF-backend/internal/configs"
 	"seekF-backend/internal/pkg/zlog"
 )
 
+// ttsRequest TTS请求，启用 stream 时 API 以 SSE + base64 返回 PCM
 type ttsRequest struct {
 	Model          string `json:"model"`
 	Input          string `json:"input"`
 	Voice          string `json:"voice"`
 	ResponseFormat string `json:"response_format"`
+	EncodeFormat   string `json:"encode_format,omitempty"`
+	Stream         bool   `json:"stream"`
 }
 
-// Synthesize 调用智谱 TTS API，返回 WAV 格式音频数据
-func Synthesize(ctx context.Context, content string, voice string) ([]byte, error) {
+// StreamResult 流式TTS结果
+type StreamResult struct {
+	Body   io.ReadCloser // PCM 音频数据流
+	Format string        // 音频格式 (pcm)
+}
+
+// Synthesize 调用智谱 TTS API 的流式接口，返回 PCM 音频数据流
+func Synthesize(ctx context.Context, content string, voice string) (*StreamResult, error) {
 	cfg := configs.GetConfig().AIModelConfig
 
 	model := cfg.TTSModel
@@ -38,7 +48,9 @@ func Synthesize(ctx context.Context, content string, voice string) ([]byte, erro
 		Model:          model,
 		Input:          content,
 		Voice:          voice,
-		ResponseFormat: "wav",
+		ResponseFormat: "pcm",
+		EncodeFormat:   "base64",
+		Stream:         true,
 	}
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
@@ -53,25 +65,26 @@ func Synthesize(ctx context.Context, content string, voice string) ([]byte, erro
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.GlmApiKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	// 使用带超时的 HTTP 客户端，避免无限等待
+	client := &http.Client{Timeout: 3 * time.Minute}
+	resp, err := client.Do(req)
 	if err != nil {
 		zlog.Error("TTS API调用失败: " + err.Error())
 		return nil, fmt.Errorf("调用TTS服务失败")
 	}
-	defer resp.Body.Close()
+	// 注意：不 defer resp.Body.Close()，调用方负责关闭
 
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(resp.Body)
-		zlog.Error(fmt.Sprintf("TTS API returned %d: %s", resp.StatusCode, string(errBody)))
+		resp.Body.Close()
+		zlog.Error(fmt.Sprintf("TTS API返回 %d: %s", resp.StatusCode, string(errBody)))
 		return nil, fmt.Errorf("TTS服务返回错误: %d", resp.StatusCode)
 	}
 
-	wavData, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("读取TTS响应失败: %w", err)
-	}
+	zlog.Info("TTS流式响应开始，解析SSE并输出裸PCM")
 
-	zlog.Info(fmt.Sprintf("TTS response: contentType=%s, size=%d", resp.Header.Get("Content-Type"), len(wavData)))
-
-	return wavData, nil
+	return &StreamResult{
+		Body:   wrapSSEPCMStream(resp.Body),
+		Format: "pcm",
+	}, nil
 }

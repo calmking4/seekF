@@ -38,8 +38,8 @@ type AIChatService interface {
 	SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onPosts func(posts []toolpkg.DiscoverPostItem) error, onComplete func(fullContent string) error) error
 	// DeleteSession 删除AI会话
 	DeleteSession(sessionId string) error
-	// TextToSpeech 文本转语音，返回 WAV 音频数据
-	TextToSpeech(ctx context.Context, content string, voice string) ([]byte, error)
+	// TextToSpeech 流式文本转语音，返回流式结果
+	TextToSpeech(ctx context.Context, content string, voice string) (*tts.StreamResult, error)
 }
 
 // AIChatServiceImpl AI聊天服务实现
@@ -562,8 +562,8 @@ func extractStructuredData[T any](raw string) []T {
 	return items
 }
 
-// TextToSpeech 文本转语音
-func (s *AIChatServiceImpl) TextToSpeech(ctx context.Context, content string, voice string) ([]byte, error) {
+// TextToSpeech 文本转流式语音
+func (s *AIChatServiceImpl) TextToSpeech(ctx context.Context, content string, voice string) (*tts.StreamResult, error) {
 	return tts.Synthesize(ctx, content, voice)
 }
 

@@ -3,8 +3,8 @@ package user
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"strconv"
 	"strings"
 
 	userreq "seekF-backend/internal/dto/user/user_req"
@@ -175,17 +175,39 @@ func (c *AIChatController) TextToSpeech(ctx *gin.Context) {
 		return
 	}
 
-	wavData, err := c.aiChatService.TextToSpeech(ctx.Request.Context(), req.Content, req.Voice)
+	streamResult, err := c.aiChatService.TextToSpeech(ctx.Request.Context(), req.Content, req.Voice)
 	if err != nil {
 		zlog.Error("语音合成失败: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	defer streamResult.Body.Close()
 
-	ctx.Header("Content-Type", "audio/wav")
-	ctx.Header("Content-Length", strconv.Itoa(len(wavData)))
+	// 设置流式响应头
+	ctx.Header("Content-Type", "audio/pcm")
+	ctx.Header("Transfer-Encoding", "chunked")
+	ctx.Header("Cache-Control", "no-cache")
+	ctx.Header("Connection", "keep-alive")
 	ctx.Status(http.StatusOK)
-	ctx.Writer.Write(wavData)
+
+	// 逐块转发 PCM 数据
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := streamResult.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := ctx.Writer.Write(buf[:n]); writeErr != nil {
+				zlog.Error("写入音频数据块失败: " + writeErr.Error())
+				return
+			}
+			ctx.Writer.Flush()
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				zlog.Error("读取音频数据流失败: " + readErr.Error())
+			}
+			break
+		}
+	}
 }
 
 func (c *AIChatController) DeleteSession(ctx *gin.Context) {
