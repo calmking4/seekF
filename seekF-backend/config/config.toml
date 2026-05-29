@@ -73,6 +73,9 @@ glm4vModel = ""
 glmEmbeddingModel = ""
 ttsModel = "glm-tts"
 ttsVoice = "chuichui"
+qwenLocalApiKey = ""
+qwenLocalModel = ""
+qwenLocalBaseUrl = ""
 
 [qdrantConfig]
 host = "localhost"

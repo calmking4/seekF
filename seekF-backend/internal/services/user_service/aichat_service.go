@@ -225,7 +225,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	}
 
 	// 判断是否为多模态模型
-	isMultiModalModel := req.ModelType == "glm-4v"
+	isMultiModalModel := req.ModelType == "glm-4v" || req.ModelType == "qwen-local"
 
 	// 将DB消息转换为eino消息格式，添加系统提示，构建上下文
 	var chatMessages []*schema.Message

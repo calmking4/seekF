@@ -12,10 +12,11 @@ import (
 )
 
 type ModelPool struct {
-	DeepSeek model.ToolCallingChatModel
-	Qwen     model.ToolCallingChatModel
-	GLM      model.ToolCallingChatModel
-	GLM4V    model.ToolCallingChatModel
+	DeepSeek  model.ToolCallingChatModel
+	Qwen      model.ToolCallingChatModel
+	GLM       model.ToolCallingChatModel
+	GLM4V     model.ToolCallingChatModel
+	QwenLocal model.ToolCallingChatModel
 }
 
 var (
@@ -86,6 +87,20 @@ func GetModelPool() *ModelPool {
 			}
 		}
 
+		if cfg.QwenLocalBaseUrl != "" {
+			ql, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
+				APIKey:  cfg.QwenLocalApiKey,
+				Model:   cfg.QwenLocalModel,
+				BaseURL: cfg.QwenLocalBaseUrl,
+			})
+			if err != nil {
+				zlog.Error("初始化qwen-local模型失败: " + err.Error())
+			} else {
+				modelPool.QwenLocal = ql
+				zlog.Info("qwen-local模型初始化成功")
+			}
+		}
+
 		zlog.Info("模型池初始化完成")
 	})
 	return modelPool
@@ -101,6 +116,8 @@ func (p *ModelPool) GetModel(modelType string) model.ToolCallingChatModel {
 		return p.GLM
 	case "glm-4v":
 		return p.GLM4V
+	case "qwen-local":
+		return p.QwenLocal
 	default:
 		return p.DeepSeek
 	}

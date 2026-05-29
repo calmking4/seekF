@@ -82,6 +82,9 @@ type AIModelConfig struct {
 	GlmEmbeddingModel string `toml:"glmEmbeddingModel"`
 	TTSModel          string `toml:"ttsModel"`
 	TTSVoice          string `toml:"ttsVoice"`
+	QwenLocalApiKey   string `toml:"qwenLocalApiKey"`
+	QwenLocalModel    string `toml:"qwenLocalModel"`
+	QwenLocalBaseUrl  string `toml:"qwenLocalBaseUrl"`
 }
 
 type QdrantConfig struct {
@@ -206,6 +209,15 @@ func loadEnvConfig(cfg *Config) {
 	}
 	if v := os.Getenv("TTS_VOICE"); v != "" {
 		cfg.AIModelConfig.TTSVoice = v
+	}
+	if v := os.Getenv("QWEN_LOCAL_API_KEY"); v != "" {
+		cfg.AIModelConfig.QwenLocalApiKey = v
+	}
+	if v := os.Getenv("QWEN_LOCAL_MODEL"); v != "" {
+		cfg.AIModelConfig.QwenLocalModel = v
+	}
+	if v := os.Getenv("QWEN_LOCAL_BASE_URL"); v != "" {
+		cfg.AIModelConfig.QwenLocalBaseUrl = v
 	}
 
 	// Seniverse Configuration

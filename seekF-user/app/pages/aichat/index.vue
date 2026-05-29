@@ -70,6 +70,7 @@
                             <el-option label="Qwen" value="qwen" />
                             <el-option label="GLM" value="glm" />
                             <el-option label="GLM-4.6V(图片识别)" value="glm-4v" />
+                            <el-option label="Qwen3.5-9B(本地)" value="qwen-local" />
                         </el-select>
                         <el-switch
                             v-model="useKnowledgeBase"
@@ -214,7 +215,7 @@
                     <div class="flex gap-3">
                         <!-- 图片上传按钮：仅 GLM-4.6V 模型显示 -->
                         <el-upload
-                            v-if="currentSession?.modelType === 'glm-4v'"
+                            v-if="currentSession?.modelType === 'glm-4v' || currentSession?.modelType === 'qwen-local'"
                             :show-file-list="false"
                             :auto-upload="false"
                             accept="image/*"
