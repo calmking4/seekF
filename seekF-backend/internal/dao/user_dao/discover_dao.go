@@ -3,7 +3,6 @@ package userdao
 import (
 	"errors"
 	"seekF-backend/internal/models"
-	"seekF-backend/internal/pkg/db"
 
 	"gorm.io/gorm"
 )
@@ -61,19 +60,21 @@ type DiscoverDAO interface {
 	CountCollectedPostsByFolder(folderId int64) (int64, error)
 }
 
-type DiscoverDAOImpl struct{}
+type DiscoverDAOImpl struct {
+	db *gorm.DB
+}
 
-func NewDiscoverDAO() DiscoverDAO {
-	return &DiscoverDAOImpl{}
+func NewDiscoverDAO(db *gorm.DB) DiscoverDAO {
+	return &DiscoverDAOImpl{db: db}
 }
 
 func (d *DiscoverDAOImpl) CreatePost(post *models.DiscoverPost) error {
-	return db.GormDB.Create(post).Error
+	return d.db.Create(post).Error
 }
 
 func (d *DiscoverDAOImpl) FindPostByUuid(uuid string) (*models.DiscoverPost, error) {
 	var post models.DiscoverPost
-	result := db.GormDB.Where("uuid = ?", uuid).First(&post)
+	result := d.db.Where("uuid = ?", uuid).First(&post)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -83,7 +84,7 @@ func (d *DiscoverDAOImpl) FindPostByUuid(uuid string) (*models.DiscoverPost, err
 func (d *DiscoverDAOImpl) ListPosts(page, pageSize int) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
-	result := db.GormDB.Where("status = ?", 0).Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&posts)
+	result := d.db.Where("status = ?", 0).Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&posts)
 	return posts, result.Error
 }
 
@@ -94,7 +95,7 @@ func (d *DiscoverDAOImpl) SearchPostsByKeyword(keyword string, limit int) ([]mod
 	var posts []models.DiscoverPost
 	likePattern := "%" + keyword + "%"
 	tagMatch := `"` + keyword + `"`
-	result := db.GormDB.Where(
+	result := d.db.Where(
 		"status = 0 AND (title LIKE ? OR content LIKE ? OR JSON_CONTAINS(tags, ?))",
 		likePattern, likePattern, tagMatch,
 	).Order("created_at DESC").Limit(limit).Find(&posts)
@@ -105,11 +106,11 @@ func (d *DiscoverDAOImpl) ListLikedPosts(userId string, page, pageSize int) ([]m
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
 	// 子查询：获取用户点赞的帖子 UUID
-	likedUuids := db.GormDB.Model(&models.DiscoverLike{}).
+	likedUuids := d.db.Model(&models.DiscoverLike{}).
 		Where("user_id = ?", userId).
 		Select("target_uuid")
 	// 查询帖子
-	result := db.GormDB.Where("status = ? AND uuid IN (?)", 0, likedUuids).
+	result := d.db.Where("status = ? AND uuid IN (?)", 0, likedUuids).
 		Order("created_at DESC").
 		Offset(offset).Limit(pageSize).
 		Find(&posts)
@@ -118,41 +119,41 @@ func (d *DiscoverDAOImpl) ListLikedPosts(userId string, page, pageSize int) ([]m
 
 func (d *DiscoverDAOImpl) CountPosts() (int64, error) {
 	var count int64
-	result := db.GormDB.Model(&models.DiscoverPost{}).Where("status = ?", 0).Count(&count)
+	result := d.db.Model(&models.DiscoverPost{}).Where("status = ?", 0).Count(&count)
 	return count, result.Error
 }
 
 func (d *DiscoverDAOImpl) CountLikedPosts(userId string) (int64, error) {
 	var count int64
 	// 子查询：获取用户点赞的帖子 UUID
-	likedUuids := db.GormDB.Model(&models.DiscoverLike{}).
+	likedUuids := d.db.Model(&models.DiscoverLike{}).
 		Where("user_id = ?", userId).
 		Select("target_uuid")
-	result := db.GormDB.Model(&models.DiscoverPost{}).
+	result := d.db.Model(&models.DiscoverPost{}).
 		Where("status = ? AND uuid IN (?)", 0, likedUuids).
 		Count(&count)
 	return count, result.Error
 }
 
 func (d *DiscoverDAOImpl) IncrementLikeCount(postId int64) error {
-	return db.GormDB.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", gorm.Expr("like_count + 1")).Error
+	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", gorm.Expr("like_count + 1")).Error
 }
 
 func (d *DiscoverDAOImpl) DecrementLikeCount(postId int64) error {
-	return db.GormDB.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", gorm.Expr("like_count - 1")).Error
+	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", gorm.Expr("like_count - 1")).Error
 }
 
 func (d *DiscoverDAOImpl) IncrementCommentCount(postId int64) error {
-	return db.GormDB.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("comment_count", gorm.Expr("comment_count + 1")).Error
+	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("comment_count", gorm.Expr("comment_count + 1")).Error
 }
 
 func (d *DiscoverDAOImpl) CreateMedia(media *models.DiscoverMedia) error {
-	return db.GormDB.Create(media).Error
+	return d.db.Create(media).Error
 }
 
 func (d *DiscoverDAOImpl) FindMediaByPostId(postId int64) ([]models.DiscoverMedia, error) {
 	var mediaList []models.DiscoverMedia
-	result := db.GormDB.Where("post_id = ?", postId).Order("sort_order ASC").Find(&mediaList)
+	result := d.db.Where("post_id = ?", postId).Order("sort_order ASC").Find(&mediaList)
 	return mediaList, result.Error
 }
 
@@ -161,21 +162,21 @@ func (d *DiscoverDAOImpl) FindMediaByPostIds(postIds []int64) ([]models.Discover
 		return nil, nil
 	}
 	var mediaList []models.DiscoverMedia
-	result := db.GormDB.Where("post_id IN ?", postIds).Order("post_id ASC, sort_order ASC").Find(&mediaList)
+	result := d.db.Where("post_id IN ?", postIds).Order("post_id ASC, sort_order ASC").Find(&mediaList)
 	return mediaList, result.Error
 }
 
 func (d *DiscoverDAOImpl) CreateLike(like *models.DiscoverLike) error {
-	return db.GormDB.Create(like).Error
+	return d.db.Create(like).Error
 }
 
 func (d *DiscoverDAOImpl) DeleteLike(userId, targetUuid string) error {
-	return db.GormDB.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Delete(&models.DiscoverLike{}).Error
+	return d.db.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Delete(&models.DiscoverLike{}).Error
 }
 
 func (d *DiscoverDAOImpl) FindLike(userId, targetUuid string) (*models.DiscoverLike, error) {
 	var like models.DiscoverLike
-	result := db.GormDB.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Find(&like)
+	result := d.db.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Find(&like)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -191,13 +192,13 @@ func (d *DiscoverDAOImpl) FindLikesByUserIdAndTargetUuids(userId string, targetU
 		return nil, nil
 	}
 	var likes []models.DiscoverLike
-	result := db.GormDB.Where("user_id = ? AND target_uuid IN ?", userId, targetUuids).Find(&likes)
+	result := d.db.Where("user_id = ? AND target_uuid IN ?", userId, targetUuids).Find(&likes)
 	return likes, result.Error
 }
 
 func (d *DiscoverDAOImpl) FindCommentById(commentId int64) (*models.DiscoverComment, error) {
 	var comment models.DiscoverComment
-	result := db.GormDB.Where("id = ?", commentId).First(&comment)
+	result := d.db.Where("id = ?", commentId).First(&comment)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -206,7 +207,7 @@ func (d *DiscoverDAOImpl) FindCommentById(commentId int64) (*models.DiscoverComm
 
 func (d *DiscoverDAOImpl) FindCommentByUuid(uuid string) (*models.DiscoverComment, error) {
 	var comment models.DiscoverComment
-	result := db.GormDB.Where("uuid = ?", uuid).First(&comment)
+	result := d.db.Where("uuid = ?", uuid).First(&comment)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -214,32 +215,32 @@ func (d *DiscoverDAOImpl) FindCommentByUuid(uuid string) (*models.DiscoverCommen
 }
 
 func (d *DiscoverDAOImpl) CreateComment(comment *models.DiscoverComment) error {
-	return db.GormDB.Create(comment).Error
+	return d.db.Create(comment).Error
 }
 
 func (d *DiscoverDAOImpl) FindCommentsByPostId(postId int64, page, pageSize int) ([]models.DiscoverComment, error) {
 	var comments []models.DiscoverComment
 	offset := (page - 1) * pageSize
-	result := db.GormDB.Where("post_id = ?", postId).Order("created_at ASC").Offset(offset).Limit(pageSize).Find(&comments)
+	result := d.db.Where("post_id = ?", postId).Order("created_at ASC").Offset(offset).Limit(pageSize).Find(&comments)
 	return comments, result.Error
 }
 
 func (d *DiscoverDAOImpl) IncrementCommentLikeCount(commentId int64) error {
-	return db.GormDB.Model(&models.DiscoverComment{}).Where("id = ?", commentId).UpdateColumn("like_count", gorm.Expr("like_count + 1")).Error
+	return d.db.Model(&models.DiscoverComment{}).Where("id = ?", commentId).UpdateColumn("like_count", gorm.Expr("like_count + 1")).Error
 }
 
 func (d *DiscoverDAOImpl) DecrementCommentLikeCount(commentId int64) error {
-	return db.GormDB.Model(&models.DiscoverComment{}).Where("id = ?", commentId).UpdateColumn("like_count", gorm.Expr("like_count - 1")).Error
+	return d.db.Model(&models.DiscoverComment{}).Where("id = ?", commentId).UpdateColumn("like_count", gorm.Expr("like_count - 1")).Error
 }
 
 // ========== 收藏夹 ==========
 
 func (d *DiscoverDAOImpl) CreateFolder(folder *models.DiscoverCollectionFolder) error {
-	return db.GormDB.Create(folder).Error
+	return d.db.Create(folder).Error
 }
 
 func (d *DiscoverDAOImpl) UpdateFolder(uuid string, name, description string, isPublic int8) error {
-	return db.GormDB.Model(&models.DiscoverCollectionFolder{}).
+	return d.db.Model(&models.DiscoverCollectionFolder{}).
 		Where("uuid = ?", uuid).
 		Updates(map[string]interface{}{
 			"name":        name,
@@ -249,12 +250,12 @@ func (d *DiscoverDAOImpl) UpdateFolder(uuid string, name, description string, is
 }
 
 func (d *DiscoverDAOImpl) DeleteFolder(uuid string) error {
-	return db.GormDB.Where("uuid = ?", uuid).Delete(&models.DiscoverCollectionFolder{}).Error
+	return d.db.Where("uuid = ?", uuid).Delete(&models.DiscoverCollectionFolder{}).Error
 }
 
 func (d *DiscoverDAOImpl) FindFolderByUuid(uuid string) (*models.DiscoverCollectionFolder, error) {
 	var folder models.DiscoverCollectionFolder
-	result := db.GormDB.Where("uuid = ?", uuid).First(&folder)
+	result := d.db.Where("uuid = ?", uuid).First(&folder)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -263,13 +264,13 @@ func (d *DiscoverDAOImpl) FindFolderByUuid(uuid string) (*models.DiscoverCollect
 
 func (d *DiscoverDAOImpl) ListFoldersByUserId(userId string) ([]models.DiscoverCollectionFolder, error) {
 	var folders []models.DiscoverCollectionFolder
-	result := db.GormDB.Where("user_id = ?", userId).Order("created_at DESC").Find(&folders)
+	result := d.db.Where("user_id = ?", userId).Order("created_at DESC").Find(&folders)
 	return folders, result.Error
 }
 
 func (d *DiscoverDAOImpl) FindDefaultFolder(userId string) (*models.DiscoverCollectionFolder, error) {
 	var folder models.DiscoverCollectionFolder
-	result := db.GormDB.Where("user_id = ? AND name = ?", userId, "默认收藏夹").First(&folder)
+	result := d.db.Where("user_id = ? AND name = ?", userId, "默认收藏夹").First(&folder)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -279,17 +280,17 @@ func (d *DiscoverDAOImpl) FindDefaultFolder(userId string) (*models.DiscoverColl
 // ========== 收藏记录 ==========
 
 func (d *DiscoverDAOImpl) CreateCollection(col *models.DiscoverCollection) error {
-	return db.GormDB.Create(col).Error
+	return d.db.Create(col).Error
 }
 
 func (d *DiscoverDAOImpl) DeleteCollection(userId string, folderId int64, targetUuid string) error {
-	return db.GormDB.Where("user_id = ? AND folder_id = ? AND target_uuid = ?", userId, folderId, targetUuid).
+	return d.db.Where("user_id = ? AND folder_id = ? AND target_uuid = ?", userId, folderId, targetUuid).
 		Delete(&models.DiscoverCollection{}).Error
 }
 
 func (d *DiscoverDAOImpl) FindCollectionInFolder(userId string, folderId int64, targetUuid string) (*models.DiscoverCollection, error) {
 	var col models.DiscoverCollection
-	result := db.GormDB.Where("user_id = ? AND folder_id = ? AND target_uuid = ?", userId, folderId, targetUuid).Find(&col)
+	result := d.db.Where("user_id = ? AND folder_id = ? AND target_uuid = ?", userId, folderId, targetUuid).Find(&col)
 	if result.RowsAffected == 0 {
 		return nil, nil
 	}
@@ -298,7 +299,7 @@ func (d *DiscoverDAOImpl) FindCollectionInFolder(userId string, folderId int64, 
 
 func (d *DiscoverDAOImpl) FindCollectionByUserAndTarget(userId, targetUuid string) (*models.DiscoverCollection, error) {
 	var col models.DiscoverCollection
-	result := db.GormDB.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Find(&col)
+	result := d.db.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Find(&col)
 	if result.RowsAffected == 0 {
 		return nil, nil
 	}
@@ -311,34 +312,34 @@ func (d *DiscoverDAOImpl) FindCollectionsByUserIdAndTargetUuids(userId string, t
 		return nil, nil
 	}
 	var collections []models.DiscoverCollection
-	result := db.GormDB.Where("user_id = ? AND target_uuid IN ?", userId, targetUuids).Find(&collections)
+	result := d.db.Where("user_id = ? AND target_uuid IN ?", userId, targetUuids).Find(&collections)
 	return collections, result.Error
 }
 
 func (d *DiscoverDAOImpl) IncrementFolderPostCount(folderId int64) error {
-	return db.GormDB.Model(&models.DiscoverCollectionFolder{}).Where("id = ?", folderId).UpdateColumn("post_count", gorm.Expr("post_count + 1")).Error
+	return d.db.Model(&models.DiscoverCollectionFolder{}).Where("id = ?", folderId).UpdateColumn("post_count", gorm.Expr("post_count + 1")).Error
 }
 
 func (d *DiscoverDAOImpl) DecrementFolderPostCount(folderId int64) error {
-	return db.GormDB.Model(&models.DiscoverCollectionFolder{}).Where("id = ?", folderId).UpdateColumn("post_count", gorm.Expr("post_count - 1")).Error
+	return d.db.Model(&models.DiscoverCollectionFolder{}).Where("id = ?", folderId).UpdateColumn("post_count", gorm.Expr("post_count - 1")).Error
 }
 
 func (d *DiscoverDAOImpl) IncrementCollectCount(postId int64) error {
-	return db.GormDB.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("collect_count", gorm.Expr("collect_count + 1")).Error
+	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("collect_count", gorm.Expr("collect_count + 1")).Error
 }
 
 func (d *DiscoverDAOImpl) DecrementCollectCount(postId int64) error {
-	return db.GormDB.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("collect_count", gorm.Expr("collect_count - 1")).Error
+	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("collect_count", gorm.Expr("collect_count - 1")).Error
 }
 
 func (d *DiscoverDAOImpl) ListCollectedPostsByFolder(folderId int64, page, pageSize int) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
 	// 子查询：获取该收藏夹中的帖子 UUID
-	collectedUuids := db.GormDB.Model(&models.DiscoverCollection{}).
+	collectedUuids := d.db.Model(&models.DiscoverCollection{}).
 		Where("folder_id = ?", folderId).
 		Select("target_uuid")
-	result := db.GormDB.Where("status = ? AND uuid IN (?)", 0, collectedUuids).
+	result := d.db.Where("status = ? AND uuid IN (?)", 0, collectedUuids).
 		Order("created_at DESC").
 		Offset(offset).Limit(pageSize).
 		Find(&posts)
@@ -347,10 +348,10 @@ func (d *DiscoverDAOImpl) ListCollectedPostsByFolder(folderId int64, page, pageS
 
 func (d *DiscoverDAOImpl) CountCollectedPostsByFolder(folderId int64) (int64, error) {
 	var count int64
-	collectedUuids := db.GormDB.Model(&models.DiscoverCollection{}).
+	collectedUuids := d.db.Model(&models.DiscoverCollection{}).
 		Where("folder_id = ?", folderId).
 		Select("target_uuid")
-	result := db.GormDB.Model(&models.DiscoverPost{}).
+	result := d.db.Model(&models.DiscoverPost{}).
 		Where("status = ? AND uuid IN (?)", 0, collectedUuids).
 		Count(&count)
 	return count, result.Error

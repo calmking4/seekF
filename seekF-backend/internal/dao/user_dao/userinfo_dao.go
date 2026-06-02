@@ -3,7 +3,6 @@ package userdao
 import (
 	"errors"
 	"seekF-backend/internal/models"
-	"seekF-backend/internal/pkg/db"
 
 	"gorm.io/gorm"
 )
@@ -18,22 +17,24 @@ type UserInfoDAO interface {
 	SearchUsers(keyword string) ([]models.UserInfo, error)
 }
 
-type UserInfoDAOImpl struct{}
+type UserInfoDAOImpl struct {
+	db *gorm.DB
+}
 
-func NewUserInfoDAO() UserInfoDAO {
-	return &UserInfoDAOImpl{}
+func NewUserInfoDAO(db *gorm.DB) UserInfoDAO {
+	return &UserInfoDAOImpl{db: db}
 }
 
 // CreateUser 创建用户
 func (d *UserInfoDAOImpl) CreateUser(user *models.UserInfo) error {
-	result := db.GormDB.Create(user)
+	result := d.db.Create(user)
 	return result.Error
 }
 
 // FindUserByUuid 根据UUID查找用户
 func (d *UserInfoDAOImpl) FindUserByUuid(uuid string) (*models.UserInfo, error) {
 	var user models.UserInfo
-	result := db.GormDB.Where("uuid = ?", uuid).Find(&user)
+	result := d.db.Where("uuid = ?", uuid).Find(&user)
 	return &user, result.Error
 }
 
@@ -43,14 +44,14 @@ func (d *UserInfoDAOImpl) FindUsersByUuids(uuids []string) ([]models.UserInfo, e
 		return nil, nil
 	}
 	var users []models.UserInfo
-	result := db.GormDB.Where("uuid IN ?", uuids).Find(&users)
+	result := d.db.Where("uuid IN ?", uuids).Find(&users)
 	return users, result.Error
 }
 
 // FindUserByTelephone 根据手机号查找用户
 func (d *UserInfoDAOImpl) FindUserByTelephone(telephone string) (*models.UserInfo, error) {
 	var user models.UserInfo
-	result := db.GormDB.Where("telephone = ?", telephone).First(&user)
+	result := d.db.Where("telephone = ?", telephone).First(&user)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -59,13 +60,13 @@ func (d *UserInfoDAOImpl) FindUserByTelephone(telephone string) (*models.UserInf
 
 // UpdateUserInfo 更新用户信息
 func (d *UserInfoDAOImpl) UpdateUserInfo(user *models.UserInfo) error {
-	result := db.GormDB.Save(user)
+	result := d.db.Save(user)
 	return result.Error
 }
 
 // SearchUsers 根据关键词搜索用户
 func (d *UserInfoDAOImpl) SearchUsers(keyword string) ([]models.UserInfo, error) {
 	var userList []models.UserInfo
-	result := db.GormDB.Where("nickname LIKE ? OR telephone LIKE ?", "%"+keyword+"%", "%"+keyword+"%").Find(&userList)
+	result := d.db.Where("nickname LIKE ? OR telephone LIKE ?", "%"+keyword+"%", "%"+keyword+"%").Find(&userList)
 	return userList, result.Error
 }

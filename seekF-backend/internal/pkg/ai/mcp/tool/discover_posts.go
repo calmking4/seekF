@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"seekF-backend/internal/pkg/db"
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/zlog"
@@ -35,8 +36,8 @@ type DiscoverPostsTool struct {
 // NewDiscoverPostsTool 创建帖子查询工具实例
 func NewDiscoverPostsTool() *DiscoverPostsTool {
 	return &DiscoverPostsTool{
-		discoverDAO: userdao.NewDiscoverDAO(),
-		userInfoDAO: userdao.NewUserInfoDAO(),
+		discoverDAO: userdao.NewDiscoverDAO(db.GormDB),
+		userInfoDAO: userdao.NewUserInfoDAO(db.GormDB),
 	}
 }
 

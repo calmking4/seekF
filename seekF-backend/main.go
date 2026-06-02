@@ -14,14 +14,14 @@ import (
 
 func main() {
 	// 初始化 DAO 层
-	userInfoDAO := userdao.NewUserInfoDAO()
-	contactDAO := userdao.NewContactDAO()
-	sessionDAO := userdao.NewSessionDAO()
-	groupDAO := userdao.NewGroupDAO()
-	contactApplyDAO := userdao.NewContactApplyDAO()
-	messageDAO := userdao.NewMessageDAO()
-	knowledgeDAO := userdao.NewKnowledgeDAO()
-	discoverDAO := userdao.NewDiscoverDAO()
+	userInfoDAO := userdao.NewUserInfoDAO(db.GormDB)
+	contactDAO := userdao.NewContactDAO(db.GormDB)
+	sessionDAO := userdao.NewSessionDAO(db.GormDB)
+	groupDAO := userdao.NewGroupDAO(db.GormDB)
+	contactApplyDAO := userdao.NewContactApplyDAO(db.GormDB)
+	messageDAO := userdao.NewMessageDAO(db.GormDB)
+	knowledgeDAO := userdao.NewKnowledgeDAO(db.GormDB)
+	discoverDAO := userdao.NewDiscoverDAO(db.GormDB)
 
 	// 初始化 Service 层
 	authService := userservice.NewAuthService(userInfoDAO)

@@ -2,7 +2,8 @@ package userdao
 
 import (
 	"seekF-backend/internal/models"
-	"seekF-backend/internal/pkg/db"
+
+	"gorm.io/gorm"
 )
 
 type GroupDAO interface {
@@ -15,54 +16,56 @@ type GroupDAO interface {
 	SearchGroups(keyword string) ([]models.GroupInfo, error)
 }
 
-type GroupDAOImpl struct{}
+type GroupDAOImpl struct {
+	db *gorm.DB
+}
 
-func NewGroupDAO() GroupDAO {
-	return &GroupDAOImpl{}
+func NewGroupDAO(db *gorm.DB) GroupDAO {
+	return &GroupDAOImpl{db: db}
 }
 
 // CreateGroup 创建群组
 func (d *GroupDAOImpl) CreateGroup(group *models.GroupInfo) error {
-	result := db.GormDB.Create(group)
+	result := d.db.Create(group)
 	return result.Error
 }
 
 // GetGroupInfoByOwnerId 根据群组拥有者id获取群组信息
 func (d *GroupDAOImpl) GetGroupInfoByOwnerId(ownerId string) ([]models.GroupInfo, error) {
 	var groupList []models.GroupInfo
-	result := db.GormDB.Order("created_at DESC").Where("owner_id = ?", ownerId).Find(&groupList)
+	result := d.db.Order("created_at DESC").Where("owner_id = ?", ownerId).Find(&groupList)
 	return groupList, result.Error
 }
 
 // GetGroupInfoByUuid 根据群组uuid获取群组详情
 func (d *GroupDAOImpl) GetGroupInfoByUuid(uuid string) (models.GroupInfo, error) {
 	var group models.GroupInfo
-	result := db.GormDB.Unscoped().Where("uuid = ?", uuid).Find(&group)
+	result := d.db.Unscoped().Where("uuid = ?", uuid).Find(&group)
 	return group, result.Error
 }
 
 // UpdateGroupInfo 更新群组详情
 func (d *GroupDAOImpl) UpdateGroupInfo(group *models.GroupInfo) error {
-	result := db.GormDB.Save(group)
+	result := d.db.Save(group)
 	return result.Error
 }
 
 // GetGroupMembersByUuid 根据群组uuid获取群组成员
 func (d *GroupDAOImpl) GetGroupMembersByUuid(uuid string) (models.GroupInfo, error) {
 	var group models.GroupInfo
-	result := db.GormDB.Where("uuid = ?", uuid).First(&group)
+	result := d.db.Where("uuid = ?", uuid).First(&group)
 	return group, result.Error
 }
 
 // DeleteGroupByUUid 根据群组uuid删除群组
 func (d *GroupDAOImpl) DeleteGroupByUUid(groupId string) error {
-	result := db.GormDB.Where("uuid = ?", groupId).Delete(&models.GroupInfo{})
+	result := d.db.Where("uuid = ?", groupId).Delete(&models.GroupInfo{})
 	return result.Error
 }
 
 // SearchGroups 根据关键词搜索群组
 func (d *GroupDAOImpl) SearchGroups(keyword string) ([]models.GroupInfo, error) {
 	var groupList []models.GroupInfo
-	result := db.GormDB.Where("name LIKE ?", "%"+keyword+"%").Find(&groupList)
+	result := d.db.Where("name LIKE ?", "%"+keyword+"%").Find(&groupList)
 	return groupList, result.Error
 }
