@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"seekF-backend/internal/configs"
-	"strings"
 	"time"
 
 	rotatelogs "github.com/lestrrat-go/file-rotatelogs"
@@ -16,7 +15,7 @@ import (
 )
 
 var logger *zap.Logger
-var logPath string
+var slowSQLLogger *zap.Logger // 慢SQL专用logger
 
 // 自动调用
 func init() {
@@ -26,42 +25,66 @@ func init() {
 	// 日志encoder还是JSONEncoder，把日志行格式化成JSON格式
 	encoder := zapcore.NewJSONEncoder(encoderConfig)
 	conf := configs.GetConfig()
-	logPath = conf.LogPath
+	logDir := conf.LogDir
 
 	// 确保日志目录存在
-	logDir := filepath.Dir(logPath)
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		log.Printf("创建日志目录失败: %v", err)
 	}
 
 	// 使用 file-rotatelogs 实现按天日志轮转
-	fileWriteSyncer := getFileLogWriter()
+	fileWriteSyncer := getFileLogWriter(logDir, conf)
 	core := zapcore.NewTee(
 		zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), zapcore.DebugLevel),
 		zapcore.NewCore(encoder, fileWriteSyncer, zapcore.DebugLevel),
 	)
 	logger = zap.New(core)
+
+	// 初始化慢SQL专用logger
+	slowSQLCore := zapcore.NewTee(
+		zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), zapcore.InfoLevel),
+		zapcore.NewCore(encoder, getSlowSQLLogWriter(logDir, conf), zapcore.InfoLevel),
+	)
+	slowSQLLogger = zap.New(slowSQLCore)
 }
 
-func getFileLogWriter() (writeSyncer zapcore.WriteSyncer) {
-	conf := configs.GetConfig()
-
+func getFileLogWriter(logDir string, conf *configs.Config) (writeSyncer zapcore.WriteSyncer) {
 	// 配置轮转参数
-	maxAge := time.Duration(conf.MaxAge) * 24 * time.Hour       // 保留天数
+	maxAge := time.Duration(conf.MaxAge) * 24 * time.Hour        // 保留天数
 	rotationTime := time.Duration(conf.RotationTime) * time.Hour // 轮转间隔
 
-	// 生成带日期的文件名模式: ./logs/app.log -> ./logs/app.%Y%m%d.log
-	ext := filepath.Ext(logPath)
-	pattern := strings.TrimSuffix(logPath, ext) + ".%Y%m%d" + ext
+	// 生成带日期的文件名模式: ./logs/app.%Y%m%d.log
+	pattern := filepath.Join(logDir, "app.%Y%m%d.log")
 
 	writer, err := rotatelogs.New(
 		pattern,
-		rotatelogs.WithMaxAge(maxAge),         // 清理超过 maxAge 的旧文件
+		rotatelogs.WithMaxAge(maxAge), // 清理超过 maxAge 的旧日志
 		rotatelogs.WithRotationTime(rotationTime), // 轮转间隔
 	)
 	if err != nil {
 		// 轮转日志初始化失败，回退到 stdout，避免程序崩溃
 		log.Printf("初始化日志轮转失败: %v，回退到仅输出到 stdout", err)
+		return zapcore.AddSync(os.Stdout)
+	}
+
+	return zapcore.AddSync(writer)
+}
+
+func getSlowSQLLogWriter(logDir string, conf *configs.Config) (writeSyncer zapcore.WriteSyncer) {
+	// 配置轮转参数
+	maxAge := time.Duration(conf.MaxAge) * 24 * time.Hour        // 保留天数
+	rotationTime := time.Duration(conf.RotationTime) * time.Hour // 轮转间隔
+
+	// 生成慢SQL日志文件名: ./logs/slowsql.%Y%m%d.log
+	pattern := filepath.Join(logDir, "slowsql.%Y%m%d.log")
+
+	writer, err := rotatelogs.New(
+		pattern,
+		rotatelogs.WithMaxAge(maxAge),
+		rotatelogs.WithRotationTime(rotationTime),
+	)
+	if err != nil {
+		log.Printf("初始化慢SQL日志轮转失败: %v，回退到仅输出到 stdout", err)
 		return zapcore.AddSync(os.Stdout)
 	}
 
@@ -109,4 +132,11 @@ func Debug(message string, fields ...zap.Field) {
 	callerFields := getCallerInfoForLog()
 	fields = append(fields, callerFields...)
 	logger.Debug(message, fields...)
+}
+
+// SlowSQL 记录慢SQL日志，输出到 slowsql.日期.log
+func SlowSQL(message string, fields ...zap.Field) {
+	callerFields := getCallerInfoForLog()
+	fields = append(fields, callerFields...)
+	slowSQLLogger.Info(message, fields...)
 }

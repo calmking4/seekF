@@ -41,9 +41,9 @@ bucket = "seekf"
 baseURL = "https://seekf.oss-cn-shenzhen.aliyuncs.com"
 
 [logConfig]
-logPath = "./logs/app.log"
-maxAge = 30
-rotationTime = 24
+logDir = "./logs"       # 日志目录
+maxAge = 30             # 保留旧日志的最大天数
+rotationTime = 24       # 轮转间隔（小时）
 
 [kafkaConfig]
 hostPort = "127.0.0.1:9092" # "127.0.0.1:9092,127.0.0.1:9093,127.0.0.1:9094" 多个kafka服务器
