@@ -18,12 +18,14 @@ import (
 	toolpkg "seekF-backend/internal/pkg/ai/mcp/tool"
 	"seekF-backend/internal/pkg/ai/rag"
 	"seekF-backend/internal/pkg/ai/tts"
+	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"gorm.io/gorm"
 )
 
 // AIChatService AI聊天服务接口
@@ -205,16 +207,33 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		Status:     1,
 	}
 
-	if err := s.messageDAO.CreateMessage(userMessage); err != nil {
-		zlog.Error("保存用户消息失败: " + err.Error())
-		return fmt.Errorf("发送消息失败")
-	}
+	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
+		txMessageDAO := userdao.NewMessageDAO(tx)
+		txSessionDAO := userdao.NewSessionDAO(tx)
 
-	// 更新会话最后一条消息
-	s.sessionDAO.UpdateSessionLastMessage(req.SessionId, content, userMessage.CreatedAt)
-	// 如果是第一消息，更新会话第一条消息
-	if session.FirstMessage == "" {
-		s.sessionDAO.UpdateSessionFirstMessage(req.SessionId, content)
+		if err := txMessageDAO.CreateMessage(userMessage); err != nil {
+			zlog.Error("保存用户消息失败: " + err.Error())
+			return fmt.Errorf("发送消息失败")
+		}
+
+		// 更新会话最后一条消息
+		if err := txSessionDAO.UpdateSessionLastMessage(req.SessionId, content, userMessage.CreatedAt); err != nil {
+			zlog.Error("更新会话最后消息失败: " + err.Error())
+			return fmt.Errorf("更新会话失败")
+		}
+
+		// 如果是第一消息，更新会话第一条消息
+		if session.FirstMessage == "" {
+			if err := txSessionDAO.UpdateSessionFirstMessage(req.SessionId, content); err != nil {
+				zlog.Error("更新会话首条消息失败: " + err.Error())
+				return fmt.Errorf("更新会话失败")
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	// 从DB读取历史消息构建上下文（最近100条）
@@ -570,14 +589,24 @@ func (s *AIChatServiceImpl) TextToSpeech(ctx context.Context, content string, vo
 
 // DeleteSession 删除AI会话及其所有消息
 func (s *AIChatServiceImpl) DeleteSession(sessionId string) error {
-	if err := s.messageDAO.DeleteMessagesBySessionId(sessionId); err != nil {
-		zlog.Error("删除AI会话消息失败: " + err.Error())
-		return fmt.Errorf("删除会话消息失败")
-	}
+	err := db.GormDB.Transaction(func(tx *gorm.DB) error {
+		txMessageDAO := userdao.NewMessageDAO(tx)
+		txSessionDAO := userdao.NewSessionDAO(tx)
 
-	if err := s.sessionDAO.DeleteAISession(sessionId); err != nil {
-		zlog.Error("删除AI会话失败: " + err.Error())
-		return fmt.Errorf("删除会话失败")
+		if err := txMessageDAO.DeleteMessagesBySessionId(sessionId); err != nil {
+			zlog.Error("删除AI会话消息失败: " + err.Error())
+			return fmt.Errorf("删除会话消息失败")
+		}
+
+		if err := txSessionDAO.DeleteAISession(sessionId); err != nil {
+			zlog.Error("删除AI会话失败: " + err.Error())
+			return fmt.Errorf("删除会话失败")
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	zlog.Info("删除AI会话成功: " + sessionId)

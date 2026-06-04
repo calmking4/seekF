@@ -21,7 +21,9 @@ func init() {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local", user, password, host, port, appName)
 	// dsn := fmt.Sprintf("%s@unix(/var/run/mysqld/mysqld.sock)/%s?charset=utf8mb4&parseTime=True&loc=Local", user, appName) //linux连接数据库
 	var err error
-	GormDB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	GormDB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
+		SkipDefaultTransaction: true, // 禁用默认事务，提高性能
+	})
 	if err != nil {
 		zlog.Fatal(err.Error())
 	}

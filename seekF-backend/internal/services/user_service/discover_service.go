@@ -10,6 +10,8 @@ import (
 	aipkg "seekF-backend/internal/pkg/ai"
 	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/util"
+
+	"gorm.io/gorm"
 )
 
 type DiscoverService interface {
@@ -38,8 +40,8 @@ type DiscoverService interface {
 }
 
 type DiscoverServiceImpl struct {
-	discoverDAO  userdao.DiscoverDAO
-	userInfoDAO  userdao.UserInfoDAO
+	discoverDAO userdao.DiscoverDAO
+	userInfoDAO userdao.UserInfoDAO
 }
 
 type PostInfo struct {
@@ -136,20 +138,30 @@ func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId, title, con
 		Status:    0,
 	}
 
-	if err := s.discoverDAO.CreatePost(post); err != nil {
-		return nil, fmt.Errorf("创建帖子失败: %v", err)
-	}
+	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
 
-	for i, url := range urls {
-		media := &models.DiscoverMedia{
-			PostId:    post.Id,
-			Type:      mediaType,
-			Url:       url,
-			SortOrder: i,
+		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
+
+		if err := txDiscoverDAO.CreatePost(post); err != nil {
+			return fmt.Errorf("创建帖子失败: %v", err)
 		}
-		if err := s.discoverDAO.CreateMedia(media); err != nil {
-			return nil, fmt.Errorf("保存媒体失败: %v", err)
+
+		for i, url := range urls {
+			media := &models.DiscoverMedia{
+				PostId:    post.Id,
+				Type:      mediaType,
+				Url:       url,
+				SortOrder: i,
+			}
+			if err := txDiscoverDAO.CreateMedia(media); err != nil {
+				return fmt.Errorf("保存媒体失败: %v", err)
+			}
 		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	user, _ := s.userInfoDAO.FindUserByUuid(userId)
@@ -385,37 +397,56 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 func (s *DiscoverServiceImpl) ToggleLike(ctx context.Context, userId, targetUuid string) (bool, int, error) {
 	existing, _ := s.discoverDAO.FindLike(userId, targetUuid)
 	if existing != nil {
-		if err := s.discoverDAO.DeleteLike(userId, targetUuid); err != nil {
+
+		err := db.GormDB.Transaction(func(tx *gorm.DB) error {
+
+			txDiscoverDAO := userdao.NewDiscoverDAO(tx)
+
+			if err := txDiscoverDAO.DeleteLike(userId, targetUuid); err != nil {
+				return err
+			}
+			post, _ := txDiscoverDAO.FindPostByUuid(targetUuid)
+			if post != nil {
+				txDiscoverDAO.DecrementLikeCount(post.Id)
+			}
+			return nil
+		})
+		if err != nil {
 			return false, 0, err
 		}
-		post, _ := s.discoverDAO.FindPostByUuid(targetUuid)
-		if post != nil {
-			s.discoverDAO.DecrementLikeCount(post.Id)
-			// 重新获取帖子以获取更新后的点赞数
-			updatedPost, _ := s.discoverDAO.FindPostByUuid(targetUuid)
-			if updatedPost != nil {
-				return false, updatedPost.LikeCount, nil
-			}
+		// 重新获取帖子以获取更新后的点赞数
+		updatedPost, _ := s.discoverDAO.FindPostByUuid(targetUuid)
+		if updatedPost != nil {
+			return false, updatedPost.LikeCount, nil
 		}
 		return false, 0, nil
 	}
 
-	like := &models.DiscoverLike{
-		UserId:     userId,
-		TargetUuid: targetUuid,
-	}
-	if err := s.discoverDAO.CreateLike(like); err != nil {
+	err := db.GormDB.Transaction(func(tx *gorm.DB) error {
+
+		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
+
+		like := &models.DiscoverLike{
+			UserId:     userId,
+			TargetUuid: targetUuid,
+		}
+		if err := txDiscoverDAO.CreateLike(like); err != nil {
+			return err
+		}
+
+		post, _ := txDiscoverDAO.FindPostByUuid(targetUuid)
+		if post != nil {
+			txDiscoverDAO.IncrementLikeCount(post.Id)
+		}
+		return nil
+	})
+	if err != nil {
 		return false, 0, err
 	}
-
-	post, _ := s.discoverDAO.FindPostByUuid(targetUuid)
-	if post != nil {
-		s.discoverDAO.IncrementLikeCount(post.Id)
-		// 重新获取帖子以获取更新后的点赞数
-		updatedPost, _ := s.discoverDAO.FindPostByUuid(targetUuid)
-		if updatedPost != nil {
-			return true, updatedPost.LikeCount, nil
-		}
+	// 重新获取帖子以获取更新后的点赞数
+	updatedPost, _ := s.discoverDAO.FindPostByUuid(targetUuid)
+	if updatedPost != nil {
+		return true, updatedPost.LikeCount, nil
 	}
 	return true, 0, nil
 }
@@ -439,11 +470,20 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 		Content:       content,
 	}
 
-	if err := s.discoverDAO.CreateComment(comment); err != nil {
-		return nil, fmt.Errorf("评论失败: %v", err)
-	}
+	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
 
-	s.discoverDAO.IncrementCommentCount(post.Id)
+		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
+
+		if err := txDiscoverDAO.CreateComment(comment); err != nil {
+			return fmt.Errorf("评论失败: %v", err)
+		}
+
+		txDiscoverDAO.IncrementCommentCount(post.Id)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	user, _ := s.userInfoDAO.FindUserByUuid(userId)
 	nickname := ""
@@ -527,38 +567,57 @@ func (s *DiscoverServiceImpl) ListComments(ctx context.Context, userId, postUuid
 func (s *DiscoverServiceImpl) ToggleCommentLike(ctx context.Context, userId, commentUuid string) (bool, int, error) {
 	existing, _ := s.discoverDAO.FindLike(userId, commentUuid)
 	if existing != nil {
-		if err := s.discoverDAO.DeleteLike(userId, commentUuid); err != nil {
+
+		err := db.GormDB.Transaction(func(tx *gorm.DB) error {
+
+			txDiscoverDAO := userdao.NewDiscoverDAO(tx)
+
+			if err := txDiscoverDAO.DeleteLike(userId, commentUuid); err != nil {
+				return err
+			}
+			// 通过 UUID 查询评论
+			comment, _ := txDiscoverDAO.FindCommentByUuid(commentUuid)
+			if comment != nil {
+				txDiscoverDAO.DecrementCommentLikeCount(comment.Id)
+			}
+			return nil
+		})
+		if err != nil {
 			return false, 0, err
 		}
-		// 通过 UUID 查询评论
-		comment, _ := s.discoverDAO.FindCommentByUuid(commentUuid)
-		if comment != nil {
-			s.discoverDAO.DecrementCommentLikeCount(comment.Id)
-			// 重新查询获取更新后的点赞数
-			updatedComment, _ := s.discoverDAO.FindCommentByUuid(commentUuid)
-			if updatedComment != nil {
-				return false, updatedComment.LikeCount, nil
-			}
+		// 重新查询获取更新后的点赞数
+		updatedComment, _ := s.discoverDAO.FindCommentByUuid(commentUuid)
+		if updatedComment != nil {
+			return false, updatedComment.LikeCount, nil
 		}
 		return false, 0, nil
 	}
 
-	like := &models.DiscoverLike{
-		UserId:     userId,
-		TargetUuid: commentUuid,
-	}
-	if err := s.discoverDAO.CreateLike(like); err != nil {
+	err := db.GormDB.Transaction(func(tx *gorm.DB) error {
+
+		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
+
+		like := &models.DiscoverLike{
+			UserId:     userId,
+			TargetUuid: commentUuid,
+		}
+		if err := txDiscoverDAO.CreateLike(like); err != nil {
+			return err
+		}
+		// 通过 UUID 查询评论
+		comment, _ := txDiscoverDAO.FindCommentByUuid(commentUuid)
+		if comment != nil {
+			txDiscoverDAO.IncrementCommentLikeCount(comment.Id)
+		}
+		return nil
+	})
+	if err != nil {
 		return false, 0, err
 	}
-	// 通过 UUID 查询评论
-	comment, _ := s.discoverDAO.FindCommentByUuid(commentUuid)
-	if comment != nil {
-		s.discoverDAO.IncrementCommentLikeCount(comment.Id)
-		// 重新查询获取更新后的点赞数
-		updatedComment, _ := s.discoverDAO.FindCommentByUuid(commentUuid)
-		if updatedComment != nil {
-			return true, updatedComment.LikeCount, nil
-		}
+	// 重新查询获取更新后的点赞数
+	updatedComment, _ := s.discoverDAO.FindCommentByUuid(commentUuid)
+	if updatedComment != nil {
+		return true, updatedComment.LikeCount, nil
 	}
 	return true, 0, nil
 }
@@ -778,17 +837,26 @@ func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid,
 		return false, 0, fmt.Errorf("该帖子已在此收藏夹中")
 	}
 
-	col := &models.DiscoverCollection{
-		UserId:     userId,
-		FolderId:   folder.Id,
-		TargetUuid: postUuid,
-	}
-	if err := s.discoverDAO.CreateCollection(col); err != nil {
+	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
+
+		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
+
+		col := &models.DiscoverCollection{
+			UserId:     userId,
+			FolderId:   folder.Id,
+			TargetUuid: postUuid,
+		}
+		if err := txDiscoverDAO.CreateCollection(col); err != nil {
+			return err
+		}
+
+		txDiscoverDAO.IncrementFolderPostCount(folder.Id)
+		txDiscoverDAO.IncrementCollectCount(post.Id)
+		return nil
+	})
+	if err != nil {
 		return false, 0, err
 	}
-
-	s.discoverDAO.IncrementFolderPostCount(folder.Id)
-	s.discoverDAO.IncrementCollectCount(post.Id)
 
 	updatedPost, _ := s.discoverDAO.FindPostByUuid(postUuid)
 	collectCount := 0
@@ -812,19 +880,29 @@ func (s *DiscoverServiceImpl) UncollectPost(ctx context.Context, userId, postUui
 		return false, 0, fmt.Errorf("未收藏该帖子")
 	}
 
-	if err := s.discoverDAO.DeleteCollection(userId, folder.Id, postUuid); err != nil {
+	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
+
+		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
+
+		if err := txDiscoverDAO.DeleteCollection(userId, folder.Id, postUuid); err != nil {
+			return err
+		}
+
+		txDiscoverDAO.DecrementFolderPostCount(folder.Id)
+
+		post, _ := txDiscoverDAO.FindPostByUuid(postUuid)
+		if post != nil {
+			txDiscoverDAO.DecrementCollectCount(post.Id)
+		}
+		return nil
+	})
+	if err != nil {
 		return false, 0, err
 	}
 
-	s.discoverDAO.DecrementFolderPostCount(folder.Id)
-
-	post, _ := s.discoverDAO.FindPostByUuid(postUuid)
-	if post != nil {
-		s.discoverDAO.DecrementCollectCount(post.Id)
-		updatedPost, _ := s.discoverDAO.FindPostByUuid(postUuid)
-		if updatedPost != nil {
-			return false, updatedPost.CollectCount, nil
-		}
+	updatedPost, _ := s.discoverDAO.FindPostByUuid(postUuid)
+	if updatedPost != nil {
+		return false, updatedPost.CollectCount, nil
 	}
 	return false, 0, nil
 }

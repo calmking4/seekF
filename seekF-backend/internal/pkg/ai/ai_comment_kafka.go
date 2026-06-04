@@ -10,12 +10,14 @@ import (
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
+	"seekF-backend/internal/pkg/db"
 	mykafka "seekF-backend/internal/pkg/kafka"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 
 	"github.com/cloudwego/eino/schema"
 	"github.com/segmentio/kafka-go"
+	"gorm.io/gorm"
 )
 
 // AICommentPayload AI评论回复Kafka载荷
@@ -179,13 +181,21 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 		Content:       aiReply,
 	}
 
-	if err := c.discoverDAO.CreateComment(comment); err != nil {
-		zlog.Error("AI评论: 保存评论失败: " + err.Error())
+	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
+		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
+
+		if err := txDiscoverDAO.CreateComment(comment); err != nil {
+			zlog.Error("AI评论: 保存评论失败: " + err.Error())
+			return err
+		}
+
+		txDiscoverDAO.IncrementCommentCount(post.Id)
+		return nil
+	})
+	if err != nil {
 		return
 	}
-
-	c.discoverDAO.IncrementCommentCount(post.Id)
-	zlog.Info(fmt.Sprintf("AI comment saved, post: %s, comment: %s", payload.PostUuid, commentUUID))
+	zlog.Info(fmt.Sprintf("AI评论已保存，帖子: %s, 评论: %s", payload.PostUuid, commentUUID))
 }
 
 // buildAIPostContext 构造含帖子文本上下文的system prompt（图片通过多模态消息传递，不在此处列出URL）

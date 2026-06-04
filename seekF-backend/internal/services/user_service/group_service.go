@@ -9,6 +9,7 @@ import (
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
+	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/enum/contact_enum/contact_apply_status_enum"
 	contactstatusenum "seekF-backend/internal/pkg/enum/contact_enum/contact_status_enum"
 	contacttypeenum "seekF-backend/internal/pkg/enum/contact_enum/contact_type_enum"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 )
 
 type GroupService interface {
@@ -88,25 +90,36 @@ func (s *GroupServiceImpl) CreateGroup(req *userreq.CreateGroupRequest) error {
 		UpdatedAt: time.Now(),
 	}
 
-	// 创建群组
-	if err := s.groupDAO.CreateGroup(group); err != nil {
-		zlog.Info("创建群组数据库错误: " + err.Error())
-		return fmt.Errorf("创建群聊失败")
-	}
+	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
 
-	// 添加群主到联系人列表
-	contact := &models.UserContact{
-		UserId:      req.OwnerId,
-		ContactId:   groupUUID,
-		ContactType: contacttypeenum.GROUP,
-		Status:      contactstatusenum.NORMAL,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
+		txGroupDAO := userdao.NewGroupDAO(tx)
+		txContactDAO := userdao.NewContactDAO(tx)
 
-	if err := s.contactDAO.CreateUserContact(contact); err != nil {
-		zlog.Info("创建用户联系人错误: " + err.Error())
-		return fmt.Errorf("添加联系人失败")
+		// 创建群组
+		if err := txGroupDAO.CreateGroup(group); err != nil {
+			zlog.Info("创建群组数据库错误: " + err.Error())
+			return fmt.Errorf("创建群聊失败")
+		}
+
+		// 添加群主到联系人列表
+		contact := &models.UserContact{
+			UserId:      req.OwnerId,
+			ContactId:   groupUUID,
+			ContactType: contacttypeenum.GROUP,
+			Status:      contactstatusenum.NORMAL,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+
+		if err := txContactDAO.CreateUserContact(contact); err != nil {
+			zlog.Info("创建用户联系人错误: " + err.Error())
+			return fmt.Errorf("添加联系人失败")
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -346,56 +359,69 @@ func (s *GroupServiceImpl) RemoveGroupMembers(req userreq.RemoveGroupMembersRequ
 		return fmt.Errorf("系统错误")
 	}
 
-	// 遍历要移除的成员
-	for _, uuid := range req.UuidList {
-		// 不能移除群主
-		if group.OwnerId == uuid {
-			return fmt.Errorf("不能移除群主")
-		}
+	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
 
-		// 从成员列表中移除指定用户
-		for i, member := range members {
-			if member == uuid {
-				members = append(members[:i], members[i+1:]...)
-				break
+		txSessionDAO := userdao.NewSessionDAO(tx)
+		txContactDAO := userdao.NewContactDAO(tx)
+		txContactApplyDAO := userdao.NewContactApplyDAO(tx)
+		txGroupDAO := userdao.NewGroupDAO(tx)
+
+		// 遍历要移除的成员
+		for _, uuid := range req.UuidList {
+			// 不能移除群主
+			if group.OwnerId == uuid {
+				return fmt.Errorf("不能移除群主")
+			}
+
+			// 从成员列表中移除指定用户
+			for i, member := range members {
+				if member == uuid {
+					members = append(members[:i], members[i+1:]...)
+					break
+				}
+			}
+
+			// 更新群成员数量
+			if group.MemberCnt > 0 {
+				group.MemberCnt -= 1
+			}
+
+			// 删除对应的会话记录
+			if err := txSessionDAO.RemoveSessionBySendAndReceiveId(uuid, req.GroupId); err != nil {
+				zlog.Error("删除会话记录失败: " + err.Error())
+				return fmt.Errorf("系统错误")
+			}
+
+			// 删除对应的联系人
+			if err := txContactDAO.RemoveContact(uuid, req.GroupId); err != nil {
+				zlog.Error("删除联系人记录失败: " + err.Error())
+				return fmt.Errorf("系统错误")
+			}
+
+			// 删除对应的申请记录
+			if err := txContactApplyDAO.RemoveContactApply(uuid, req.GroupId); err != nil {
+				zlog.Error("删除申请记录失败: " + err.Error())
+				return fmt.Errorf("系统错误")
 			}
 		}
 
-		// 更新群成员数量
-		if group.MemberCnt > 0 {
-			group.MemberCnt -= 1
-		}
-
-		// 删除对应的会话记录
-		if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(uuid, req.GroupId); err != nil {
-			zlog.Error("删除会话记录失败: " + err.Error())
+		// 更新群组成员列表
+		group.Members, err = json.Marshal(members)
+		if err != nil {
+			zlog.Error("序列化群组成员失败: " + err.Error())
 			return fmt.Errorf("系统错误")
 		}
 
-		// 删除对应的联系人
-		if err := s.contactDAO.RemoveContact(uuid, req.GroupId); err != nil {
-			zlog.Error("删除联系人记录失败: " + err.Error())
-			return fmt.Errorf("系统错误")
+		// 保存群组信息
+		if err := txGroupDAO.UpdateGroupInfo(&group); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("更新群组信息失败")
 		}
 
-		// 删除对应的申请记录
-		if err := s.contactApplyDAO.RemoveContactApply(uuid, req.GroupId); err != nil {
-			zlog.Error("删除申请记录失败: " + err.Error())
-			return fmt.Errorf("系统错误")
-		}
-	}
-
-	// 更新群组成员列表
-	group.Members, err = json.Marshal(members)
+		return nil
+	})
 	if err != nil {
-		zlog.Error("序列化群组成员失败: " + err.Error())
-		return fmt.Errorf("系统错误")
-	}
-
-	// 保存群组信息
-	if err := s.groupDAO.UpdateGroupInfo(&group); err != nil {
-		zlog.Error(err.Error())
-		return fmt.Errorf("更新群组信息失败")
+		return err
 	}
 
 	return nil
@@ -446,25 +472,36 @@ func (s *GroupServiceImpl) EnterGroupDirectly(groupId string, userId string) err
 	// 更新群成员数量
 	group.MemberCnt += 1
 
-	// 保存群组信息
-	if err := s.groupDAO.UpdateGroupInfo(&group); err != nil {
-		zlog.Error("更新群组信息失败: " + err.Error())
-		return fmt.Errorf("更新群组信息失败")
-	}
+	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
 
-	// 创建用户联系记录
-	contact := &models.UserContact{
-		UserId:      userId,
-		ContactId:   groupId,
-		ContactType: contacttypeenum.GROUP,
-		Status:      contactstatusenum.NORMAL,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
+		txGroupDAO := userdao.NewGroupDAO(tx)
+		txContactDAO := userdao.NewContactDAO(tx)
 
-	if err := s.contactDAO.CreateUserContact(contact); err != nil {
-		zlog.Error("创建用户联系记录失败: " + err.Error())
-		return fmt.Errorf("添加联系人失败")
+		// 保存群组信息
+		if err := txGroupDAO.UpdateGroupInfo(&group); err != nil {
+			zlog.Error("更新群组信息失败: " + err.Error())
+			return fmt.Errorf("更新群组信息失败")
+		}
+
+		// 创建用户联系记录
+		contact := &models.UserContact{
+			UserId:      userId,
+			ContactId:   groupId,
+			ContactType: contacttypeenum.GROUP,
+			Status:      contactstatusenum.NORMAL,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+
+		if err := txContactDAO.CreateUserContact(contact); err != nil {
+			zlog.Error("创建用户联系记录失败: " + err.Error())
+			return fmt.Errorf("添加联系人失败")
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -517,28 +554,41 @@ func (s *GroupServiceImpl) LeaveGroup(groupId string, userId string) error {
 		group.MemberCnt -= 1
 	}
 
-	// 保存群组信息
-	if err := s.groupDAO.UpdateGroupInfo(&group); err != nil {
-		zlog.Error("更新群组信息失败: " + err.Error())
-		return fmt.Errorf("更新群组信息失败")
-	}
+	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
 
-	// 删除会话记录
-	if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(userId, groupId); err != nil {
-		zlog.Error("删除会话记录失败: " + err.Error())
-		return fmt.Errorf("系统错误")
-	}
+		txGroupDAO := userdao.NewGroupDAO(tx)
+		txSessionDAO := userdao.NewSessionDAO(tx)
+		txContactDAO := userdao.NewContactDAO(tx)
+		txContactApplyDAO := userdao.NewContactApplyDAO(tx)
 
-	// 更新用户联系记录状态并软删除
-	if err := s.contactDAO.UpdateUserContactStatusAndDelete(userId, groupId, contactstatusenum.QUIT_GROUP); err != nil {
-		zlog.Error("更新用户联系记录失败: " + err.Error())
-		return fmt.Errorf("系统错误")
-	}
+		// 保存群组信息
+		if err := txGroupDAO.UpdateGroupInfo(&group); err != nil {
+			zlog.Error("更新群组信息失败: " + err.Error())
+			return fmt.Errorf("更新群组信息失败")
+		}
 
-	// 删除对应的申请记录
-	if err := s.contactApplyDAO.RemoveContactApply(userId, groupId); err != nil {
-		zlog.Error("删除申请记录失败: " + err.Error())
-		return fmt.Errorf("系统错误")
+		// 删除会话记录
+		if err := txSessionDAO.RemoveSessionBySendAndReceiveId(userId, groupId); err != nil {
+			zlog.Error("删除会话记录失败: " + err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 更新用户联系记录状态并软删除
+		if err := txContactDAO.UpdateUserContactStatusAndDelete(userId, groupId, contactstatusenum.QUIT_GROUP); err != nil {
+			zlog.Error("更新用户联系记录失败: " + err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 删除对应的申请记录
+		if err := txContactApplyDAO.RemoveContactApply(userId, groupId); err != nil {
+			zlog.Error("删除申请记录失败: " + err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -558,28 +608,41 @@ func (s *GroupServiceImpl) DismissGroup(groupId string, userId string) error {
 		return fmt.Errorf("只有群主才能解散群聊")
 	}
 
-	// 删除群组信息
-	if err := s.groupDAO.DeleteGroupByUUid(groupId); err != nil {
-		zlog.Error("删除群组失败: " + err.Error())
-		return fmt.Errorf("系统错误")
-	}
+	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
 
-	// 删除所有与群组相关的会话
-	if err := s.sessionDAO.RemoveSessionsByReceiveId(groupId); err != nil {
-		zlog.Error("删除群组会话失败: " + err.Error())
-		return fmt.Errorf("系统错误")
-	}
+		txGroupDAO := userdao.NewGroupDAO(tx)
+		txSessionDAO := userdao.NewSessionDAO(tx)
+		txContactDAO := userdao.NewContactDAO(tx)
+		txContactApplyDAO := userdao.NewContactApplyDAO(tx)
 
-	// 删除所有与群组相关的用户联系
-	if err := s.contactDAO.RemoveContactsByContactId(groupId); err != nil {
-		zlog.Error("删除群组用户联系失败: " + err.Error())
-		return fmt.Errorf("系统错误")
-	}
+		// 删除群组信息
+		if err := txGroupDAO.DeleteGroupByUUid(groupId); err != nil {
+			zlog.Error("删除群组失败: " + err.Error())
+			return fmt.Errorf("系统错误")
+		}
 
-	// 删除群组相关的申请记录
-	if err := s.contactApplyDAO.RemoveContactAppliesByContactId(groupId); err != nil {
-		zlog.Error("删除群组申请记录失败: " + err.Error())
-		return fmt.Errorf("系统错误")
+		// 删除所有与群组相关的会话
+		if err := txSessionDAO.RemoveSessionsByReceiveId(groupId); err != nil {
+			zlog.Error("删除群组会话失败: " + err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 删除所有与群组相关的用户联系
+		if err := txContactDAO.RemoveContactsByContactId(groupId); err != nil {
+			zlog.Error("删除群组用户联系失败: " + err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 删除群组相关的申请记录
+		if err := txContactApplyDAO.RemoveContactAppliesByContactId(groupId); err != nil {
+			zlog.Error("删除群组申请记录失败: " + err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	// 清除相关缓存

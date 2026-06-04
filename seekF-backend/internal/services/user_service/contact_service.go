@@ -10,6 +10,7 @@ import (
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
+	"seekF-backend/internal/pkg/db"
 	contactapplystatusenum "seekF-backend/internal/pkg/enum/contact_enum/contact_apply_status_enum"
 	contactstatusenum "seekF-backend/internal/pkg/enum/contact_enum/contact_status_enum"
 	contacttypeenum "seekF-backend/internal/pkg/enum/contact_enum/contact_type_enum"
@@ -171,39 +172,52 @@ func (s *ContactServiceImpl) GetContactInfo(contactId string) (userresp.GetConta
 
 // DeleteContact 删除联系人（只包含用户）
 func (s *ContactServiceImpl) DeleteContact(userId string, contactId string) error {
-	// 将自己的联系人状态更新为删除状态
-	if err := s.contactDAO.UpdateUserContactStatusAndDelete(userId, contactId, contactstatusenum.DELETE); err != nil {
-		zlog.Error(err.Error())
-		return err
-	}
 
-	// 将对方对自己的联系人状态更新为被删除状态
-	if err := s.contactDAO.UpdateUserContactStatusAndDelete(contactId, userId, contactstatusenum.BE_DELETE); err != nil {
-		zlog.Error(err.Error())
-		return err
-	}
+	err := db.GormDB.Transaction(func(tx *gorm.DB) error {
 
-	// 删除从自己到对方的会话记录
-	if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(userId, contactId); err != nil {
-		zlog.Error(err.Error())
-		return err
-	}
+		txContactDAO := userdao.NewContactDAO(tx)
+		txSessionDAO := userdao.NewSessionDAO(tx)
+		txContactApplyDAO := userdao.NewContactApplyDAO(tx)
 
-	// 删除从对方到自己的会话记录
-	if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(contactId, userId); err != nil {
-		zlog.Error(err.Error())
-		return err
-	}
+		// 将自己的联系人状态更新为删除状态
+		if err := txContactDAO.UpdateUserContactStatusAndDelete(userId, contactId, contactstatusenum.DELETE); err != nil {
+			zlog.Error(err.Error())
+			return err
+		}
 
-	// 删除自己向对方发送的联系人申请记录
-	if err := s.contactApplyDAO.RemoveContactApply(userId, contactId); err != nil {
-		zlog.Error(err.Error())
-		return err
-	}
+		// 将对方对自己的联系人状态更新为被删除状态
+		if err := txContactDAO.UpdateUserContactStatusAndDelete(contactId, userId, contactstatusenum.BE_DELETE); err != nil {
+			zlog.Error(err.Error())
+			return err
+		}
 
-	// 删除对方向自己发送的联系人申请记录
-	if err := s.contactApplyDAO.RemoveContactApply(contactId, userId); err != nil {
-		zlog.Error(err.Error())
+		// 删除从自己到对方的会话记录
+		if err := txSessionDAO.RemoveSessionBySendAndReceiveId(userId, contactId); err != nil {
+			zlog.Error(err.Error())
+			return err
+		}
+
+		// 删除从对方到自己的会话记录
+		if err := txSessionDAO.RemoveSessionBySendAndReceiveId(contactId, userId); err != nil {
+			zlog.Error(err.Error())
+			return err
+		}
+
+		// 删除自己向对方发送的联系人申请记录
+		if err := txContactApplyDAO.RemoveContactApply(userId, contactId); err != nil {
+			zlog.Error(err.Error())
+			return err
+		}
+
+		// 删除对方向自己发送的联系人申请记录
+		if err := txContactApplyDAO.RemoveContactApply(contactId, userId); err != nil {
+			zlog.Error(err.Error())
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 
@@ -396,38 +410,49 @@ func (s *ContactServiceImpl) PassContactApply(id string, contactId string, curre
 			return fmt.Errorf("用户已被禁用")
 		}
 
-		// 更新申请状态为同意
-		contactApply.Status = contactapplystatusenum.AGREE
-		if err := s.contactApplyDAO.UpdateContactApply(&contactApply); err != nil {
-			zlog.Error(err.Error())
-			return fmt.Errorf("系统错误")
-		}
+		err = db.GormDB.Transaction(func(tx *gorm.DB) error {
 
-		// 创建双方的联系人关系
-		newContact := models.UserContact{
-			UserId:      id,
-			ContactId:   contactId,
-			ContactType: contacttypeenum.USER,
-			Status:      contactstatusenum.NORMAL,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
-		}
-		if err := s.contactDAO.CreateUserContact(&newContact); err != nil {
-			zlog.Error(err.Error())
-			return fmt.Errorf("系统错误")
-		}
+			txContactApplyDAO := userdao.NewContactApplyDAO(tx)
+			txContactDAO := userdao.NewContactDAO(tx)
 
-		anotherContact := models.UserContact{
-			UserId:      contactId,
-			ContactId:   id,
-			ContactType: contacttypeenum.USER,
-			Status:      contactstatusenum.NORMAL,
-			CreatedAt:   newContact.CreatedAt,
-			UpdatedAt:   newContact.UpdatedAt,
-		}
-		if err := s.contactDAO.CreateUserContact(&anotherContact); err != nil {
-			zlog.Error(err.Error())
-			return fmt.Errorf("系统错误")
+			// 更新申请状态为同意
+			contactApply.Status = contactapplystatusenum.AGREE
+			if err := txContactApplyDAO.UpdateContactApply(&contactApply); err != nil {
+				zlog.Error(err.Error())
+				return fmt.Errorf("系统错误")
+			}
+
+			// 创建双方的联系人关系
+			newContact := models.UserContact{
+				UserId:      id,
+				ContactId:   contactId,
+				ContactType: contacttypeenum.USER,
+				Status:      contactstatusenum.NORMAL,
+				CreatedAt:   time.Now(),
+				UpdatedAt:   time.Now(),
+			}
+			if err := txContactDAO.CreateUserContact(&newContact); err != nil {
+				zlog.Error(err.Error())
+				return fmt.Errorf("系统错误")
+			}
+
+			anotherContact := models.UserContact{
+				UserId:      contactId,
+				ContactId:   id,
+				ContactType: contacttypeenum.USER,
+				Status:      contactstatusenum.NORMAL,
+				CreatedAt:   newContact.CreatedAt,
+				UpdatedAt:   newContact.UpdatedAt,
+			}
+			if err := txContactDAO.CreateUserContact(&anotherContact); err != nil {
+				zlog.Error(err.Error())
+				return fmt.Errorf("系统错误")
+			}
+
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 
 		// 删除缓存
@@ -457,45 +482,57 @@ func (s *ContactServiceImpl) PassContactApply(id string, contactId string, curre
 			return fmt.Errorf("群聊已被禁用")
 		}
 
-		// 更新申请状态为同意
-		contactApply.Status = contactapplystatusenum.AGREE
-		if err := s.contactApplyDAO.UpdateContactApply(&contactApply); err != nil {
-			zlog.Error(err.Error())
-			return fmt.Errorf("系统错误")
-		}
+		err = db.GormDB.Transaction(func(tx *gorm.DB) error {
 
-		// 创建用户与群聊的联系人关系
-		newContact := models.UserContact{
-			UserId:      contactId,
-			ContactId:   id,
-			ContactType: contacttypeenum.GROUP,
-			Status:      contactstatusenum.NORMAL,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
-		}
-		if err := s.contactDAO.CreateUserContact(&newContact); err != nil {
-			zlog.Error(err.Error())
-			return fmt.Errorf("系统错误")
-		}
+			txContactApplyDAO := userdao.NewContactApplyDAO(tx)
+			txContactDAO := userdao.NewContactDAO(tx)
+			txGroupDAO := userdao.NewGroupDAO(tx)
 
-		// 更新群聊成员
-		var members []string
-		if err := json.Unmarshal([]byte(group.Members), &members); err != nil {
-			zlog.Error(err.Error())
-			return fmt.Errorf("系统错误")
-		}
-		members = append(members, contactId)
-		group.MemberCnt = len(members)
-		membersJson, err := json.Marshal(members)
+			// 更新申请状态为同意
+			contactApply.Status = contactapplystatusenum.AGREE
+			if err := txContactApplyDAO.UpdateContactApply(&contactApply); err != nil {
+				zlog.Error(err.Error())
+				return fmt.Errorf("系统错误")
+			}
+
+			// 创建用户与群聊的联系人关系
+			newContact := models.UserContact{
+				UserId:      contactId,
+				ContactId:   id,
+				ContactType: contacttypeenum.GROUP,
+				Status:      contactstatusenum.NORMAL,
+				CreatedAt:   time.Now(),
+				UpdatedAt:   time.Now(),
+			}
+			if err := txContactDAO.CreateUserContact(&newContact); err != nil {
+				zlog.Error(err.Error())
+				return fmt.Errorf("系统错误")
+			}
+
+			// 更新群聊成员
+			var members []string
+			if err := json.Unmarshal([]byte(group.Members), &members); err != nil {
+				zlog.Error(err.Error())
+				return fmt.Errorf("系统错误")
+			}
+			members = append(members, contactId)
+			group.MemberCnt = len(members)
+			membersJson, err := json.Marshal(members)
+			if err != nil {
+				zlog.Error(err.Error())
+				return fmt.Errorf("系统错误")
+			}
+			group.Members = membersJson
+
+			if err := txGroupDAO.UpdateGroupInfo(&group); err != nil {
+				zlog.Error(err.Error())
+				return fmt.Errorf("系统错误")
+			}
+
+			return nil
+		})
 		if err != nil {
-			zlog.Error(err.Error())
-			return fmt.Errorf("系统错误")
-		}
-		group.Members = membersJson
-
-		if err := s.groupDAO.UpdateGroupInfo(&group); err != nil {
-			zlog.Error(err.Error())
-			return fmt.Errorf("系统错误")
+			return err
 		}
 
 		// 删除缓存
@@ -509,22 +546,34 @@ func (s *ContactServiceImpl) PassContactApply(id string, contactId string, curre
 
 // BlackContact 拉黑联系人
 func (s *ContactServiceImpl) BlackContact(userId string, contactId string) error {
-	// 将自己对联系人的状态更新为拉黑
-	if err := s.contactDAO.UpdateUserContactStatus(userId, contactId, contactstatusenum.BLACK); err != nil {
-		zlog.Error(err.Error())
-		return fmt.Errorf("系统错误")
-	}
 
-	// 将联系人对自己的状态更新为被拉黑
-	if err := s.contactDAO.UpdateUserContactStatus(contactId, userId, contactstatusenum.BE_BLACK); err != nil {
-		zlog.Error(err.Error())
-		return fmt.Errorf("系统错误")
-	}
+	err := db.GormDB.Transaction(func(tx *gorm.DB) error {
 
-	// 删除从自己到对方的会话记录
-	if err := s.sessionDAO.RemoveSessionBySendAndReceiveId(userId, contactId); err != nil {
-		zlog.Error(err.Error())
-		return fmt.Errorf("系统错误")
+		txContactDAO := userdao.NewContactDAO(tx)
+		txSessionDAO := userdao.NewSessionDAO(tx)
+
+		// 将自己对联系人的状态更新为拉黑
+		if err := txContactDAO.UpdateUserContactStatus(userId, contactId, contactstatusenum.BLACK); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 将联系人对自己的状态更新为被拉黑
+		if err := txContactDAO.UpdateUserContactStatus(contactId, userId, contactstatusenum.BE_BLACK); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		// 删除从自己到对方的会话记录
+		if err := txSessionDAO.RemoveSessionBySendAndReceiveId(userId, contactId); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	// 删除缓存
@@ -565,15 +614,25 @@ func (s *ContactServiceImpl) CancelBlackContact(userId string, contactId string)
 		return fmt.Errorf("该联系人未被拉黑，无需解除拉黑")
 	}
 
-	// 取消拉黑，将双方状态更新为正常
-	if err := s.contactDAO.UpdateUserContactStatus(userId, contactId, contactstatusenum.NORMAL); err != nil {
-		zlog.Error(err.Error())
-		return fmt.Errorf("系统错误")
-	}
+	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
 
-	if err := s.contactDAO.UpdateUserContactStatus(contactId, userId, contactstatusenum.NORMAL); err != nil {
-		zlog.Error(err.Error())
-		return fmt.Errorf("系统错误")
+		txContactDAO := userdao.NewContactDAO(tx)
+
+		// 取消拉黑，将双方状态更新为正常
+		if err := txContactDAO.UpdateUserContactStatus(userId, contactId, contactstatusenum.NORMAL); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		if err := txContactDAO.UpdateUserContactStatus(contactId, userId, contactstatusenum.NORMAL); err != nil {
+			zlog.Error(err.Error())
+			return fmt.Errorf("系统错误")
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	// 删除缓存
