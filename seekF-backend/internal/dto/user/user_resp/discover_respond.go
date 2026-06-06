@@ -8,6 +8,7 @@ type PostItem struct {
 	Title        string   `json:"title"`
 	Content      string   `json:"content"`
 	MediaType    int8     `json:"media_type"`
+	CoverUrl     string   `json:"cover_url"`
 	Tags         []string `json:"tags"`
 	FirstUrl     string   `json:"first_url"`
 	LikeCount    int      `json:"like_count"`
@@ -31,6 +32,7 @@ type PostDetailRespond struct {
 	Title        string   `json:"title"`
 	Content      string   `json:"content"`
 	MediaType    int8     `json:"media_type"`
+	CoverUrl     string   `json:"cover_url"`
 	Tags         []string `json:"tags"`
 	Urls         []string `json:"urls"`
 	LikeCount    int      `json:"like_count"`

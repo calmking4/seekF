@@ -6,6 +6,7 @@ type CreatePostRequest struct {
 	MediaType int8     `json:"media_type" form:"media_type"`
 	Tags      []string `json:"tags" form:"tags"`
 	Urls      []string `json:"urls" form:"urls"`
+	CoverUrl  string   `json:"cover_url" form:"cover_url"`
 }
 
 type ListPostsRequest struct {

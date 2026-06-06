@@ -39,9 +39,11 @@
             @click="handleItemClick(item)"
             :data-id="item.uid"
           >
-            <!-- 图片显示区域 -->
+            <!-- 图片/视频显示区域 -->
             <div class="w-full relative">
+              <!-- 图片帖子 -->
               <img
+                v-if="item.type !== 'video'"
                 :src="getOptimizedSrc(item.src)"
                 :alt="item.title"
                 class="w-full h-full object-cover"
@@ -50,6 +52,27 @@
                 decoding="async"
                 :fetchpriority="item.order <= 4 ? 'high' : 'low'"
               />
+              <!-- 视频帖子：有封面图时显示封面图，否则显示视频首帧 -->
+              <div
+                v-else
+                class="video-cover"
+                :style="{ height: `${item.height}px` }"
+              >
+                <img
+                  v-if="item.coverUrl"
+                  :src="item.coverUrl"
+                  :alt="item.title"
+                  class="w-full h-full object-cover"
+                />
+                <video
+                  v-else
+                  :src="item.src"
+                  class="w-full h-full object-cover"
+                  preload="metadata"
+                  muted
+                  playsinline
+                />
+              </div>
             </div>
 
             <!-- 卡片内容 -->
@@ -294,6 +317,7 @@ const loadMore = async () => {
           id: item.uuid,
           uid: `${page.value}-${idx}-${item.uuid}-${orderCounter}`,
           src: item.first_url,
+          coverUrl: item.cover_url || '',
           type: item.media_type === 1 ? 'video' : 'image',
           title: item.title,
           height: 250 + Math.floor(Math.random() * 150),
@@ -485,5 +509,18 @@ const toggleLike = async (item) => {
 .fade-in.visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* 视频封面样式 */
+.video-cover {
+  position: relative;
+  overflow: hidden;
+  background: #000;
+}
+
+.video-cover video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 </style>

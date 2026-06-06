@@ -15,7 +15,7 @@ import (
 )
 
 type DiscoverService interface {
-	CreatePost(ctx context.Context, userId, title, content string, mediaType int8, tags []string, urls []string) (*PostInfo, error)
+	CreatePost(ctx context.Context, userId, title, content string, mediaType int8, tags []string, urls []string, coverUrl string) (*PostInfo, error)
 	ListPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error)
 	ListLikedPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error)
 	GetPostDetail(ctx context.Context, userId, uuid string) (*PostDetailInfo, error)
@@ -52,6 +52,7 @@ type PostInfo struct {
 	Title        string
 	Content      string
 	MediaType    int8
+	CoverUrl     string
 	Tags         []string
 	FirstUrl     string
 	LikeCount    int
@@ -70,6 +71,7 @@ type PostDetailInfo struct {
 	Title        string
 	Content      string
 	MediaType    int8
+	CoverUrl     string
 	Tags         []string
 	Urls         []string
 	LikeCount    int
@@ -120,7 +122,7 @@ func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.Use
 	}
 }
 
-func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId, title, content string, mediaType int8, tags []string, urls []string) (*PostInfo, error) {
+func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId, title, content string, mediaType int8, tags []string, urls []string, coverUrl string) (*PostInfo, error) {
 	postUUID := "D" + util.GetNowAndLenRandomString(11)
 
 	tagsJSON, err := json.Marshal(tags)
@@ -134,6 +136,7 @@ func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId, title, con
 		Title:     title,
 		Content:   content,
 		MediaType: mediaType,
+		CoverUrl:  coverUrl,
 		Tags:      tagsJSON,
 		Status:    0,
 	}
@@ -179,6 +182,7 @@ func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId, title, con
 		Title:     title,
 		Content:   content,
 		MediaType: mediaType,
+		CoverUrl:  coverUrl,
 		Tags:      tags,
 		FirstUrl:  firstUrl,
 		CreatedAt: post.CreatedAt.Format("2006-01-02 15:04:05"),
@@ -268,6 +272,7 @@ func (s *DiscoverServiceImpl) ListPosts(ctx context.Context, userId string, page
 			Title:        post.Title,
 			Content:      post.Content,
 			MediaType:    post.MediaType,
+			CoverUrl:     post.CoverUrl,
 			Tags:         tags,
 			FirstUrl:     firstUrl,
 			LikeCount:    post.LikeCount,
@@ -322,6 +327,7 @@ func (s *DiscoverServiceImpl) ListLikedPosts(ctx context.Context, userId string,
 			Title:        post.Title,
 			Content:      post.Content,
 			MediaType:    post.MediaType,
+			CoverUrl:     post.CoverUrl,
 			Tags:         tags,
 			FirstUrl:     firstUrl,
 			LikeCount:    post.LikeCount,
@@ -383,6 +389,7 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 		Title:        post.Title,
 		Content:      post.Content,
 		MediaType:    post.MediaType,
+		CoverUrl:     post.CoverUrl,
 		Tags:         tags,
 		Urls:         urls,
 		LikeCount:    post.LikeCount,
@@ -796,6 +803,7 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 			Title:        post.Title,
 			Content:      post.Content,
 			MediaType:    post.MediaType,
+			CoverUrl:     post.CoverUrl,
 			Tags:         tags,
 			FirstUrl:     firstUrl,
 			LikeCount:    post.LikeCount,

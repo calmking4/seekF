@@ -44,7 +44,7 @@ func (c *DiscoverController) CreatePost(ctx *gin.Context) {
 		return
 	}
 
-	postInfo, err := c.discoverService.CreatePost(ctx.Request.Context(), userId, req.Title, req.Content, req.MediaType, req.Tags, req.Urls)
+	postInfo, err := c.discoverService.CreatePost(ctx.Request.Context(), userId, req.Title, req.Content, req.MediaType, req.Tags, req.Urls, req.CoverUrl)
 	if err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
@@ -58,6 +58,7 @@ func (c *DiscoverController) CreatePost(ctx *gin.Context) {
 		Title:     postInfo.Title,
 		Content:   postInfo.Content,
 		MediaType: postInfo.MediaType,
+		CoverUrl:  postInfo.CoverUrl,
 		Tags:      postInfo.Tags,
 		FirstUrl:  postInfo.FirstUrl,
 		CreatedAt: postInfo.CreatedAt,
@@ -96,6 +97,7 @@ func (c *DiscoverController) ListPosts(ctx *gin.Context) {
 			Title:        p.Title,
 			Content:      p.Content,
 			MediaType:    p.MediaType,
+			CoverUrl:     p.CoverUrl,
 			Tags:         p.Tags,
 			FirstUrl:     p.FirstUrl,
 			LikeCount:    p.LikeCount,
@@ -149,6 +151,7 @@ func (c *DiscoverController) ListLikedPosts(ctx *gin.Context) {
 			Title:        p.Title,
 			Content:      p.Content,
 			MediaType:    p.MediaType,
+			CoverUrl:     p.CoverUrl,
 			Tags:         p.Tags,
 			FirstUrl:     p.FirstUrl,
 			LikeCount:    p.LikeCount,
@@ -198,6 +201,7 @@ func (c *DiscoverController) GetPostDetail(ctx *gin.Context) {
 		Title:        detail.Title,
 		Content:      detail.Content,
 		MediaType:    detail.MediaType,
+		CoverUrl:     detail.CoverUrl,
 		Tags:         detail.Tags,
 		Urls:         detail.Urls,
 		LikeCount:    detail.LikeCount,
@@ -575,6 +579,7 @@ func (c *DiscoverController) ListCollectedPosts(ctx *gin.Context) {
 			Title:        p.Title,
 			Content:      p.Content,
 			MediaType:    p.MediaType,
+			CoverUrl:     p.CoverUrl,
 			Tags:         p.Tags,
 			FirstUrl:     p.FirstUrl,
 			LikeCount:    p.LikeCount,

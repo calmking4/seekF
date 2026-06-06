@@ -14,6 +14,7 @@ type DiscoverPost struct {
 	Title        string         `gorm:"column:title;type:varchar(50);not null;comment:标题"`
 	Content      string         `gorm:"column:content;type:text;comment:正文"`
 	MediaType    int8           `gorm:"column:media_type;not null;default:0;comment:媒体类型，0.图片，1.视频"`
+	CoverUrl     string         `gorm:"column:cover_url;type:varchar(500);default:;comment:视频封面图URL"`
 	Tags         json.RawMessage `gorm:"column:tags;type:json;comment:标签数组"`
 	LikeCount    int            `gorm:"column:like_count;not null;default:0;comment:点赞数"`
 	CommentCount int            `gorm:"column:comment_count;not null;default:0;comment:评论数"`

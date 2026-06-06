@@ -73,6 +73,35 @@
         />
       </div>
 
+      <!-- 视频封面上传（仅视频模式显示） -->
+      <div v-if="mediaType === 'video' && mediaList.length > 0" class="mb-5">
+        <div class="text-sm text-gray-500 mb-2">视频封面（可选）</div>
+        <div v-if="coverPreview" class="relative inline-block">
+          <img :src="coverPreview" class="w-32 h-32 rounded-lg object-cover border border-gray-200" />
+          <button
+            class="absolute top-1 right-1 w-5 h-5 bg-black/50 rounded-full flex items-center justify-center"
+            @click="removeCover"
+          >
+            <Icon name="mdi:close" class="text-white text-xs" />
+          </button>
+        </div>
+        <div
+          v-else
+          class="w-32 h-32 rounded-lg border-2 border-dashed border-gray-200 flex flex-col items-center justify-center cursor-pointer hover:border-[#60a5fa] transition-colors"
+          @click="coverInput?.click()"
+        >
+          <Icon name="mdi:image-plus-outline" class="text-2xl text-gray-300 mb-1" />
+          <span class="text-xs text-gray-400">上传封面</span>
+        </div>
+        <input
+          ref="coverInput"
+          type="file"
+          accept="image/*"
+          class="hidden"
+          @change="handleCoverChange"
+        />
+      </div>
+
       <!-- 标题 -->
       <div class="mb-4">
         <el-input
@@ -144,10 +173,15 @@
 import { ref, computed, nextTick } from 'vue'
 
 const fileInput = ref(null)
+const coverInput = ref(null)
 const mediaType = ref('image')
 const mediaList = ref([])
 const title = ref('')
 const content = ref('')
+
+// 封面相关
+const coverFile = ref(null)
+const coverPreview = ref('')
 
 // 标签相关
 const tags = ref([])
@@ -163,6 +197,8 @@ const switchType = (type) => {
   if (mediaType.value !== type) {
     mediaType.value = type
     mediaList.value = []
+    // 切换类型时清空封面
+    removeCover()
   }
 }
 
@@ -187,6 +223,27 @@ const handleFileChange = (e) => {
 const removeMedia = (index) => {
   URL.revokeObjectURL(mediaList.value[index].url)
   mediaList.value.splice(index, 1)
+}
+
+// 封面操作
+const handleCoverChange = (e) => {
+  const file = e.target.files[0]
+  if (!file) return
+  // 释放旧的预览URL
+  if (coverPreview.value) {
+    URL.revokeObjectURL(coverPreview.value)
+  }
+  coverFile.value = file
+  coverPreview.value = URL.createObjectURL(file)
+  e.target.value = ''
+}
+
+const removeCover = () => {
+  if (coverPreview.value) {
+    URL.revokeObjectURL(coverPreview.value)
+  }
+  coverFile.value = null
+  coverPreview.value = ''
 }
 
 // 标签操作
@@ -230,7 +287,25 @@ const handlePublish = async () => {
       }
     }
 
-    // 2. 创建帖子
+    // 2. 上传封面（如果有）
+    let coverUrl = ''
+    if (coverFile.value) {
+      const coverFormData = new FormData()
+      coverFormData.append('file', coverFile.value)
+      coverFormData.append('fileType', 'discover_image')
+      const coverRes = await useApi$('/user/file/upload', {
+        body: coverFormData,
+        method: 'POST',
+      })
+      if (coverRes.code === 200 && coverRes.data?.url) {
+        coverUrl = coverRes.data.url
+      } else {
+        ElMessage.error('封面上传失败')
+        return
+      }
+    }
+
+    // 3. 创建帖子
     const postRes = await useApi$('/user/discover/create', {
       body: {
         title: title.value,
@@ -238,6 +313,7 @@ const handlePublish = async () => {
         media_type: mediaType.value === 'video' ? 1 : 0,
         tags: tags.value,
         urls,
+        cover_url: coverUrl,
       },
     })
     if (postRes.code === 200) {
@@ -254,7 +330,7 @@ const handlePublish = async () => {
 </script>
 
 <style scoped>
-:deep(.el-button.is-round) { 
+:deep(.el-button.is-round) {
     padding: 18px 40px;
 }
 </style>

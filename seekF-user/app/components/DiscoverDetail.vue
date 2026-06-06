@@ -3,14 +3,27 @@
     <Transition name="discover">
       <div v-if="show" class="discover-overlay" @click.self="handleClose">
       <div class="note-card">
-        <!-- 左侧图片区：宽度由首张图测量锁定；切换时后续图宽度铺满，留白 bg-gray-50 -->
+        <!-- 左侧媒体区：宽度由首张图测量锁定；切换时后续图宽度铺满，留白 bg-gray-50 -->
         <div
           class="image-container bg-gray-50"
           :class="{ 'image-container--locked': lockedWidthPx != null }"
           :style="lockedWidthPx != null ? { width: `${lockedWidthPx}px` } : undefined"
         >
+          <!-- 视频播放 -->
+          <div v-if="detail?.media_type === 1 && detail?.urls?.length" class="video-wrapper">
+            <video
+              :key="detail.urls[0]"
+              :src="detail.urls[0]"
+              class="video-player"
+              controls
+              preload="metadata"
+              playsinline
+            >
+              您的浏览器不支持视频播放
+            </video>
+          </div>
           <!-- 图片轮播 -->
-          <div v-if="detail?.urls?.length" class="carousel">
+          <div v-else-if="detail?.urls?.length && detail?.media_type !== 1" class="carousel">
             <Transition name="carousel-fade" mode="out-in">
               <img
                 :key="detail.urls[currentIndex]"
@@ -43,16 +56,16 @@
           </div>
           <!-- 回退：单图 -->
           <img
-            v-else-if="item?.src"
+            v-else-if="item?.src && item?.type !== 'video'"
             :src="item.src"
             :alt="item.title"
             class="cover-image cover-image--first"
             @load="onCarouselImageLoad"
           />
-          <!-- 回退：无图 -->
+          <!-- 回退：无媒体 -->
           <div v-else class="image-content">
             <div class="text-bg">
-              <span class="text-line">暂无图片</span>
+              <span class="text-line">暂无内容</span>
             </div>
           </div>
         </div>
@@ -627,6 +640,23 @@ const handleClose = () => {
 .image-container--locked {
   flex: 0 0 auto;
   min-width: 0;
+}
+
+/* 视频播放器样式 */
+.video-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+}
+
+.video-player {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  outline: none;
 }
 
 .cover-image {
