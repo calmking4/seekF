@@ -84,6 +84,12 @@ func SetupRouter(
 			protectedGroup.POST("/message/getGroupMessageList", messageController.GetGroupMessageList)
 			// 文件上传
 			protectedGroup.POST("/file/upload", fileController.UploadFile)
+			protectedGroup.POST("/file/upload/init", fileController.InitMultipartUpload)
+			protectedGroup.POST("/file/upload/chunk", fileController.UploadPart)
+			protectedGroup.POST("/file/upload/status", fileController.ListUploadParts)
+			protectedGroup.POST("/file/upload/complete", fileController.CompleteMultipartUpload)
+			protectedGroup.POST("/file/upload/abort", fileController.AbortMultipartUpload)
+			protectedGroup.POST("/file/delete", fileController.DeleteFile)
 			// WebSocket
 			protectedGroup.GET("/ws/login", wsController.WsLogin)
 			protectedGroup.POST("/ws/logout", wsController.WsLogout)

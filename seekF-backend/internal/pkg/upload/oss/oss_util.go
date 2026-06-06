@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -193,4 +194,57 @@ func UploadMultipartFile(ctx context.Context, fileHeader *multipart.FileHeader, 
 	defer src.Close()
 
 	return UploadReader(ctx, src, fileHeader.Filename, category)
+}
+
+// ObjectKeyFromURL 从访问 URL 解析 OSS 对象键
+func ObjectKeyFromURL(fileURL string) string {
+	if fileURL == "" {
+		return ""
+	}
+	if ossBaseURL != "" {
+		prefix := ossBaseURL + "/"
+		if strings.HasPrefix(fileURL, prefix) {
+			return strings.TrimPrefix(fileURL, prefix)
+		}
+	}
+	parsed, err := url.Parse(fileURL)
+	if err != nil || parsed.Path == "" {
+		return ""
+	}
+	return strings.TrimPrefix(parsed.Path, "/")
+}
+
+// DeleteFile 删除 OSS 上的文件
+func DeleteFile(ctx context.Context, objectKey string) error {
+	if objectKey == "" {
+		return fmt.Errorf("对象键为空")
+	}
+
+	client, err := getClient()
+	if err != nil {
+		return err
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	_, err = client.DeleteObject(ctx, &oss.DeleteObjectRequest{
+		Bucket: oss.Ptr(ossBucketName),
+		Key:    oss.Ptr(objectKey),
+	})
+	if err != nil {
+		return fmt.Errorf("删除OSS文件失败: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteFileByURL 根据访问 URL 删除 OSS 文件
+func DeleteFileByURL(ctx context.Context, fileURL string) error {
+	objectKey := ObjectKeyFromURL(fileURL)
+	if objectKey == "" {
+		return fmt.Errorf("无法从URL解析对象键")
+	}
+	return DeleteFile(ctx, objectKey)
 }
