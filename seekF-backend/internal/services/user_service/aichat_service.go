@@ -237,10 +237,16 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	}
 
 	// 从DB读取历史消息构建上下文（最近100条）
-	messages, err := s.messageDAO.GetMessagesBySessionId(req.SessionId, 100, 0)
+	// 使用DESC排序获取最近的消息，然后反转为正序
+	messages, err := s.messageDAO.GetMessagesBySessionIdDesc(req.SessionId, 100, 0)
 	if err != nil {
 		zlog.Error("获取消息历史上下文失败: " + err.Error())
 		messages = []models.Message{}
+	} else {
+		// 反转为时间正序（从旧到新）
+		for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+			messages[i], messages[j] = messages[j], messages[i]
+		}
 	}
 
 	// 判断是否为多模态模型
@@ -278,6 +284,10 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 
 	chatMessages = append(chatMessages, schema.SystemMessage(systemPrompt))
 	for _, msg := range messages {
+		// 跳过当前刚写入的消息，避免重复（多模态场景下会在后面统一处理）
+		if msg.Uuid == userMsgId {
+			continue
+		}
 		if msg.SendId == userId { //处理用户消息
 			// 只有多模态模型才处理图片
 			if isMultiModalModel && msg.Url != "" {
@@ -301,7 +311,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		}
 	}
 
-	// 如果有图片，且是多模态模型，追加当前用户消息为多模态
+	// 追加当前用户消息（多模态模型处理图片，非多模态模型处理文本）
 	if isMultiModalModel && req.ImageURL != "" {
 		imageURL := req.ImageURL
 		var currentMsgContent []schema.MessageInputPart
@@ -324,6 +334,9 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 			UserInputMultiContent: currentMsgContent,
 		}
 		chatMessages = append(chatMessages, multiMsg)
+	} else {
+		// 非多模态模型，追加文本格式的当前消息
+		chatMessages = append(chatMessages, schema.UserMessage(content))
 	}
 
 	// 获取对应模型的单例
