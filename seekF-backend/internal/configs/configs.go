@@ -85,6 +85,12 @@ type AIModelConfig struct {
 	QwenLocalApiKey   string `toml:"qwenLocalApiKey"`
 	QwenLocalModel    string `toml:"qwenLocalModel"`
 	QwenLocalBaseUrl  string `toml:"qwenLocalBaseUrl"`
+	// 各模型的上下文窗口大小配置
+	DeepseekMaxTokens int `toml:"deepseekMaxTokens"`
+	QwenMaxTokens     int `toml:"qwenMaxTokens"`
+	GlmMaxTokens      int `toml:"glmMaxTokens"`
+	Glm4vMaxTokens    int `toml:"glm4vMaxTokens"`
+	QwenLocalMaxTokens int `toml:"qwenLocalMaxTokens"`
 }
 
 type QdrantConfig struct {

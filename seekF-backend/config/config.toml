@@ -63,19 +63,29 @@ staticFilePath = "./static/files"
 deepseekApiKey = ""
 deepseekModel = ""
 deepseekBaseUrl = ""
+deepseekMaxTokens = 65536
+
 qwenApiKey = ""
 qwenModel = ""
 qwenBaseUrl = ""
+qwenMaxTokens = 131072
+
 glmApiKey = ""
 glmModel = ""
 glmBaseUrl = ""
+glmMaxTokens = 131072
 glm4vModel = ""
-glmEmbeddingModel = ""
-ttsModel = "glm-tts"
-ttsVoice = "chuichui"
+glm4vMaxTokens = 131072
+
 qwenLocalApiKey = ""
 qwenLocalModel = ""
 qwenLocalBaseUrl = ""
+qwenLocalMaxTokens = 4096
+
+glmEmbeddingModel = ""
+ttsModel = "glm-tts"
+ttsVoice = "chuichui"
+
 
 [qdrantConfig]
 host = "localhost"
