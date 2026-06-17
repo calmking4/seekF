@@ -7,6 +7,7 @@ import (
 	"seekF-backend/internal/configs"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
+	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/enum/message_enum/message_status_enum"
 	"seekF-backend/internal/pkg/enum/message_enum/message_type_enum"
 	"seekF-backend/internal/pkg/kafka"
@@ -163,6 +164,16 @@ func (s *Server) handleTextMessage(chatMessageReq *userreq.ChatMessageRequest) {
 		return
 	}
 
+	// 异步索引消息到ES（搜索用）
+	go func() {
+		if db.ESClient != nil {
+			esDAO := userdao.NewESMessageDAO()
+			if err := esDAO.IndexMessage(message); err != nil {
+				zlog.Error("索引文本消息到ES失败: " + err.Error())
+			}
+		}
+	}()
+
 	// 构建响应消息
 	messageRsp := userresp.GetMessageListRespond{
 		SessionId:  message.SessionId,
@@ -226,6 +237,16 @@ func (s *Server) handleFileMessage(chatMessageReq *userreq.ChatMessageRequest) {
 		zlog.Error("保存消息失败: " + err.Error())
 		return
 	}
+
+	// 异步索引消息到ES（搜索用）
+	go func() {
+		if db.ESClient != nil {
+			esDAO := userdao.NewESMessageDAO()
+			if err := esDAO.IndexMessage(message); err != nil {
+				zlog.Error("索引文件消息到ES失败: " + err.Error())
+			}
+		}
+	}()
 
 	// 构建响应消息
 	messageRsp := userresp.GetMessageListRespond{
@@ -308,6 +329,16 @@ func (s *Server) handleAVCallMessage(chatMessageReq *userreq.ChatMessageRequest)
 			zlog.Error("保存音视频通话消息失败: " + err.Error())
 			return
 		}
+
+		// 异步索引消息到ES（搜索用）
+		go func() {
+			if db.ESClient != nil {
+				esDAO := userdao.NewESMessageDAO()
+				if err := esDAO.IndexMessage(message); err != nil {
+					zlog.Error("索引音视频消息到ES失败: " + err.Error())
+				}
+			}
+		}()
 	}
 
 	// 只处理单聊音视频通话

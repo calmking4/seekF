@@ -99,3 +99,8 @@ apiKey = ""
 
 [tavilyConfig]
 apiKey = ""
+
+[esConfig]
+addresses = "http://localhost:9200"
+username = ""
+password = ""

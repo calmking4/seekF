@@ -6,6 +6,7 @@ import (
 	userreq "seekF-backend/internal/dto/user/user_req"
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/pkg/resp"
+	"seekF-backend/internal/pkg/zlog"
 	userservice "seekF-backend/internal/services/user_service"
 
 	"github.com/gin-gonic/gin"
@@ -110,6 +111,57 @@ func (c *DiscoverController) ListPosts(ctx *gin.Context) {
 	}
 
 	resp.Success(ctx, "获取成功", userresp.ListPostsRespond{
+		List:  items,
+		Total: total,
+	})
+}
+
+// SearchPosts 搜索帖子
+func (c *DiscoverController) SearchPosts(ctx *gin.Context) {
+	userId := ctx.GetString("Uuid")
+
+	var req userreq.SearchPostsRequest
+	if err := ctx.ShouldBind(&req); err != nil {
+		resp.Error(ctx, "参数错误", http.StatusBadRequest)
+		return
+	}
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+	if req.PageSize <= 0 || req.PageSize > 20 {
+		req.PageSize = 12
+	}
+
+	posts, total, err := c.discoverService.SearchPosts(ctx.Request.Context(), userId, req.Keyword, req.Page, req.PageSize)
+	if err != nil {
+		zlog.Error("搜索帖子失败: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var items []userresp.PostItem
+	for _, p := range posts {
+		items = append(items, userresp.PostItem{
+			Uuid:         p.Uuid,
+			UserId:       p.UserId,
+			Nickname:     p.Nickname,
+			Avatar:       p.Avatar,
+			Title:        p.Title,
+			Content:      p.Content,
+			MediaType:    p.MediaType,
+			CoverUrl:     p.CoverUrl,
+			Tags:         p.Tags,
+			FirstUrl:     p.FirstUrl,
+			LikeCount:    p.LikeCount,
+			CommentCount: p.CommentCount,
+			CollectCount: p.CollectCount,
+			IsLiked:      p.IsLiked,
+			IsCollected:  p.IsCollected,
+			CreatedAt:    p.CreatedAt,
+		})
+	}
+
+	resp.Success(ctx, "搜索成功", userresp.ListPostsRespond{
 		List:  items,
 		Total: total,
 	})

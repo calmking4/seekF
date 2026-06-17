@@ -70,3 +70,25 @@ func (c *MessageController) GetGroupMessageList(ctx *gin.Context) {
 		"total": total,
 	})
 }
+
+// SearchMessages 搜索聊天消息
+func (c *MessageController) SearchMessages(ctx *gin.Context) {
+	var req userreq.SearchMessageRequest
+	if err := ctx.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "参数错误", http.StatusBadRequest)
+		return
+	}
+
+	messageList, total, err := c.messageService.SearchMessages(req.SessionId, req.Keyword, req.Page, req.PageSize)
+	if err != nil {
+		zlog.Info("搜索消息服务错误: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "搜索成功", gin.H{
+		"list":  messageList,
+		"total": total,
+	})
+}

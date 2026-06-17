@@ -82,6 +82,7 @@ func SetupRouter(
 			// 消息
 			protectedGroup.POST("/message/getUserMessageList", messageController.GetUserMessageList)
 			protectedGroup.POST("/message/getGroupMessageList", messageController.GetGroupMessageList)
+			protectedGroup.POST("/message/search", messageController.SearchMessages)
 			// 文件上传
 			protectedGroup.POST("/file/upload", fileController.UploadFile)
 			protectedGroup.POST("/file/upload/init", fileController.InitMultipartUpload)
@@ -108,6 +109,7 @@ func SetupRouter(
 			// Discover
 			protectedGroup.POST("/discover/create", discoverController.CreatePost)
 			protectedGroup.POST("/discover/list", discoverController.ListPosts)
+			protectedGroup.POST("/discover/search", discoverController.SearchPosts)
 			protectedGroup.POST("/discover/liked-list", discoverController.ListLikedPosts)
 			protectedGroup.POST("/discover/detail", discoverController.GetPostDetail)
 			protectedGroup.POST("/discover/like", discoverController.ToggleLike)

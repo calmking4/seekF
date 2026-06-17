@@ -90,3 +90,9 @@ type ListCollectedPostsRequest struct {
 	Page       int    `json:"page" form:"page"`
 	PageSize   int    `json:"page_size" form:"page_size"`
 }
+
+type SearchPostsRequest struct {
+	Keyword  string `json:"keyword" binding:"required"`
+	Page     int    `json:"page"`
+	PageSize int    `json:"page_size"`
+}

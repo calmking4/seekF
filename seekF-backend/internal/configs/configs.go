@@ -127,6 +127,7 @@ type Config struct {
 	SeniverseConfig    `toml:"seniverseConfig"`
 	ExchangeRateConfig `toml:"exchangeRateConfig"`
 	TavilyConfig       `toml:"tavilyConfig"`
+	ESConfig           `toml:"esConfig"`
 }
 
 type SeniverseConfig struct {
@@ -139,6 +140,13 @@ type ExchangeRateConfig struct {
 
 type TavilyConfig struct {
 	APIKey string `toml:"apiKey"`
+}
+
+// ESConfig Elasticsearch配置
+type ESConfig struct {
+	Addresses string `toml:"addresses"`
+	Username  string `toml:"username"`
+	Password  string `toml:"password"`
 }
 
 var config *Config
@@ -239,6 +247,14 @@ func loadEnvConfig(cfg *Config) {
 	// Tavily Configuration
 	if v := os.Getenv("TAVILY_API_KEY"); v != "" {
 		cfg.TavilyConfig.APIKey = v
+	}
+
+	// Elasticsearch Configuration
+	if v := os.Getenv("ES_USERNAME"); v != "" {
+		cfg.ESConfig.Username = v
+	}
+	if v := os.Getenv("ES_PASSWORD"); v != "" {
+		cfg.ESConfig.Password = v
 	}
 }
 
