@@ -17,9 +17,11 @@ type SessionDAO interface {
 	GetDeletedSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error)
 	RestoreSession(sessionId string) error
 	CreateSession(session *models.Session) error
+	BatchCreateSessions(sessions []*models.Session) error
 	DeleteSession(sessionId string) error
 	GetSessionListBySendId(userId string) ([]models.Session, error)
 	GetSessionByUuid(uuid string) (models.Session, error)
+	GetExistingSessionsBySendIdsAndReceiveId(sendIds []string, receiveId string) ([]models.Session, error)
 	UpdateSessionLastMessage(sessionId string, lastMessage string, lastMessageAt time.Time) error
 	UpdateSessionLastMessageByReceiveId(receiveId string, lastMessage string, lastMessageAt time.Time) error
 	// AI会话相关方法
@@ -85,6 +87,15 @@ func (d *SessionDAOImpl) CreateSession(session *models.Session) error {
 	return result.Error
 }
 
+// BatchCreateSessions 批量创建会话
+func (d *SessionDAOImpl) BatchCreateSessions(sessions []*models.Session) error {
+	if len(sessions) == 0 {
+		return nil
+	}
+	result := d.db.Create(sessions)
+	return result.Error
+}
+
 // DeleteSession 删除会话
 func (d *SessionDAOImpl) DeleteSession(sessionId string) error {
 	result := d.db.Delete(&models.Session{}, "uuid = ?", sessionId)
@@ -103,6 +114,16 @@ func (d *SessionDAOImpl) GetSessionByUuid(uuid string) (models.Session, error) {
 	var session models.Session
 	result := d.db.Where("uuid = ?", uuid).First(&session)
 	return session, result.Error
+}
+
+// GetExistingSessionsBySendIdsAndReceiveId 批量查询已存在的会话
+func (d *SessionDAOImpl) GetExistingSessionsBySendIdsAndReceiveId(sendIds []string, receiveId string) ([]models.Session, error) {
+	if len(sendIds) == 0 {
+		return nil, nil
+	}
+	var sessions []models.Session
+	result := d.db.Where("send_id IN ? AND receive_id = ?", sendIds, receiveId).Find(&sessions)
+	return sessions, result.Error
 }
 
 // UpdateSessionLastMessage 根据会话ID更新最后消息

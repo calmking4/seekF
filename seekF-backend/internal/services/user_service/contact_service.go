@@ -76,18 +76,35 @@ func (s *ContactServiceImpl) GetUserList(userId string) ([]userresp.MyUserListRe
 				return nil, err
 			}
 
+			// 收集所有用户类型的联系人ID，避免 N+1 查询
+			var userContactIds []string
+			for _, contact := range contactList {
+				if contact.ContactType == contacttypeenum.USER {
+					userContactIds = append(userContactIds, contact.ContactId)
+				}
+			}
+
+			// 批量查询用户信息
+			userMap := make(map[string]*models.UserInfo)
+			if len(userContactIds) > 0 {
+				users, err := s.userInfoDAO.FindUsersByUuids(userContactIds)
+				if err != nil {
+					zlog.Error("批量获取用户信息失败: " + err.Error())
+					return nil, err
+				}
+				for i := range users {
+					userMap[users[i].Uuid] = &users[i]
+				}
+			}
+
 			// dto 转换
 			var userListRsp []userresp.MyUserListRespond
 			for _, contact := range contactList {
 				// 联系人中是用户的
 				if contact.ContactType == contacttypeenum.USER {
-					// 获取用户信息
-					user, err := s.userInfoDAO.FindUserByUuid(contact.ContactId)
-					if err != nil {
-						zlog.Error(err.Error())
-						return nil, err
-					}
-					if user == nil {
+					// 从 map 中获取用户信息
+					user, ok := userMap[contact.ContactId]
+					if !ok || user == nil {
 						continue
 					}
 					userListRsp = append(userListRsp, userresp.MyUserListRespond{

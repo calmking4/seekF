@@ -431,13 +431,8 @@ func (s *Server) sendToGroup(message *models.Message, messageBack *MessageBack, 
 		return
 	}
 
-	// 为所有群成员创建会话（如果不存在）
-	for _, member := range members {
-		_, err := s.sessionService.OpenSession(member, message.ReceiveId)
-		if err != nil {
-			zlog.Error(fmt.Sprintf("为群成员 %s 创建会话失败: %v", member, err))
-		}
-	}
+	// 批量为群成员创建会话（如果不存在），避免 N+1 查询
+	s.batchOpenSessions(members, message.ReceiveId)
 
 	// 批量更新所有群成员的会话最后消息
 	lastMessage := message.Content
@@ -467,6 +462,54 @@ func (s *Server) sendToGroup(message *models.Message, messageBack *MessageBack, 
 
 	// 更新Redis缓存
 	s.updateGroupMessageListCache(message.ReceiveId, messageRsp)
+}
+
+// batchOpenSessions 批量检查并创建会话，避免 N+1 查询
+func (s *Server) batchOpenSessions(memberIds []string, groupId string) {
+	// 1. 批量查询已存在的会话
+	existingSessions, err := s.sessionDAO.GetExistingSessionsBySendIdsAndReceiveId(memberIds, groupId)
+	if err != nil {
+		zlog.Error("批量查询会话失败: " + err.Error())
+		// 降级为逐个创建
+		for _, member := range memberIds {
+			if _, err := s.sessionService.OpenSession(member, groupId); err != nil {
+				zlog.Error(fmt.Sprintf("为群成员 %s 创建会话失败: %v", member, err))
+			}
+		}
+		return
+	}
+
+	// 构建已存在会话的 map
+	existingMap := make(map[string]bool)
+	for _, session := range existingSessions {
+		existingMap[session.SendId] = true
+	}
+
+	// 2. 批量创建缺失的会话
+	var newSessions []*models.Session
+	now := time.Now()
+	for _, memberId := range memberIds {
+		if !existingMap[memberId] {
+			newSessions = append(newSessions, &models.Session{
+				Uuid:      fmt.Sprintf("S%s", util.GetNowAndLenRandomString(11)),
+				SendId:    memberId,
+				ReceiveId: groupId,
+				CreatedAt: now,
+			})
+		}
+	}
+
+	if len(newSessions) > 0 {
+		if err := s.sessionDAO.BatchCreateSessions(newSessions); err != nil {
+			zlog.Error("批量创建会话失败: " + err.Error())
+			// 降级为逐个创建
+			for _, session := range newSessions {
+				if err := s.sessionDAO.CreateSession(session); err != nil {
+					zlog.Error(fmt.Sprintf("为群成员 %s 创建会话失败: %v", session.SendId, err))
+				}
+			}
+		}
+	}
 }
 
 // updateUserMessageListCache 更新用户消息列表缓存

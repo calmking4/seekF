@@ -10,6 +10,7 @@ type GroupDAO interface {
 	CreateGroup(group *models.GroupInfo) error
 	GetGroupInfoByOwnerId(ownerId string) ([]models.GroupInfo, error)
 	GetGroupInfoByUuid(uuid string) (models.GroupInfo, error)
+	GetGroupsByUuids(uuids []string) ([]models.GroupInfo, error)
 	UpdateGroupInfo(group *models.GroupInfo) error
 	GetGroupMembersByUuid(uuid string) (models.GroupInfo, error)
 	DeleteGroupByUUid(groupId string) error
@@ -42,6 +43,16 @@ func (d *GroupDAOImpl) GetGroupInfoByUuid(uuid string) (models.GroupInfo, error)
 	var group models.GroupInfo
 	result := d.db.Unscoped().Where("uuid = ?", uuid).Find(&group)
 	return group, result.Error
+}
+
+// GetGroupsByUuids 根据 UUID 列表批量查找群组
+func (d *GroupDAOImpl) GetGroupsByUuids(uuids []string) ([]models.GroupInfo, error) {
+	if len(uuids) == 0 {
+		return nil, nil
+	}
+	var groups []models.GroupInfo
+	result := d.db.Where("uuid IN ?", uuids).Find(&groups)
+	return groups, result.Error
 }
 
 // UpdateGroupInfo 更新群组详情

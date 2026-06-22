@@ -156,41 +156,71 @@ func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessio
 				return nil, fmt.Errorf("系统错误")
 			}
 
-			// 构建响应
-			var sessionListRsp []userresp.GetSessionListRespond
+			// 收集所有需要查询的ID，避免 N+1 查询
+			var userIds, groupIds []string
 			for _, session := range sessionList {
 				// 跳过AI会话（ReceiveId以'A'开头）
 				if len(session.ReceiveId) > 0 && session.ReceiveId[0] == 'A' {
 					continue
 				}
+				if session.ReceiveId[0] == 'U' {
+					userIds = append(userIds, session.ReceiveId)
+				} else {
+					groupIds = append(groupIds, session.ReceiveId)
+				}
+			}
 
-				// 根据 ReceiveId 获取最新的头像和名称信息
+			// 批量查询用户和群组信息
+			userMap := make(map[string]*models.UserInfo)
+			groupMap := make(map[string]*models.GroupInfo)
+
+			if len(userIds) > 0 {
+				users, err := s.userInfoDAO.FindUsersByUuids(userIds)
+				if err != nil {
+					zlog.Error("批量获取用户信息失败: " + err.Error())
+				} else {
+					for i := range users {
+						userMap[users[i].Uuid] = &users[i]
+					}
+				}
+			}
+			if len(groupIds) > 0 {
+				groups, err := s.groupDAO.GetGroupsByUuids(groupIds)
+				if err != nil {
+					zlog.Error("批量获取群聊信息失败: " + err.Error())
+				} else {
+					for i := range groups {
+						groupMap[groups[i].Uuid] = &groups[i]
+					}
+				}
+			}
+
+			// 构建响应
+			var sessionListRsp []userresp.GetSessionListRespond
+			for _, session := range sessionList {
+				// 跳过AI会话
+				if len(session.ReceiveId) > 0 && session.ReceiveId[0] == 'A' {
+					continue
+				}
+
+				// 根据 ReceiveId 从 map 中获取头像和名称信息
 				var avatar, name string
 
 				if session.ReceiveId[0] == 'U' {
-					// ReceiveId 是用户ID，获取用户最新信息
-					user, err := s.userInfoDAO.FindUserByUuid(session.ReceiveId)
-					if err != nil {
-						zlog.Error("获取用户信息失败: " + err.Error())
-						// 用户不存在，跳过这个会话
-						continue
-					} else if user == nil {
-						// 用户不存在，跳过这个会话
-						continue
-					} else {
+					if user, ok := userMap[session.ReceiveId]; ok {
 						avatar = user.Avatar
 						name = user.Nickname
+					} else {
+						// 用户不存在，跳过这个会话
+						continue
 					}
 				} else {
-					// ReceiveId 是群聊ID，获取群聊最新信息
-					group, err := s.groupDAO.GetGroupInfoByUuid(session.ReceiveId)
-					if err != nil {
-						zlog.Error("获取群聊信息失败: " + err.Error())
-						// 群聊不存在，跳过这个会话
-						continue
-					} else {
+					if group, ok := groupMap[session.ReceiveId]; ok {
 						avatar = group.Avatar
 						name = group.Name
+					} else {
+						// 群聊不存在，跳过这个会话
+						continue
 					}
 				}
 
