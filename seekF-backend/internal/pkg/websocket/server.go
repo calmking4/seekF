@@ -538,18 +538,22 @@ func (s *Server) handleLogout(client *Client) {
 	zlog.Info(fmt.Sprintf("用户 %s 已断开连接", client.Uuid))
 }
 
-// SendClientToLogin 发送客户端登录信号
+// SendClientToLogin 发送客户端登录信号（非阻塞，避免死锁）
 func (s *Server) SendClientToLogin(client *Client) {
-	s.mutex.Lock()
-	s.Login <- client
-	s.mutex.Unlock()
+	select {
+	case s.Login <- client:
+	default:
+		zlog.Warn("登录通道已满，丢弃连接请求: " + client.Uuid)
+	}
 }
 
-// SendClientToLogout 发送客户端登出信号
+// SendClientToLogout 发送客户端登出信号（非阻塞，避免死锁）
 func (s *Server) SendClientToLogout(client *Client) {
-	s.mutex.Lock()
-	s.Logout <- client
-	s.mutex.Unlock()
+	select {
+	case s.Logout <- client:
+	default:
+		zlog.Warn("登出通道已满，丢弃请求: " + client.Uuid)
+	}
 }
 
 // RemoveClient 移除客户端
