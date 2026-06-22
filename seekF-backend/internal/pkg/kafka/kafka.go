@@ -35,7 +35,7 @@ func (k *KafkaService) Init() {
 		Topic:                  kafkaConfig.ChatTopic,
 		Balancer:               &kafka.Hash{},
 		WriteTimeout:           kafkaConfig.Timeout * time.Second,
-		RequiredAcks:           kafka.RequireNone,
+		RequiredAcks:           kafka.RequireOne,
 		AllowAutoTopicCreation: false,
 	}
 	k.ChatReader = kafka.NewReader(kafka.ReaderConfig{
@@ -52,7 +52,7 @@ func (k *KafkaService) Init() {
 		Topic:                  kafkaConfig.AIChatTopic,
 		Balancer:               &kafka.Hash{},
 		WriteTimeout:           kafkaConfig.Timeout * time.Second,
-		RequiredAcks:           kafka.RequireNone,
+		RequiredAcks:           kafka.RequireOne,
 		AllowAutoTopicCreation: false,
 	}
 	k.AIChatReader = kafka.NewReader(kafka.ReaderConfig{
@@ -69,7 +69,7 @@ func (k *KafkaService) Init() {
 		Topic:                  kafkaConfig.AICommentTopic,
 		Balancer:               &kafka.Hash{},
 		WriteTimeout:           kafkaConfig.Timeout * time.Second,
-		RequiredAcks:           kafka.RequireNone,
+		RequiredAcks:           kafka.RequireOne,
 		AllowAutoTopicCreation: false,
 	}
 	k.AICommentReader = kafka.NewReader(kafka.ReaderConfig{

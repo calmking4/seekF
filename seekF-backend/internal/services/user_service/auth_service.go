@@ -1,8 +1,9 @@
 package userservice
 
 import (
+	"crypto/rand"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"seekF-backend/internal/configs"
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
@@ -298,10 +299,10 @@ func (s *AuthServiceImpl) LoginByCode(telephone, code string) (*LoginRespond, er
 	return loginRsp, nil
 }
 
-// generateVerifyCode 生成6位数字验证码
+// generateVerifyCode 生成6位数字验证码（使用密码学安全的随机数）
 func generateVerifyCode() string {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	return fmt.Sprintf("%06d", r.Intn(1000000))
+	n, _ := rand.Int(rand.Reader, big.NewInt(900000))
+	return fmt.Sprintf("%06d", n.Int64()+100000)
 }
 
 // 加密密码
