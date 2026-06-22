@@ -40,8 +40,7 @@ const handleApiError = (error) => {
     switch (status) {
         case 401:
             ElMessage.error('请先登录')
-            // 可以在这里跳转到登录页
-            // navigateTo('/login')
+            navigateTo('/login')
             break
         case 403:
             ElMessage.error('无权限访问')
