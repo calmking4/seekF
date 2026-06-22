@@ -12,6 +12,19 @@ export const useWebSocket = () => {
     const isConnected = ref(false)
     const user = useAuthState()
 
+    // 自动清理回调的辅助函数
+    const autoCleanupOnUnmount = (callback, callbackArray) => {
+        // 检查是否在组件上下文中
+        if (getCurrentInstance()) {
+            onUnmounted(() => {
+                const index = callbackArray.indexOf(callback)
+                if (index > -1) {
+                    callbackArray.splice(index, 1)
+                }
+            })
+        }
+    }
+
     // WebSocket URL
     const getWsUrl = () => {
         const wsBase = config.public.wsBase || 'ws://localhost:8080/'
@@ -158,9 +171,11 @@ export const useWebSocket = () => {
         }
     }
 
-    // 注册消息回调
+    // 注册消息回调（组件卸载时自动清理）
     const onMessage = (callback) => {
         messageCallbacks.push(callback)
+        // 自动清理
+        autoCleanupOnUnmount(callback, messageCallbacks)
         // 返回取消注册的函数
         return () => {
             const index = messageCallbacks.indexOf(callback)
@@ -184,9 +199,11 @@ export const useWebSocket = () => {
         }
     }
 
-    // 注册音视频通话回调
+    // 注册音视频通话回调（组件卸载时自动清理）
     const onAVCall = (callback) => {
         avCallCallbacks.push(callback)
+        // 自动清理
+        autoCleanupOnUnmount(callback, avCallCallbacks)
         // 返回取消注册的函数
         return () => {
             const index = avCallCallbacks.indexOf(callback)
