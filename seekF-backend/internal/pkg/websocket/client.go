@@ -3,8 +3,10 @@ package websocket
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
+	"seekF-backend/internal/configs"
 	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/zlog"
@@ -22,15 +24,35 @@ type Client struct {
 	Conn         *websocket.Conn
 	Uuid         string
 	SendBack     chan *MessageBack // 给前端
-	LastPongTime time.Time        // 最后一次收到 pong 的时间
+	LastPongTime time.Time         // 最后一次收到 pong 的时间
 }
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  2048,
 	WriteBufferSize: 2048,
-	// 检查连接的Origin头
+	// 检查连接的Origin头，基于配置白名单校验
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			// 允许没有Origin头的请求（如非浏览器客户端）
+			return true
+		}
+
+		cfg := configs.GetConfig()
+		allowedOrigins := cfg.WSConfig.AllowedOrigins
+
+		if len(allowedOrigins) == 0 {
+			return true
+		}
+
+		for _, allowed := range allowedOrigins {
+			if strings.EqualFold(origin, strings.TrimSpace(allowed)) {
+				return true
+			}
+		}
+
+		zlog.Warn("WebSocket连接被拒绝，Origin不在白名单中: " + origin)
+		return false
 	},
 }
 

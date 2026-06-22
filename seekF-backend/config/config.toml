@@ -107,3 +107,6 @@ apiKey = ""
 addresses = "http://localhost:9200"
 username = ""
 password = ""
+
+[wsConfig]
+allowedOrigins = ["http://localhost:3000"]

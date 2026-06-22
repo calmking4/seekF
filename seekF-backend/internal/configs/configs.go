@@ -129,6 +129,7 @@ type Config struct {
 	ExchangeRateConfig `toml:"exchangeRateConfig"`
 	TavilyConfig       `toml:"tavilyConfig"`
 	ESConfig           `toml:"esConfig"`
+	WSConfig           `toml:"wsConfig"`
 }
 
 type SeniverseConfig struct {
@@ -148,6 +149,11 @@ type ESConfig struct {
 	Addresses string `toml:"addresses"`
 	Username  string `toml:"username"`
 	Password  string `toml:"password"`
+}
+
+// WSConfig WebSocket配置
+type WSConfig struct {
+	AllowedOrigins []string `toml:"allowedOrigins"` // 允许的Origin白名单，为空时允许所有来源
 }
 
 var config *Config
