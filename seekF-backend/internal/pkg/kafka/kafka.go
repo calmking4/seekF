@@ -19,7 +19,6 @@ type KafkaService struct {
 	AIChatReader    *kafka.Reader
 	AICommentWriter *kafka.Writer
 	AICommentReader *kafka.Reader
-	KafkaConn       *kafka.Conn
 }
 
 var KafkaServiceInstance = new(KafkaService)
@@ -117,12 +116,12 @@ func (k *KafkaService) Close() {
 func (k *KafkaService) CreateTopic() {
 	kafkaConfig := configs.GetConfig().KafkaConfig
 
-	var err error
-	k.KafkaConn, err = kafka.Dial("tcp", kafkaConfig.HostPort)
+	conn, err := kafka.Dial("tcp", kafkaConfig.HostPort)
 	if err != nil {
-		zlog.Error(err.Error())
+		zlog.Error("连接Kafka失败: " + err.Error())
 		return
 	}
+	defer conn.Close() // 使用后关闭连接，避免泄漏
 
 	topicConfigs := []kafka.TopicConfig{
 		{
@@ -142,7 +141,7 @@ func (k *KafkaService) CreateTopic() {
 		},
 	}
 
-	if err = k.KafkaConn.CreateTopics(topicConfigs...); err != nil {
-		zlog.Error(err.Error())
+	if err = conn.CreateTopics(topicConfigs...); err != nil {
+		zlog.Error("创建Kafka主题失败: " + err.Error())
 	}
 }

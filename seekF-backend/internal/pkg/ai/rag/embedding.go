@@ -8,7 +8,18 @@ import (
 	"io"
 	"net/http"
 	"seekF-backend/internal/pkg/zlog"
+	"time"
 )
+
+// embeddingHTTPClient 带超时的 HTTP 客户端
+var embeddingHTTPClient = &http.Client{
+	Timeout: 60 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        50,
+		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConnsPerHost: 5,
+	},
+}
 
 // Embedding 向量化模块,负责将文本转换为向量
 type Embedding struct {
@@ -89,7 +100,7 @@ func (e *Embedding) embedSingle(ctx context.Context, text string) ([]float32, er
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+e.apiKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := embeddingHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -52,15 +52,15 @@ type LogConfig struct {
 }
 
 type KafkaConfig struct {
-	MessageMode string        `toml:"messageMode"`
-	HostPort    string        `toml:"hostPort"`
-	LoginTopic  string        `toml:"loginTopic"`
-	ChatTopic   string        `toml:"chatTopic"`
+	MessageMode    string        `toml:"messageMode"`
+	HostPort       string        `toml:"hostPort"`
+	LoginTopic     string        `toml:"loginTopic"`
+	ChatTopic      string        `toml:"chatTopic"`
 	AIChatTopic    string        `toml:"aiChatTopic"`
 	AICommentTopic string        `toml:"aiCommentTopic"`
-	LogoutTopic string        `toml:"logoutTopic"`
-	Partition   int           `toml:"partition"`
-	Timeout     time.Duration `toml:"timeout"`
+	LogoutTopic    string        `toml:"logoutTopic"`
+	Partition      int           `toml:"partition"`
+	Timeout        time.Duration `toml:"timeout"`
 }
 
 type StaticSrcConfig struct {
@@ -86,11 +86,12 @@ type AIModelConfig struct {
 	QwenLocalModel    string `toml:"qwenLocalModel"`
 	QwenLocalBaseUrl  string `toml:"qwenLocalBaseUrl"`
 	// 各模型的上下文窗口大小配置
-	DeepseekMaxTokens int `toml:"deepseekMaxTokens"`
-	QwenMaxTokens     int `toml:"qwenMaxTokens"`
-	GlmMaxTokens      int `toml:"glmMaxTokens"`
-	Glm4vMaxTokens    int `toml:"glm4vMaxTokens"`
-	QwenLocalMaxTokens int `toml:"qwenLocalMaxTokens"`
+	DeepseekMaxTokens  int      `toml:"deepseekMaxTokens"`
+	QwenMaxTokens      int      `toml:"qwenMaxTokens"`
+	GlmMaxTokens       int      `toml:"glmMaxTokens"`
+	Glm4vMaxTokens     int      `toml:"glm4vMaxTokens"`
+	QwenLocalMaxTokens int      `toml:"qwenLocalMaxTokens"`
+	MultimodalModels   []string `toml:"multimodalModels"`
 }
 
 type QdrantConfig struct {

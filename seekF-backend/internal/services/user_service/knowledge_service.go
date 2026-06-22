@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
@@ -13,6 +14,19 @@ import (
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 )
+
+// httpClient 带超时的 HTTP 客户端
+var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConnsPerHost: 10,
+	},
+}
+
+// maxDownloadSize 最大下载大小 10MB
+const maxDownloadSize = 10 * 1024 * 1024
 
 type KnowledgeService interface {
 	AddDocument(ctx context.Context, userId, fileName, fileURL, fileType string) (*DocInfo, error)
@@ -155,22 +169,29 @@ func (s *KnowledgeServiceImpl) Search(ctx context.Context, userId, query string,
 	return ragInst.Search(ctx, collectionName, query, topK)
 }
 
-// downloadFile 从URL下载文件内容
+// downloadFile 从URL下载文件内容（带超时和大小限制）
 func (s *KnowledgeServiceImpl) downloadFile(ctx context.Context, url string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return "", err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// 限制下载大小，防止内存耗尽
+	limitedReader := io.LimitReader(resp.Body, maxDownloadSize)
+	body, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return "", err
+	}
+
+	// 检查是否超出限制
+	if int64(len(body)) >= maxDownloadSize {
+		return "", fmt.Errorf("文件大小超过限制（最大 10MB）")
 	}
 
 	content := string(body)

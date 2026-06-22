@@ -86,6 +86,9 @@ glmEmbeddingModel = ""
 ttsModel = "glm-tts"
 ttsVoice = "chuichui"
 
+# 多模态模型列表（支持图片输入的模型）
+multimodalModels = ["glm-4v", "qwen-local"]
+
 
 [qdrantConfig]
 host = "localhost"

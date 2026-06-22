@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"seekF-backend/internal/configs"
 	userdao "seekF-backend/internal/dao/user_dao"
 	userreq "seekF-backend/internal/dto/user/user_req"
 	userresp "seekF-backend/internal/dto/user/user_resp"
@@ -257,8 +258,8 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		}
 	}
 
-	// 判断是否为多模态模型
-	isMultiModalModel := req.ModelType == "glm-4v" || req.ModelType == "qwen-local"
+	// 判断是否为多模态模型（从配置读取）
+	isMultiModalModel := isMultiModalModel(req.ModelType)
 
 	// 将DB消息转换为eino消息格式，添加系统提示，构建上下文
 	var chatMessages []*schema.Message
@@ -640,4 +641,15 @@ func (s *AIChatServiceImpl) DeleteSession(sessionId string) error {
 
 	zlog.Info("删除AI会话成功: " + sessionId)
 	return nil
+}
+
+// isMultiModalModel 判断是否为多模态模型（从配置读取）
+func isMultiModalModel(modelType string) bool {
+	cfg := configs.GetConfig().AIModelConfig
+	for _, m := range cfg.MultimodalModels {
+		if m == modelType {
+			return true
+		}
+	}
+	return false
 }
