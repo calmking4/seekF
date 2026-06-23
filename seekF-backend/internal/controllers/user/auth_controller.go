@@ -122,6 +122,60 @@ func (c *AuthController) GithubCallback(ctx *gin.Context) {
 	ctx.Redirect(http.StatusFound, fmt.Sprintf("%s?user=%s", frontendURL, url.QueryEscape(string(userBytes))))
 }
 
+// GiteeLogin 跳转 Gitee OAuth 授权页
+func (c *AuthController) GiteeLogin(ctx *gin.Context) {
+	authURL, err := c.authService.GiteeAuthURL()
+	if err != nil {
+		zlog.Error("生成 Gitee 授权地址失败: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	ctx.Redirect(http.StatusFound, authURL)
+}
+
+// GiteeCallback Gitee OAuth 回调
+func (c *AuthController) GiteeCallback(ctx *gin.Context) {
+	cfg := configs.GetConfig()
+	frontendURL := strings.TrimSpace(cfg.GiteeOAuthConfig.FrontendRedirectURL)
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000/oauth/gitee/callback"
+	}
+
+	redirectWithError := func(message string) {
+		target := fmt.Sprintf("%s?error=%s", frontendURL, url.QueryEscape(message))
+		ctx.Redirect(http.StatusFound, target)
+	}
+
+	if errMsg := strings.TrimSpace(ctx.Query("error")); errMsg != "" {
+		zlog.Info("Gitee 授权被拒绝: " + errMsg)
+		redirectWithError("Gitee 授权已取消")
+		return
+	}
+
+	code := strings.TrimSpace(ctx.Query("code"))
+	state := strings.TrimSpace(ctx.Query("state"))
+
+	result, err := c.authService.LoginByGitee(code, state)
+	if err != nil {
+		zlog.Error("Gitee 登录失败: " + err.Error())
+		redirectWithError(err.Error())
+		return
+	}
+
+	expireSeconds := cfg.SessionExpireMinutes * 60
+	ctx.SetCookie("token", result.Token, int(expireSeconds), "/", "localhost", false, true)
+
+	userBytes, err := json.Marshal(result.User)
+	if err != nil {
+		zlog.Error("序列化 Gitee 登录用户信息失败: " + err.Error())
+		redirectWithError("登录成功但跳转失败")
+		return
+	}
+
+	ctx.Redirect(http.StatusFound, fmt.Sprintf("%s?user=%s", frontendURL, url.QueryEscape(string(userBytes))))
+}
+
 // Logout 用户登出
 func (c *AuthController) Logout(ctx *gin.Context) {
 	// 从上下文获取token（由JWTAuth中间件验证后设置）

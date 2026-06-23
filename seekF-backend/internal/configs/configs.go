@@ -131,6 +131,7 @@ type Config struct {
 	ESConfig           `toml:"esConfig"`
 	WSConfig           `toml:"wsConfig"`
 	GithubOAuthConfig  `toml:"githubOAuthConfig"`
+	GiteeOAuthConfig   `toml:"giteeOAuthConfig"`
 }
 
 type SeniverseConfig struct {
@@ -164,6 +165,14 @@ type GithubOAuthConfig struct {
 	RedirectURL         string `toml:"redirectURL"`
 	FrontendRedirectURL string `toml:"frontendRedirectURL"`
 	ProxyURL            string `toml:"proxyURL"` // HTTP 代理地址，如 http://127.0.0.1:7890
+}
+
+// GiteeOAuthConfig Gitee OAuth配置
+type GiteeOAuthConfig struct {
+	ClientID            string `toml:"clientID"`
+	ClientSecret        string `toml:"clientSecret"`
+	RedirectURL         string `toml:"redirectURL"`
+	FrontendRedirectURL string `toml:"frontendRedirectURL"`
 }
 
 var config *Config
@@ -280,6 +289,14 @@ func loadEnvConfig(cfg *Config) {
 	}
 	if v := os.Getenv("GITHUB_OAUTH_CLIENT_SECRET"); v != "" {
 		cfg.GithubOAuthConfig.ClientSecret = v
+	}
+
+	// Gitee OAuth Configuration
+	if v := os.Getenv("GITEE_OAUTH_CLIENT_ID"); v != "" {
+		cfg.GiteeOAuthConfig.ClientID = v
+	}
+	if v := os.Getenv("GITEE_OAUTH_CLIENT_SECRET"); v != "" {
+		cfg.GiteeOAuthConfig.ClientSecret = v
 	}
 }
 

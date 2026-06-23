@@ -39,6 +39,8 @@ func SetupRouter(
 		userGroup.POST("/loginByCode", authController.LoginByCode)
 		userGroup.GET("/github/login", authController.GithubLogin)
 		userGroup.GET("/github/callback", authController.GithubCallback)
+		userGroup.GET("/gitee/login", authController.GiteeLogin)
+		userGroup.GET("/gitee/callback", authController.GiteeCallback)
 
 		// 需要认证的接口
 		protectedGroup := userGroup.Group("")

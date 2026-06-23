@@ -59,6 +59,8 @@ type AuthService interface {
 	LoginByCode(telephone, code string) (*LoginRespond, error)
 	GithubAuthURL() (string, error)
 	LoginByGithub(code, state string) (*LoginRespond, error)
+	GiteeAuthURL() (string, error)
+	LoginByGitee(code, state string) (*LoginRespond, error)
 }
 
 type AuthServiceImpl struct {
@@ -328,6 +330,108 @@ func (s *AuthServiceImpl) LoginByGithub(code, state string) (*LoginRespond, erro
 		if updated {
 			if err := s.userInfoDAO.UpdateUserInfo(user); err != nil {
 				return nil, fmt.Errorf("更新 GitHub 用户信息失败：%v", err)
+			}
+		}
+	}
+
+	cfg := configs.GetConfig()
+	mode := strings.ToLower(strings.TrimSpace(cfg.AuthConfig.Mode))
+
+	token, err := s.createLoginToken(user, mode)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.buildLoginRespond(user, token), nil
+}
+
+// GiteeAuthURL 生成 Gitee OAuth 授权地址
+func (s *AuthServiceImpl) GiteeAuthURL() (string, error) {
+	cfg := configs.GetConfig()
+	if strings.TrimSpace(cfg.GiteeOAuthConfig.ClientID) == "" {
+		return "", fmt.Errorf("Gitee OAuth 未配置")
+	}
+
+	state, err := generateOAuthState()
+	if err != nil {
+		return "", fmt.Errorf("生成 OAuth 状态码失败：%v", err)
+	}
+
+	key := fmt.Sprintf("oauth_state:gitee:%s", state)
+	if err := redis.SetKeyEx(key, "1", 10*time.Minute); err != nil {
+		return "", fmt.Errorf("保存 OAuth 状态码失败：%v", err)
+	}
+
+	return oauth.GetGiteeAuthCodeURL(state), nil
+}
+
+// LoginByGitee Gitee OAuth 登录
+func (s *AuthServiceImpl) LoginByGitee(code, state string) (*LoginRespond, error) {
+	if strings.TrimSpace(code) == "" {
+		return nil, fmt.Errorf("授权码不能为空")
+	}
+	if strings.TrimSpace(state) == "" {
+		return nil, fmt.Errorf("OAuth 状态码不能为空")
+	}
+
+	key := fmt.Sprintf("oauth_state:gitee:%s", state)
+	stored, err := redis.GetKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("校验 OAuth 状态码失败：%v", err)
+	}
+	if stored == "" {
+		return nil, fmt.Errorf("OAuth 状态码无效或已过期")
+	}
+	if err := redis.DelKeyIfExists(key); err != nil {
+		return nil, fmt.Errorf("清理 OAuth 状态码失败：%v", err)
+	}
+
+	giteeUser, err := oauth.ExchangeAndGetGiteeUser(context.Background(), code)
+	if err != nil {
+		return nil, fmt.Errorf("Gitee 登录失败：%v", err)
+	}
+
+	user, err := s.userInfoDAO.FindUserByGiteeId(giteeUser.ID)
+	if err != nil {
+		return nil, fmt.Errorf("查询用户失败：%v", err)
+	}
+
+	if user == nil {
+		nickname := strings.TrimSpace(giteeUser.Name)
+		if nickname == "" {
+			nickname = giteeUser.Login
+		}
+		if nickname == "" {
+			nickname = "Gitee用户"
+		}
+
+		userUUID := "U" + util.GetNowAndLenRandomString(11)
+		user = &models.UserInfo{
+			Uuid:     userUUID,
+			Nickname: nickname,
+			Email:    giteeUser.Email,
+			Avatar:   giteeUser.AvatarURL,
+			GiteeId:  giteeUser.ID,
+			Password: "",
+			Birthday: sql.NullString{Valid: false},
+		}
+
+		if err := s.userInfoDAO.CreateUser(user); err != nil {
+			return nil, fmt.Errorf("创建 Gitee 用户失败：%v", err)
+		}
+	} else {
+		updated := false
+		if giteeUser.AvatarURL != "" && user.Avatar != giteeUser.AvatarURL {
+			user.Avatar = giteeUser.AvatarURL
+			updated = true
+		}
+		if giteeUser.Email != "" && user.Email != giteeUser.Email {
+			user.Email = giteeUser.Email
+			updated = true
+		}
+		if updated {
+			if err := s.userInfoDAO.UpdateUserInfo(user); err != nil {
+				return nil, fmt.Errorf("更新 Gitee 用户信息失败：%v", err)
 			}
 		}
 	}

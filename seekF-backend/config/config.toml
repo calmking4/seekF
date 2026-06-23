@@ -117,3 +117,9 @@ clientSecret = ""
 redirectURL = "http://localhost:8080/user/github/callback"
 frontendRedirectURL = "http://localhost:3000/oauth/github/callback"
 proxyURL = "http://127.0.0.1:7890"
+
+[giteeOAuthConfig]
+clientID = ""
+clientSecret = ""
+redirectURL = "http://localhost:8080/user/gitee/callback"
+frontendRedirectURL = "http://localhost:3000/oauth/gitee/callback"
