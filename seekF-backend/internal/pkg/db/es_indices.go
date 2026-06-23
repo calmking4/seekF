@@ -36,6 +36,7 @@ const chatMessagesMapping = `{
 const discoverPostsMapping = `{
 	"mappings": {
 		"properties": {
+			"id":            { "type": "long" },
 			"post_id":       { "type": "keyword" },
 			"user_id":       { "type": "keyword" },
 			"title":         { "type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart" },

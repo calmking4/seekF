@@ -38,6 +38,7 @@ func NewESDiscoverDAO() ESDiscoverDAO {
 
 // esPostDoc ES帖子文档结构
 type esPostDoc struct {
+	Id           int64    `json:"id"`
 	PostId       string   `json:"post_id"`
 	UserId       string   `json:"user_id"`
 	Title        string   `json:"title"`
@@ -58,6 +59,7 @@ func (d *ESDiscoverDAOImpl) IndexPost(post *models.DiscoverPost) error {
 	}
 
 	doc := esPostDoc{
+		Id:           post.Id,
 		PostId:       post.Uuid,
 		UserId:       post.UserId,
 		Title:        post.Title,
@@ -127,18 +129,6 @@ func (d *ESDiscoverDAOImpl) SearchPosts(keyword string, page, pageSize int) ([]m
 				},
 			},
 		},
-		"highlight": map[string]interface{}{
-			"fields": map[string]interface{}{
-				"title": map[string]interface{}{
-					"pre_tags":  []string{"<em>"},
-					"post_tags": []string{"</em>"},
-				},
-				"content": map[string]interface{}{
-					"pre_tags":  []string{"<em>"},
-					"post_tags": []string{"</em>"},
-				},
-			},
-		},
 		"sort": []map[string]interface{}{
 			{"_score": "desc"},
 			{"created_at": "desc"},
@@ -186,6 +176,7 @@ func (d *ESDiscoverDAOImpl) SearchPosts(keyword string, page, pageSize int) ([]m
 	for _, hit := range result.Hits.Hits {
 		tagsJSON, _ := json.Marshal(hit.Source.Tags)
 		post := models.DiscoverPost{
+			Id:           hit.Source.Id,
 			Uuid:         hit.Source.PostId,
 			UserId:       hit.Source.UserId,
 			Title:        hit.Source.Title,
@@ -198,13 +189,6 @@ func (d *ESDiscoverDAOImpl) SearchPosts(keyword string, page, pageSize int) ([]m
 		}
 		if t, err := time.Parse("2006-01-02 15:04:05", hit.Source.CreatedAt); err == nil {
 			post.CreatedAt = t
-		}
-		// 如果有高亮内容，替换title/content
-		if highlights, ok := hit.Highlight["title"]; ok && len(highlights) > 0 {
-			post.Title = highlights[0]
-		}
-		if highlights, ok := hit.Highlight["content"]; ok && len(highlights) > 0 {
-			post.Content = highlights[0]
 		}
 		posts = append(posts, post)
 	}

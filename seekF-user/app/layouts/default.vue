@@ -20,7 +20,7 @@
           :key="item.path"
           :to="item.path"
           class="flex items-center gap-3 px-3 py-3 rounded-lg mb-1 hover:bg-gray-50 relative z-10"
-          :class="{ 'text-[#0073ff]': route.path === item.path }"
+          :class="{ 'text-[#0073ff]': isActiveRoute(item.path) }"
           :data-path="item.path"
         >
           <Icon :name="item.icon" class="text-lg" />
@@ -85,6 +85,11 @@ const indicatorTop = ref(-100)
 const indicatorClass = ref('')
 const isAnimating = ref(false)
 
+// 判断路由是否激活（支持子路由匹配）
+const isActiveRoute = (path) => {
+  return route.path === path || route.path.startsWith(path + '/')
+}
+
 // 侧边栏导航数据
 const navItems = [
   { path: '/chat', label: '消息', icon: 'uil:comment-alt' },
@@ -97,9 +102,15 @@ const navItems = [
 // 更新指示器位置
 const updateIndicator = () => {
   if (!navRef.value) return
-  const el = navRef.value.querySelector(`[data-path="${route.path}"]`)
-  if (el) {
-    indicatorTop.value = el.offsetTop
+  // 查找匹配的导航项（支持子路由匹配）
+  const navItem = navItems.find(item =>
+    route.path === item.path || route.path.startsWith(item.path + '/')
+  )
+  if (navItem) {
+    const el = navRef.value.querySelector(`[data-path="${navItem.path}"]`)
+    if (el) {
+      indicatorTop.value = el.offsetTop
+    }
   }
 }
 
@@ -111,8 +122,17 @@ watch(() => route.path, (newPath, oldPath) => {
   }
 
   isAnimating.value = true
-  const oldEl = navRef.value.querySelector(`[data-path="${oldPath}"]`)
-  const newEl = navRef.value.querySelector(`[data-path="${newPath}"]`)
+
+  // 查找匹配的导航项（支持子路由匹配）
+  const oldNavItem = navItems.find(item =>
+    oldPath === item.path || oldPath.startsWith(item.path + '/')
+  )
+  const newNavItem = navItems.find(item =>
+    newPath === item.path || newPath.startsWith(item.path + '/')
+  )
+
+  const oldEl = oldNavItem ? navRef.value.querySelector(`[data-path="${oldNavItem.path}"]`) : null
+  const newEl = newNavItem ? navRef.value.querySelector(`[data-path="${newNavItem.path}"]`) : null
   if (!oldEl || !newEl) {
     nextTick(updateIndicator)
     isAnimating.value = false
