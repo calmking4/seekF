@@ -37,6 +37,8 @@ func SetupRouter(
 		userGroup.POST("/login", authController.Login)
 		userGroup.POST("/sendVerifyCode", authController.SendVerifyCode)
 		userGroup.POST("/loginByCode", authController.LoginByCode)
+		userGroup.GET("/github/login", authController.GithubLogin)
+		userGroup.GET("/github/callback", authController.GithubCallback)
 
 		// 需要认证的接口
 		protectedGroup := userGroup.Group("")

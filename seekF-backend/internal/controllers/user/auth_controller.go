@@ -1,12 +1,16 @@
 package user
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"seekF-backend/internal/configs"
 	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/pkg/resp"
 	"seekF-backend/internal/pkg/zlog"
 	userservice "seekF-backend/internal/services/user_service"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -62,6 +66,60 @@ func (c *AuthController) Login(ctx *gin.Context) {
 	ctx.SetCookie("token", result.Token, int(expireSeconds), "/", "localhost", false, true)
 
 	resp.Success(ctx, "登录成功", result)
+}
+
+// GithubLogin 跳转 GitHub OAuth 授权页
+func (c *AuthController) GithubLogin(ctx *gin.Context) {
+	authURL, err := c.authService.GithubAuthURL()
+	if err != nil {
+		zlog.Error("生成 GitHub 授权地址失败: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	ctx.Redirect(http.StatusFound, authURL)
+}
+
+// GithubCallback GitHub OAuth 回调
+func (c *AuthController) GithubCallback(ctx *gin.Context) {
+	cfg := configs.GetConfig()
+	frontendURL := strings.TrimSpace(cfg.GithubOAuthConfig.FrontendRedirectURL)
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000/oauth/github/callback"
+	}
+
+	redirectWithError := func(message string) {
+		target := fmt.Sprintf("%s?error=%s", frontendURL, url.QueryEscape(message))
+		ctx.Redirect(http.StatusFound, target)
+	}
+
+	if errMsg := strings.TrimSpace(ctx.Query("error")); errMsg != "" {
+		zlog.Info("GitHub 授权被拒绝: " + errMsg)
+		redirectWithError("GitHub 授权已取消")
+		return
+	}
+
+	code := strings.TrimSpace(ctx.Query("code"))
+	state := strings.TrimSpace(ctx.Query("state"))
+
+	result, err := c.authService.LoginByGithub(code, state)
+	if err != nil {
+		zlog.Error("GitHub 登录失败: " + err.Error())
+		redirectWithError(err.Error())
+		return
+	}
+
+	expireSeconds := cfg.SessionExpireMinutes * 60
+	ctx.SetCookie("token", result.Token, int(expireSeconds), "/", "localhost", false, true)
+
+	userBytes, err := json.Marshal(result.User)
+	if err != nil {
+		zlog.Error("序列化 GitHub 登录用户信息失败: " + err.Error())
+		redirectWithError("登录成功但跳转失败")
+		return
+	}
+
+	ctx.Redirect(http.StatusFound, fmt.Sprintf("%s?user=%s", frontendURL, url.QueryEscape(string(userBytes))))
 }
 
 // Logout 用户登出

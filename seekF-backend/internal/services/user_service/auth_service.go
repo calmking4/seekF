@@ -1,7 +1,10 @@
 package userservice
 
 import (
+	"context"
 	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"seekF-backend/internal/configs"
@@ -9,6 +12,7 @@ import (
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/auth"
 	"seekF-backend/internal/pkg/jwt"
+	"seekF-backend/internal/pkg/oauth"
 	"seekF-backend/internal/pkg/redis"
 	"seekF-backend/internal/pkg/sms"
 	"seekF-backend/internal/pkg/util"
@@ -53,6 +57,8 @@ type AuthService interface {
 	Logout(tokenString string) error
 	SendVerifyCode(telephone string) error
 	LoginByCode(telephone, code string) (*LoginRespond, error)
+	GithubAuthURL() (string, error)
+	LoginByGithub(code, state string) (*LoginRespond, error)
 }
 
 type AuthServiceImpl struct {
@@ -121,45 +127,13 @@ func (s *AuthServiceImpl) Login(req *LoginRequest) (*LoginRespond, error) {
 	cfg := configs.GetConfig()
 	mode := strings.ToLower(strings.TrimSpace(cfg.AuthConfig.Mode))
 
-	var token string
-	if mode == "jwt" {
-		// JWT 方案：纯 JWT（无服务端状态）
-		token, err = jwt.GenerateToken(uint64(user.Id), user.Uuid, user.Telephone, user.Nickname)
-		if err != nil {
-			return nil, fmt.Errorf("生成令牌失败：%v", err)
-		}
-	} else {
-		// 默认方案：不透明 token + Redis 会话
-		token, err = auth.GenerateToken()
-		if err != nil {
-			return nil, fmt.Errorf("生成令牌失败：%v", err)
-		}
-		if err := auth.SetSession(token, auth.Session{
-			Id:       uint64(user.Id),
-			UUID:     user.Uuid,
-			Phone:    user.Telephone,
-			Nickname: user.Nickname,
-		}); err != nil {
-			return nil, fmt.Errorf("生成令牌失败：%v", err)
-		}
+	token, err := s.createLoginToken(user, mode)
+	if err != nil {
+		return nil, err
 	}
 
 	// 构造登录响应
-	loginRsp := &LoginRespond{
-		User: UserInfoResponse{
-			Uuid:      user.Uuid,
-			Telephone: user.Telephone,
-			Nickname:  user.Nickname,
-			Email:     user.Email,
-			Avatar:    user.Avatar,
-			Gender:    int(user.Gender),
-			Birthday:  user.Birthday,
-			Signature: user.Signature,
-			IsAdmin:   int(user.IsAdmin),
-			Status:    int(user.Status),
-		},
-		Token: token,
-	}
+	loginRsp := s.buildLoginRespond(user, token)
 
 	return loginRsp, nil
 }
@@ -256,31 +230,149 @@ func (s *AuthServiceImpl) LoginByCode(telephone, code string) (*LoginRespond, er
 	cfg := configs.GetConfig()
 	mode := strings.ToLower(strings.TrimSpace(cfg.AuthConfig.Mode))
 
-	var token string
-	if mode == "jwt" {
-		// JWT 方案：纯 JWT（无服务端状态）
-		token, err = jwt.GenerateToken(uint64(user.Id), user.Uuid, user.Telephone, user.Nickname)
-		if err != nil {
-			return nil, fmt.Errorf("生成令牌失败：%v", err)
-		}
-	} else {
-		// 默认方案：不透明 token + Redis 会话
-		token, err = auth.GenerateToken()
-		if err != nil {
-			return nil, fmt.Errorf("生成令牌失败：%v", err)
-		}
-		if err := auth.SetSession(token, auth.Session{
-			Id:       uint64(user.Id),
-			UUID:     user.Uuid,
-			Phone:    user.Telephone,
-			Nickname: user.Nickname,
-		}); err != nil {
-			return nil, fmt.Errorf("生成令牌失败：%v", err)
-		}
+	token, err := s.createLoginToken(user, mode)
+	if err != nil {
+		return nil, err
 	}
 
 	// 构造登录响应
-	loginRsp := &LoginRespond{
+	loginRsp := s.buildLoginRespond(user, token)
+
+	return loginRsp, nil
+}
+
+// GithubAuthURL 生成 GitHub OAuth 授权地址
+func (s *AuthServiceImpl) GithubAuthURL() (string, error) {
+	cfg := configs.GetConfig()
+	if strings.TrimSpace(cfg.GithubOAuthConfig.ClientID) == "" {
+		return "", fmt.Errorf("GitHub OAuth 未配置")
+	}
+
+	state, err := generateOAuthState()
+	if err != nil {
+		return "", fmt.Errorf("生成 OAuth 状态码失败：%v", err)
+	}
+
+	key := fmt.Sprintf("oauth_state:github:%s", state)
+	if err := redis.SetKeyEx(key, "1", 10*time.Minute); err != nil {
+		return "", fmt.Errorf("保存 OAuth 状态码失败：%v", err)
+	}
+
+	return oauth.GetAuthCodeURL(state), nil
+}
+
+// LoginByGithub GitHub OAuth 登录
+func (s *AuthServiceImpl) LoginByGithub(code, state string) (*LoginRespond, error) {
+	if strings.TrimSpace(code) == "" {
+		return nil, fmt.Errorf("授权码不能为空")
+	}
+	if strings.TrimSpace(state) == "" {
+		return nil, fmt.Errorf("OAuth 状态码不能为空")
+	}
+
+	key := fmt.Sprintf("oauth_state:github:%s", state)
+	stored, err := redis.GetKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("校验 OAuth 状态码失败：%v", err)
+	}
+	if stored == "" {
+		return nil, fmt.Errorf("OAuth 状态码无效或已过期")
+	}
+	if err := redis.DelKeyIfExists(key); err != nil {
+		return nil, fmt.Errorf("清理 OAuth 状态码失败：%v", err)
+	}
+
+	githubUser, err := oauth.ExchangeAndGetUser(context.Background(), code)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub 登录失败：%v", err)
+	}
+
+	user, err := s.userInfoDAO.FindUserByGithubId(githubUser.ID)
+	if err != nil {
+		return nil, fmt.Errorf("查询用户失败：%v", err)
+	}
+
+	if user == nil {
+		nickname := strings.TrimSpace(githubUser.Name)
+		if nickname == "" {
+			nickname = githubUser.Login
+		}
+		if nickname == "" {
+			nickname = "GitHub用户"
+		}
+
+		userUUID := "U" + util.GetNowAndLenRandomString(11)
+		user = &models.UserInfo{
+			Uuid:     userUUID,
+			Nickname: nickname,
+			Email:    githubUser.Email,
+			Avatar:   githubUser.AvatarURL,
+			GithubId: githubUser.ID,
+			Password: "",
+			Birthday: sql.NullString{Valid: false},
+		}
+
+		if err := s.userInfoDAO.CreateUser(user); err != nil {
+			return nil, fmt.Errorf("创建 GitHub 用户失败：%v", err)
+		}
+	} else {
+		updated := false
+		if githubUser.AvatarURL != "" && user.Avatar != githubUser.AvatarURL {
+			user.Avatar = githubUser.AvatarURL
+			updated = true
+		}
+		if githubUser.Email != "" && user.Email != githubUser.Email {
+			user.Email = githubUser.Email
+			updated = true
+		}
+		if updated {
+			if err := s.userInfoDAO.UpdateUserInfo(user); err != nil {
+				return nil, fmt.Errorf("更新 GitHub 用户信息失败：%v", err)
+			}
+		}
+	}
+
+	cfg := configs.GetConfig()
+	mode := strings.ToLower(strings.TrimSpace(cfg.AuthConfig.Mode))
+
+	token, err := s.createLoginToken(user, mode)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.buildLoginRespond(user, token), nil
+}
+
+func (s *AuthServiceImpl) createLoginToken(user *models.UserInfo, mode string) (string, error) {
+	if mode == "jwt" {
+		token, err := jwt.GenerateToken(uint64(user.Id), user.Uuid, user.Telephone, user.Nickname)
+		if err != nil {
+			return "", fmt.Errorf("生成令牌失败：%v", err)
+		}
+		return token, nil
+	}
+
+	token, err := auth.GenerateToken()
+	if err != nil {
+		return "", fmt.Errorf("生成令牌失败：%v", err)
+	}
+	if err := auth.SetSession(token, auth.Session{
+		Id:       uint64(user.Id),
+		UUID:     user.Uuid,
+		Phone:    user.Telephone,
+		Nickname: user.Nickname,
+	}); err != nil {
+		return "", fmt.Errorf("生成令牌失败：%v", err)
+	}
+	return token, nil
+}
+
+func (s *AuthServiceImpl) buildLoginRespond(user *models.UserInfo, token string) *LoginRespond {
+	birthday := ""
+	if user.Birthday.Valid {
+		birthday = user.Birthday.String
+	}
+	return &LoginRespond{
 		User: UserInfoResponse{
 			Uuid:      user.Uuid,
 			Telephone: user.Telephone,
@@ -288,15 +380,21 @@ func (s *AuthServiceImpl) LoginByCode(telephone, code string) (*LoginRespond, er
 			Email:     user.Email,
 			Avatar:    user.Avatar,
 			Gender:    int(user.Gender),
-			Birthday:  user.Birthday,
+			Birthday:  birthday,
 			Signature: user.Signature,
 			IsAdmin:   int(user.IsAdmin),
 			Status:    int(user.Status),
 		},
 		Token: token,
 	}
+}
 
-	return loginRsp, nil
+func generateOAuthState() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 // generateVerifyCode 生成6位数字验证码（使用密码学安全的随机数）

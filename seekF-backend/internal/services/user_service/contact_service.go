@@ -170,11 +170,15 @@ func (s *ContactServiceImpl) GetContactInfo(contactId string) (userresp.GetConta
 			return userresp.GetContactInfoRespond{}, err
 		}
 		if user.Status != userstatusenum.DISABLE {
+			birthday := ""
+			if user.Birthday.Valid {
+				birthday = user.Birthday.String
+			}
 			return userresp.GetContactInfoRespond{
 				ContactId:        user.Uuid,
 				ContactName:      user.Nickname,
 				ContactAvatar:    user.Avatar,
-				ContactBirthday:  user.Birthday,
+				ContactBirthday:  birthday,
 				ContactEmail:     user.Email,
 				ContactPhone:     user.Telephone,
 				ContactGender:    user.Gender,

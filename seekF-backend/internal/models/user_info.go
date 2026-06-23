@@ -17,7 +17,8 @@ type UserInfo struct {
 	Gender        int8           `gorm:"column:gender;comment:性别，0.男，1.女"`
 	Signature     string         `gorm:"column:signature;type:varchar(100);comment:个性签名"`
 	Password      string         `gorm:"column:password;type:varchar(255);not null;comment:密码"`
-	Birthday      string         `gorm:"column:birthday;type:date;comment:生日"`
+	Birthday      sql.NullString `gorm:"column:birthday;type:date;comment:生日"`
+	GithubId      int64          `gorm:"column:github_id;uniqueIndex;comment:GitHub用户ID"`
 	CreatedAt     time.Time      `gorm:"column:created_at;index;type:datetime;not null;comment:创建时间"`
 	DeletedAt     gorm.DeletedAt `gorm:"column:deleted_at;type:datetime;comment:删除时间"`
 	LastOnlineAt  sql.NullTime   `gorm:"column:last_online_at;type:datetime;comment:上次登录时间"`

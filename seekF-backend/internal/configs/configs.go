@@ -130,6 +130,7 @@ type Config struct {
 	TavilyConfig       `toml:"tavilyConfig"`
 	ESConfig           `toml:"esConfig"`
 	WSConfig           `toml:"wsConfig"`
+	GithubOAuthConfig  `toml:"githubOAuthConfig"`
 }
 
 type SeniverseConfig struct {
@@ -154,6 +155,15 @@ type ESConfig struct {
 // WSConfig WebSocket配置
 type WSConfig struct {
 	AllowedOrigins []string `toml:"allowedOrigins"` // 允许的Origin白名单，为空时允许所有来源
+}
+
+// GithubOAuthConfig GitHub OAuth配置
+type GithubOAuthConfig struct {
+	ClientID            string `toml:"clientID"`
+	ClientSecret        string `toml:"clientSecret"`
+	RedirectURL         string `toml:"redirectURL"`
+	FrontendRedirectURL string `toml:"frontendRedirectURL"`
+	ProxyURL            string `toml:"proxyURL"` // HTTP 代理地址，如 http://127.0.0.1:7890
 }
 
 var config *Config
@@ -262,6 +272,14 @@ func loadEnvConfig(cfg *Config) {
 	}
 	if v := os.Getenv("ES_PASSWORD"); v != "" {
 		cfg.ESConfig.Password = v
+	}
+
+	// GitHub OAuth Configuration
+	if v := os.Getenv("GITHUB_OAUTH_CLIENT_ID"); v != "" {
+		cfg.GithubOAuthConfig.ClientID = v
+	}
+	if v := os.Getenv("GITHUB_OAUTH_CLIENT_SECRET"); v != "" {
+		cfg.GithubOAuthConfig.ClientSecret = v
 	}
 }
 

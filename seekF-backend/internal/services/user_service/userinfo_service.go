@@ -1,6 +1,7 @@
 package userservice
 
 import (
+	"database/sql"
 	"fmt"
 	userdao "seekF-backend/internal/dao/user_dao"
 	userreq "seekF-backend/internal/dto/user/user_req"
@@ -33,12 +34,17 @@ func (s *UserInfoServiceImpl) GetUserInfo(req *userreq.GetUserInfoRequest) (*use
 		return nil, fmt.Errorf("用户不存在")
 	}
 
+	birthday := ""
+	if user.Birthday.Valid {
+		birthday = user.Birthday.String
+	}
+
 	userInfoRsp := &userresp.GetUserInfoRespond{
 		Uuid:      user.Uuid,
 		Telephone: user.Telephone,
 		Nickname:  user.Nickname,
 		Avatar:    user.Avatar,
-		Birthday:  user.Birthday,
+		Birthday:  birthday,
 		Email:     user.Email,
 		Gender:    user.Gender,
 		Signature: user.Signature,
@@ -70,7 +76,7 @@ func (s *UserInfoServiceImpl) UpdateUserInfo(req *userreq.UpdateUserInfoRequest)
 		user.Nickname = req.Nickname
 	}
 	if req.Birthday != "" {
-		user.Birthday = req.Birthday
+		user.Birthday = sql.NullString{String: req.Birthday, Valid: true}
 	}
 	if req.Signature != "" {
 		user.Signature = req.Signature

@@ -13,6 +13,7 @@ type UserInfoDAO interface {
 	// FindUsersByUuids 按 uuid 列表批量查询用户（用于避免 N+1）
 	FindUsersByUuids(uuids []string) ([]models.UserInfo, error)
 	FindUserByTelephone(telephone string) (*models.UserInfo, error)
+	FindUserByGithubId(githubId int64) (*models.UserInfo, error)
 	UpdateUserInfo(user *models.UserInfo) error
 	SearchUsers(keyword string) ([]models.UserInfo, error)
 }
@@ -52,6 +53,16 @@ func (d *UserInfoDAOImpl) FindUsersByUuids(uuids []string) ([]models.UserInfo, e
 func (d *UserInfoDAOImpl) FindUserByTelephone(telephone string) (*models.UserInfo, error) {
 	var user models.UserInfo
 	result := d.db.Where("telephone = ?", telephone).First(&user)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &user, result.Error
+}
+
+// FindUserByGithubId 根据 GitHub ID 查找用户
+func (d *UserInfoDAOImpl) FindUserByGithubId(githubId int64) (*models.UserInfo, error) {
+	var user models.UserInfo
+	result := d.db.Where("github_id = ?", githubId).First(&user)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
