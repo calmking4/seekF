@@ -205,7 +205,7 @@ func (c *AuthController) Logout(ctx *gin.Context) {
 	resp.Success(ctx, "退出登录成功", nil)
 }
 
-// SendVerifyCode 发送验证码
+// SendVerifyCode 发送验证码（支持手机号和邮箱）
 func (c *AuthController) SendVerifyCode(ctx *gin.Context) {
 	var req userreq.SendVerifyCodeRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -215,7 +215,7 @@ func (c *AuthController) SendVerifyCode(ctx *gin.Context) {
 	}
 
 	// 调用service层发送验证码
-	err := c.authService.SendVerifyCode(req.Telephone)
+	err := c.authService.SendVerifyCode(req.Telephone, req.Email)
 	if err != nil {
 		zlog.Info("发送验证码服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
@@ -225,7 +225,7 @@ func (c *AuthController) SendVerifyCode(ctx *gin.Context) {
 	resp.Success(ctx, "验证码发送成功", nil)
 }
 
-// LoginByCode 验证码登录
+// LoginByCode 验证码登录（支持手机号和邮箱）
 func (c *AuthController) LoginByCode(ctx *gin.Context) {
 	var req userreq.LoginByCodeRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -235,7 +235,7 @@ func (c *AuthController) LoginByCode(ctx *gin.Context) {
 	}
 
 	// 调用service层执行验证码登录
-	result, err := c.authService.LoginByCode(req.Telephone, req.Code)
+	result, err := c.authService.LoginByCode(req.Telephone, req.Email, req.Code)
 	if err != nil {
 		zlog.Info("验证码登录服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)

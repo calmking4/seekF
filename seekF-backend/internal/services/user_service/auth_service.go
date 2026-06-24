@@ -11,11 +11,13 @@ import (
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/auth"
+	"seekF-backend/internal/pkg/email"
 	"seekF-backend/internal/pkg/jwt"
 	"seekF-backend/internal/pkg/oauth"
 	"seekF-backend/internal/pkg/redis"
 	"seekF-backend/internal/pkg/sms"
 	"seekF-backend/internal/pkg/util"
+	"regexp"
 	"strings"
 	"time"
 
@@ -55,8 +57,8 @@ type AuthService interface {
 	Register(req *RegisterRequest) error
 	Login(req *LoginRequest) (*LoginRespond, error)
 	Logout(tokenString string) error
-	SendVerifyCode(telephone string) error
-	LoginByCode(telephone, code string) (*LoginRespond, error)
+	SendVerifyCode(telephone, email string) error
+	LoginByCode(telephone, email, code string) (*LoginRespond, error)
 	GithubAuthURL() (string, error)
 	LoginByGithub(code, state string) (*LoginRespond, error)
 	GiteeAuthURL() (string, error)
@@ -158,35 +160,68 @@ func (s *AuthServiceImpl) Logout(tokenString string) error {
 	return nil
 }
 
-// SendVerifyCode 发送验证码
-func (s *AuthServiceImpl) SendVerifyCode(telephone string) error {
+// SendVerifyCode 发送验证码（支持手机号和邮箱）
+func (s *AuthServiceImpl) SendVerifyCode(telephone, emailAddr string) error {
+	// 校验：手机号和邮箱至少填一个
+	if strings.TrimSpace(telephone) == "" && strings.TrimSpace(emailAddr) == "" {
+		return fmt.Errorf("手机号和邮箱不能同时为空")
+	}
+
 	// 生成6位数字验证码
 	code := generateVerifyCode()
 
 	// 验证码有效期5分钟
 	expiresAt := 5 * time.Minute
 
-	// 存储验证码到Redis，key格式：verify_code:手机号
-	key := fmt.Sprintf("verify_code:%s", telephone)
-	err := redis.SetKeyEx(key, code, expiresAt)
-	if err != nil {
-		return fmt.Errorf("存储验证码失败：%v", err)
-	}
+	// 判断是邮箱还是手机号
+	if isEmail(emailAddr) {
+		// 邮箱验证码
+		key := fmt.Sprintf("verify_code:%s", emailAddr)
+		err := redis.SetKeyEx(key, code, expiresAt)
+		if err != nil {
+			return fmt.Errorf("存储验证码失败：%v", err)
+		}
 
-	// 发送短信验证码
-	err = sms.SendSMSCode(telephone, code)
-	if err != nil {
-		return fmt.Errorf("发送验证码失败：%v", err)
+		// 发送邮件验证码
+		err = email.SendVerifyCodeEmail(emailAddr, code)
+		if err != nil {
+			return fmt.Errorf("发送验证码失败：%v", err)
+		}
+	} else {
+		// 手机短信验证码
+		key := fmt.Sprintf("verify_code:%s", telephone)
+		err := redis.SetKeyEx(key, code, expiresAt)
+		if err != nil {
+			return fmt.Errorf("存储验证码失败：%v", err)
+		}
+
+		// 发送短信验证码
+		err = sms.SendSMSCode(telephone, code)
+		if err != nil {
+			return fmt.Errorf("发送验证码失败：%v", err)
+		}
 	}
 
 	return nil
 }
 
-// LoginByCode 验证码登录
-func (s *AuthServiceImpl) LoginByCode(telephone, code string) (*LoginRespond, error) {
-	// 验证验证码
-	// 从Redis获取验证码，key格式：verify_code:手机号
-	key := fmt.Sprintf("verify_code:%s", telephone)
+// LoginByCode 验证码登录（支持手机号和邮箱）
+func (s *AuthServiceImpl) LoginByCode(telephone, emailAddr, code string) (*LoginRespond, error) {
+	// 判断是邮箱还是手机号
+	var key string
+	var isEmailLogin bool
+
+	if isEmail(emailAddr) {
+		key = fmt.Sprintf("verify_code:%s", emailAddr)
+		isEmailLogin = true
+	} else if strings.TrimSpace(telephone) != "" {
+		key = fmt.Sprintf("verify_code:%s", telephone)
+		isEmailLogin = false
+	} else {
+		return nil, fmt.Errorf("手机号和邮箱不能同时为空")
+	}
+
+	// 从Redis获取验证码
 	storedCode, err := redis.GetKey(key)
 	if err != nil {
 		return nil, fmt.Errorf("获取验证码失败：%v", err)
@@ -206,8 +241,13 @@ func (s *AuthServiceImpl) LoginByCode(telephone, code string) (*LoginRespond, er
 		return nil, fmt.Errorf("删除验证码失败：%v", err)
 	}
 
-	// 根据手机号查找用户
-	user, err := s.userInfoDAO.FindUserByTelephone(telephone)
+	// 根据手机号或邮箱查找用户
+	var user *models.UserInfo
+	if isEmailLogin {
+		user, err = s.userInfoDAO.FindUserByEmail(emailAddr)
+	} else {
+		user, err = s.userInfoDAO.FindUserByTelephone(telephone)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("登录失败：%v", err)
 	}
@@ -216,10 +256,24 @@ func (s *AuthServiceImpl) LoginByCode(telephone, code string) (*LoginRespond, er
 		// 如果用户不存在，自动注册
 		userUUID := "U" + util.GetNowAndLenRandomString(11)
 		user = &models.UserInfo{
-			Uuid:      userUUID,
-			Nickname:  "用户" + telephone[len(telephone)-4:],
-			Telephone: telephone,
-			Password:  "", // 验证码登录不需要密码
+			Uuid:     userUUID,
+			Password: "", // 验证码登录不需要密码
+		}
+
+		if isEmailLogin {
+			// 邮箱注册：昵称取邮箱前缀
+			parts := strings.Split(emailAddr, "@")
+			nickname := "用户"
+			if len(parts) > 0 && len(parts[0]) > 0 {
+				nickname = parts[0]
+			}
+			user.Nickname = nickname
+			user.Email = emailAddr
+			user.Telephone = ""
+		} else {
+			// 手机号注册
+			user.Nickname = "用户" + telephone[len(telephone)-4:]
+			user.Telephone = telephone
 		}
 
 		err = s.userInfoDAO.CreateUser(user)
@@ -307,9 +361,8 @@ func (s *AuthServiceImpl) LoginByGithub(code, state string) (*LoginRespond, erro
 		user = &models.UserInfo{
 			Uuid:     userUUID,
 			Nickname: nickname,
-			Email:    githubUser.Email,
 			Avatar:   githubUser.AvatarURL,
-			GithubId: githubUser.ID,
+			GithubId: sql.NullInt64{Int64: githubUser.ID, Valid: true},
 			Password: "",
 			Birthday: sql.NullString{Valid: false},
 		}
@@ -321,10 +374,6 @@ func (s *AuthServiceImpl) LoginByGithub(code, state string) (*LoginRespond, erro
 		updated := false
 		if githubUser.AvatarURL != "" && user.Avatar != githubUser.AvatarURL {
 			user.Avatar = githubUser.AvatarURL
-			updated = true
-		}
-		if githubUser.Email != "" && user.Email != githubUser.Email {
-			user.Email = githubUser.Email
 			updated = true
 		}
 		if updated {
@@ -409,9 +458,8 @@ func (s *AuthServiceImpl) LoginByGitee(code, state string) (*LoginRespond, error
 		user = &models.UserInfo{
 			Uuid:     userUUID,
 			Nickname: nickname,
-			Email:    giteeUser.Email,
 			Avatar:   giteeUser.AvatarURL,
-			GiteeId:  giteeUser.ID,
+			GiteeId:  sql.NullInt64{Int64: giteeUser.ID, Valid: true},
 			Password: "",
 			Birthday: sql.NullString{Valid: false},
 		}
@@ -423,10 +471,6 @@ func (s *AuthServiceImpl) LoginByGitee(code, state string) (*LoginRespond, error
 		updated := false
 		if giteeUser.AvatarURL != "" && user.Avatar != giteeUser.AvatarURL {
 			user.Avatar = giteeUser.AvatarURL
-			updated = true
-		}
-		if giteeUser.Email != "" && user.Email != giteeUser.Email {
-			user.Email = giteeUser.Email
 			updated = true
 		}
 		if updated {
@@ -520,4 +564,14 @@ func encryptPassword(password string) (string, error) {
 // 验证密码
 func verifyPassword(hashedPassword, password string) error {
 	return bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
+}
+
+// isEmail 判断字符串是否为邮箱格式
+func isEmail(s string) bool {
+	if strings.TrimSpace(s) == "" {
+		return false
+	}
+	// 简单的邮箱格式校验
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+	return emailRegex.MatchString(s)
 }

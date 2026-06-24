@@ -11,15 +11,15 @@ type UserInfo struct {
 	Id            int64          `gorm:"column:id;primaryKey;comment:自增id"`
 	Uuid          string         `gorm:"column:uuid;uniqueIndex;type:char(20);comment:用户唯一id"`
 	Nickname      string         `gorm:"column:nickname;type:varchar(20);not null;comment:昵称"`
-	Telephone     string         `gorm:"column:telephone;index;not null;type:char(11);comment:电话"`
+	Telephone     string         `gorm:"column:telephone;index;type:char(11);comment:电话"`
 	Email         string         `gorm:"column:email;type:char(30);comment:邮箱"`
 	Avatar        string         `gorm:"column:avatar;type:char(255);default:https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png;not null;comment:头像"`
 	Gender        int8           `gorm:"column:gender;comment:性别，0.男，1.女"`
 	Signature     string         `gorm:"column:signature;type:varchar(100);comment:个性签名"`
 	Password      string         `gorm:"column:password;type:varchar(255);not null;comment:密码"`
 	Birthday      sql.NullString `gorm:"column:birthday;type:date;comment:生日"`
-	GithubId      int64          `gorm:"column:github_id;uniqueIndex;comment:GitHub用户ID"`
-	GiteeId       int64          `gorm:"column:gitee_id;uniqueIndex;comment:Gitee用户ID"`
+	GithubId      sql.NullInt64  `gorm:"column:github_id;uniqueIndex;comment:GitHub用户ID"`
+	GiteeId       sql.NullInt64  `gorm:"column:gitee_id;uniqueIndex;comment:Gitee用户ID"`
 	CreatedAt     time.Time      `gorm:"column:created_at;index;type:datetime;not null;comment:创建时间"`
 	DeletedAt     gorm.DeletedAt `gorm:"column:deleted_at;type:datetime;comment:删除时间"`
 	LastOnlineAt  sql.NullTime   `gorm:"column:last_online_at;type:datetime;comment:上次登录时间"`

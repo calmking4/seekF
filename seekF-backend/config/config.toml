@@ -33,6 +33,14 @@ accessKeySecret = ""
 signName = "阿里云短信测试"
 templateCode = "SMS_154950909"
 
+[emailConfig]
+smtpHost = "smtp.qq.com"
+smtpPort = 465
+username = ""          # 发件邮箱账号
+password = ""          # 邮箱授权码
+fromAddress = ""       # 发件邮箱地址
+fromName = "seekF"     # 发件人名称
+
 [ossConfig]
 accessKeyID = ""
 accessKeySecret = ""

@@ -37,6 +37,16 @@ type AuthCodeConfig struct {
 	TemplateCode    string `toml:"templateCode"`
 }
 
+// EmailConfig 邮件SMTP配置
+type EmailConfig struct {
+	SmtpHost    string `toml:"smtpHost"`
+	SmtpPort    int    `toml:"smtpPort"`
+	Username    string `toml:"username"`
+	Password    string `toml:"password"`
+	FromAddress string `toml:"fromAddress"`
+	FromName    string `toml:"fromName"`
+}
+
 type OSSConfig struct {
 	AccessKeyID     string `toml:"accessKeyID"`
 	AccessKeySecret string `toml:"accessKeySecret"`
@@ -117,6 +127,7 @@ type Config struct {
 	MysqlConfig        `toml:"mysqlConfig"`
 	RedisConfig        `toml:"redisConfig"`
 	AuthCodeConfig     `toml:"authCodeConfig"`
+	EmailConfig        `toml:"emailConfig"`
 	OSSConfig          `toml:"ossConfig"`
 	LogConfig          `toml:"logConfig"`
 	KafkaConfig        `toml:"kafkaConfig"`
@@ -200,6 +211,17 @@ func loadEnvConfig(cfg *Config) {
 	}
 	if v := os.Getenv("SMS_ACCESS_KEY_SECRET"); v != "" {
 		cfg.AuthCodeConfig.AccessKeySecret = v
+	}
+
+	// 邮箱配置
+	if v := os.Getenv("EMAIL_USERNAME"); v != "" {
+		cfg.EmailConfig.Username = v
+	}
+	if v := os.Getenv("EMAIL_PASSWORD"); v != "" {
+		cfg.EmailConfig.Password = v
+	}
+	if v := os.Getenv("EMAIL_FROM_ADDRESS"); v != "" {
+		cfg.EmailConfig.FromAddress = v
 	}
 
 	// OSS Access Key

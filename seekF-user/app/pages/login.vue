@@ -26,15 +26,15 @@
           
           <!-- 标签切换 -->
           <div class="flex mb-8 border-b border-gray-200">
-            <button 
-              v-for="(item, key) in { password: '账号密码登录', code: '手机号验证码登录' }"
+            <button
+              v-for="(item, key) in { password: '账号密码登录', code: '验证码登录' }"
               :key="key"
               class="flex-1 pb-3 text-sm font-medium text-gray-600 transition-colors relative"
               :class="loginType === key ? 'text-[#60a5fa]' : 'hover:text-gray-900'"
               @click="loginType = key"
             >
               {{ item }}
-              <span 
+              <span
                 v-if="loginType === key"
                 class="absolute bottom-0 left-0 right-0 h-0.5 bg-[#60a5fa] rounded-full"
               ></span>
@@ -72,31 +72,31 @@
             </button>
           </form>
 
-          <!-- 手机号验证码登录 -->
+          <!-- 验证码登录（支持手机号和邮箱） -->
           <form v-else @submit.prevent="handleLogin" class="space-y-5">
-            <input 
-              type="tel" 
-              v-model="loginForm.phone" 
-              placeholder="请输入手机号"
+            <input
+              type="text"
+              v-model="loginForm.account"
+              placeholder="请输入手机号或邮箱"
               :class="inputClass"
             />
             <div class="flex gap-3">
-              <input 
-                type="text" 
-                v-model="loginForm.code" 
+              <input
+                type="text"
+                v-model="loginForm.code"
                 placeholder="请输入验证码"
                 :class="inputClass"
               />
-              <button 
+              <button
                 type="button"
                 class="w-32 h-12 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium transition-all duration-200 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                :disabled="!loginForm.phone || codeCountdown > 0"
+                :disabled="!loginForm.account || codeCountdown > 0"
                 @click="getVerifyCode"
               >
                 {{ codeCountdown > 0 ? `${codeCountdown}s` : '获取验证码' }}
               </button>
             </div>
-            <button 
+            <button
               type="submit"
               class="w-full h-12 bg-gradient-to-r from-[#60a5fa] to-[#3b82f6] text-white rounded-lg text-base font-semibold shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
             >
@@ -160,7 +160,7 @@ const loginType = ref('password');
 const loginForm = ref({
   username: '',
   password: '',
-  phone: '',
+  account: '',  // 手机号或邮箱
   code: '',
   remember: true
 });
@@ -171,20 +171,31 @@ const loading = ref(false);
 const inputClass = "w-full h-12 px-4 border border-gray-300 rounded-lg transition-all duration-200 focus:border-[#60a5fa] focus:ring-2 focus:ring-[#60a5fa]/20 outline-none text-sm bg-white text-gray-900 placeholder:text-gray-400";
 
 const getVerifyCode = async () => {
-  if (!/^1[3-9]\d{9}$/.test(loginForm.value.phone)) {
-    ElMessage('请输入正确的手机号');
+  const account = loginForm.value.account.trim();
+  if (!account) {
+    ElMessage('请输入手机号或邮箱');
     return;
   }
-  
+
+  // 判断是邮箱还是手机号
+  const isEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(account);
+  const isPhone = /^1[3-9]\d{9}$/.test(account);
+
+  if (!isEmail && !isPhone) {
+    ElMessage('请输入正确的手机号或邮箱');
+    return;
+  }
+
   try {
+    // 构造请求参数
+    const body = isEmail ? { email: account } : { telephone: account };
+
     // 调用发送验证码接口
     const res = await useApi$('/user/sendVerifyCode', {
       method: 'POST',
-      body: {
-        telephone: loginForm.value.phone
-      }
+      body
     });
-    
+
     if (res && res.code === 200) {
       ElMessage.success('验证码发送成功');
       // 开始倒计时
@@ -243,21 +254,25 @@ const handleLogin = async () => {
       loading.value = false;
     }
   } else {
-    if (!loginForm.value.phone || !loginForm.value.code) {
-      ElMessage('请输入手机号和验证码');
+    const account = loginForm.value.account.trim();
+    if (!account || !loginForm.value.code) {
+      ElMessage('请输入手机号/邮箱和验证码');
       return;
     }
 
     loading.value = true;
 
     try {
+      // 判断是邮箱还是手机号，构造请求参数
+      const isEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(account);
+      const body = isEmail
+        ? { email: account, code: loginForm.value.code }
+        : { telephone: account, code: loginForm.value.code };
+
       // 使用 useApi$ 发送验证码登录请求
       const res = await useApi$('/user/loginByCode', {
         method: 'POST',
-        body: {
-          telephone: loginForm.value.phone,
-          code: loginForm.value.code
-        }
+        body
       });
 
       if (res && res.code === 200) {

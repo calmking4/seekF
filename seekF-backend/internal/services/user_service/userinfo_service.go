@@ -70,6 +70,14 @@ func (s *UserInfoServiceImpl) UpdateUserInfo(req *userreq.UpdateUserInfoRequest)
 
 	// 更新用户信息
 	if req.Email != "" {
+		// 检查邮箱是否已被其他用户使用
+		existingUser, err := s.userInfoDAO.FindUserByEmail(req.Email)
+		if err != nil {
+			return fmt.Errorf("检查邮箱失败：%v", err)
+		}
+		if existingUser != nil && existingUser.Uuid != user.Uuid {
+			return fmt.Errorf("该邮箱已被其他用户使用")
+		}
 		user.Email = req.Email
 	}
 	if req.Nickname != "" {
