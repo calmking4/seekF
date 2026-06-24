@@ -92,3 +92,25 @@ func (c *MessageController) SearchMessages(ctx *gin.Context) {
 		"total": total,
 	})
 }
+
+// SearchMessageSuggestions 搜索消息联想（跨会话）
+func (c *MessageController) SearchMessageSuggestions(ctx *gin.Context) {
+	userId := ctx.GetString("Uuid")
+	var req userreq.SearchMessageSuggestionsRequest
+	if err := ctx.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		resp.Error(ctx, "参数错误", http.StatusBadRequest)
+		return
+	}
+
+	messageList, err := c.messageService.SearchMessageSuggestions(userId, req.Keyword, req.PageSize)
+	if err != nil {
+		zlog.Info("搜索消息联想服务错误: " + err.Error())
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp.Success(ctx, "搜索成功", gin.H{
+		"list": messageList,
+	})
+}

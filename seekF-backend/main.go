@@ -29,7 +29,7 @@ func main() {
 	contactService := userservice.NewContactService(contactDAO, sessionDAO, userInfoDAO, groupDAO, contactApplyDAO)
 	groupService := userservice.NewGroupService(groupDAO, contactDAO, sessionDAO, userInfoDAO, contactApplyDAO)
 	sessionService := userservice.NewSessionService(sessionDAO, userInfoDAO, groupDAO, contactDAO)
-	messageService := userservice.NewMessageService(messageDAO)
+	messageService := userservice.NewMessageService(messageDAO, sessionDAO)
 	fileService := userservice.NewFileService()
 
 	// 初始化 AI Service 层（复用 sessionDAO 和 messageDAO）

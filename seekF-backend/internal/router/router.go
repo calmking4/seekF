@@ -87,6 +87,7 @@ func SetupRouter(
 			protectedGroup.POST("/message/getUserMessageList", messageController.GetUserMessageList)
 			protectedGroup.POST("/message/getGroupMessageList", messageController.GetGroupMessageList)
 			protectedGroup.POST("/message/search", messageController.SearchMessages)
+			protectedGroup.POST("/message/searchSuggestions", messageController.SearchMessageSuggestions)
 			// 文件上传
 			protectedGroup.POST("/file/upload", fileController.UploadFile)
 			protectedGroup.POST("/file/upload/init", fileController.InitMultipartUpload)

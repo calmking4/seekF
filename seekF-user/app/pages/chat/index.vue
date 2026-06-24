@@ -3,7 +3,7 @@
     <!-- 左侧：搜索栏 + 联系人/会话列表 -->
     <aside class="w-80 bg-white border-r border-gray-200 h-full flex flex-col flex-shrink-0 pr-3">
       <!-- 顶部搜索栏 -->
-      <SearchBar />
+      <SearchBar @search-select="handleSearchSelect" />
 
       <!-- 联系人/会话列表 -->
       <div class="flex-1 overflow-y-auto">
@@ -267,6 +267,19 @@ const loadSessionList = async () => {
     }
   } catch (error) {
     console.error('获取会话列表失败:', error)
+  }
+}
+
+// 处理搜索联想选中（跳转到对应会话）
+const handleSearchSelect = (item) => {
+  if (typeof item === 'object' && item.session_id) {
+    // 联想结果：跳转到对应会话
+    const index = chatList.value.findIndex(s => s.sessionId === item.session_id)
+    if (index !== -1) {
+      selectSession(index)
+    }
+  } else if (typeof item === 'string') {
+    // 搜索历史关键词：可以触发搜索（当前不处理）
   }
 }
 

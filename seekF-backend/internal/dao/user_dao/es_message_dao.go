@@ -20,6 +20,8 @@ type ESMessageDAO interface {
 	IndexMessage(message *models.Message) error
 	// SearchMessages 按sessionId + 关键词搜索消息（分页）
 	SearchMessages(sessionId string, keyword string, page, pageSize int) ([]models.Message, int64, error)
+	// SearchMessagesBySessionIds 按会话列表 + 关键词搜索消息（跨会话联想）
+	SearchMessagesBySessionIds(sessionIds []string, keyword string, limit int) ([]models.Message, int64, error)
 	// DeleteMessagesBySessionId 删除指定会话的所有消息
 	DeleteMessagesBySessionId(sessionId string) error
 }
@@ -131,6 +133,109 @@ func (d *ESMessageDAOImpl) SearchMessages(sessionId string, keyword string, page
 		},
 		"from": from,
 		"size": pageSize,
+	}
+
+	data, err := json.Marshal(query)
+	if err != nil {
+		return nil, 0, fmt.Errorf("序列化查询失败: %w", err)
+	}
+
+	res, err := d.client.Search(
+		d.client.Search.WithIndex(db.ESIndexChatMessages),
+		d.client.Search.WithBody(bytes.NewReader(data)),
+		d.client.Search.WithTrackTotalHits(true),
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("ES搜索消息失败: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		return nil, 0, fmt.Errorf("ES搜索消息返回错误: %s", res.String())
+	}
+
+	var result struct {
+		Hits struct {
+			Total struct {
+				Value int64 `json:"value"`
+			} `json:"total"`
+			Hits []struct {
+				Source    esMessageDoc       `json:"_source"`
+				Highlight map[string][]string `json:"highlight,omitempty"`
+			} `json:"hits"`
+		} `json:"hits"`
+	}
+
+	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+		return nil, 0, fmt.Errorf("解析ES搜索结果失败: %w", err)
+	}
+
+	var messages []models.Message
+	for _, hit := range result.Hits.Hits {
+		msg := models.Message{
+			Uuid:      hit.Source.MessageId,
+			SessionId: hit.Source.SessionId,
+			SendId:    hit.Source.SendId,
+			SendName:  hit.Source.SendName,
+			ReceiveId: hit.Source.ReceiveId,
+			Content:   hit.Source.Content,
+			Type:      hit.Source.MessageType,
+			Status:    hit.Source.Status,
+		}
+		// 解析时间
+		if t, err := time.Parse("2006-01-02 15:04:05", hit.Source.CreatedAt); err == nil {
+			msg.CreatedAt = t
+		}
+		// 如果有高亮内容，替换content
+		if highlights, ok := hit.Highlight["content"]; ok && len(highlights) > 0 {
+			msg.Content = highlights[0]
+		}
+		messages = append(messages, msg)
+	}
+
+	return messages, result.Hits.Total.Value, nil
+}
+
+// SearchMessagesBySessionIds 按会话列表 + 关键词搜索消息（跨会话联想）
+func (d *ESMessageDAOImpl) SearchMessagesBySessionIds(sessionIds []string, keyword string, limit int) ([]models.Message, int64, error) {
+	if len(sessionIds) == 0 || keyword == "" {
+		return nil, 0, nil
+	}
+	if limit < 1 {
+		limit = 5
+	}
+
+	// 构建查询：terms 过滤多个 sessionId + match 搜索 content
+	query := map[string]interface{}{
+		"query": map[string]interface{}{
+			"bool": map[string]interface{}{
+				"must": []map[string]interface{}{
+					{
+						"terms": map[string]interface{}{
+							"session_id": sessionIds,
+						},
+					},
+					{
+						"match": map[string]interface{}{
+							"content": keyword,
+						},
+					},
+				},
+			},
+		},
+		"highlight": map[string]interface{}{
+			"fields": map[string]interface{}{
+				"content": map[string]interface{}{
+					"pre_tags":  []string{"<em>"},
+					"post_tags": []string{"</em>"},
+				},
+			},
+		},
+		"sort": []map[string]interface{}{
+			{"_score": "desc"},
+			{"created_at": "desc"},
+		},
+		"size": limit,
 	}
 
 	data, err := json.Marshal(query)

@@ -7,3 +7,9 @@ type SearchMessageRequest struct {
 	Page      int    `json:"page"`
 	PageSize  int    `json:"page_size"`
 }
+
+// SearchMessageSuggestionsRequest 搜索消息联想请求（跨会话）
+type SearchMessageSuggestionsRequest struct {
+	Keyword  string `json:"keyword" binding:"required"`
+	PageSize int    `json:"page_size"` // 默认5
+}

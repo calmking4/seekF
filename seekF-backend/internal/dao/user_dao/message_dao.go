@@ -21,6 +21,8 @@ type MessageDAO interface {
 	DeleteMessagesBySessionId(sessionId string) error
 	// GetMessagesBySessionIdWithCursor 游标分页，基于 created_at 时间戳
 	GetMessagesBySessionIdWithCursor(sessionId string, cursor string, limit int, direction string) ([]models.Message, error)
+	// SearchMessagesBySessionIds 在指定会话列表中搜索消息（MySQL LIKE 降级）
+	SearchMessagesBySessionIds(sessionIds []string, keyword string, limit int) ([]models.Message, error)
 }
 
 // MessageDAOImpl 消息DAO实现
@@ -134,5 +136,19 @@ func (d *MessageDAOImpl) GetMessagesBySessionIdWithCursor(sessionId string, curs
 		}
 	}
 
+	return messageList, result.Error
+}
+
+// SearchMessagesBySessionIds 在指定会话列表中搜索消息（MySQL LIKE 降级）
+func (d *MessageDAOImpl) SearchMessagesBySessionIds(sessionIds []string, keyword string, limit int) ([]models.Message, error) {
+	if len(sessionIds) == 0 || keyword == "" {
+		return nil, nil
+	}
+	var messageList []models.Message
+	likePattern := "%" + keyword + "%"
+	result := d.db.Where("session_id IN ? AND content LIKE ?", sessionIds, likePattern).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&messageList)
 	return messageList, result.Error
 }
