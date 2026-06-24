@@ -27,7 +27,7 @@
           <!-- 标签切换 -->
           <div class="flex mb-8 border-b border-gray-200">
             <button
-              v-for="(item, key) in { password: '账号密码登录', code: '验证码登录' }"
+              v-for="(item, key) in { password: '密码登录', code: '验证码登录' }"
               :key="key"
               class="flex-1 pb-3 text-sm font-medium text-gray-600 transition-colors relative"
               :class="loginType === key ? 'text-[#60a5fa]' : 'hover:text-gray-900'"
@@ -41,20 +41,30 @@
             </button>
           </div>
 
-          <!-- 账号密码登录 -->
+          <!-- 密码登录 -->
           <form v-if="loginType === 'password'" @submit.prevent="handleLogin" class="space-y-5">
-            <input 
-              type="text" 
-              v-model="loginForm.username" 
-              placeholder="请输入账号/手机号"
+            <input
+              type="text"
+              v-model="loginForm.username"
+              placeholder="请输入手机号或邮箱"
               :class="inputClass"
             />
-            <input 
-              type="password" 
-              v-model="loginForm.password" 
-              placeholder="请输入密码"
-              :class="inputClass"
-            />
+            <div class="relative">
+              <input
+                :type="showPassword ? 'text' : 'password'"
+                v-model="loginForm.password"
+                placeholder="请输入密码"
+                :class="passwordInputClass"
+              />
+              <button
+                type="button"
+                class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                @click="showPassword = !showPassword"
+              >
+                <Icon v-if="showPassword" name="uil:eye" class="text-xl" />
+                <Icon v-else name="uil:eye-slash" class="text-xl" />
+              </button>
+            </div>
             <div class="flex justify-between items-center text-xs">
               <label class="flex items-center gap-2 text-gray-600 cursor-pointer">
                 <input type="checkbox" v-model="loginForm.remember" class="remember-checkbox w-4 h-4" />
@@ -166,9 +176,12 @@ const loginForm = ref({
 });
 const codeCountdown = ref(0);
 const loading = ref(false);
+const showPassword = ref(false);
 
 // 公共输入框样式
 const inputClass = "w-full h-12 px-4 border border-gray-300 rounded-lg transition-all duration-200 focus:border-[#60a5fa] focus:ring-2 focus:ring-[#60a5fa]/20 outline-none text-sm bg-white text-gray-900 placeholder:text-gray-400";
+// 密码输入框样式（右侧预留图标空间）
+const passwordInputClass = "w-full h-12 pl-4 pr-10 border border-gray-300 rounded-lg transition-all duration-200 focus:border-[#60a5fa] focus:ring-2 focus:ring-[#60a5fa]/20 outline-none text-sm bg-white text-gray-900 placeholder:text-gray-400";
 
 const getVerifyCode = async () => {
   const account = loginForm.value.account.trim();
@@ -216,20 +229,24 @@ const getVerifyCode = async () => {
 const handleLogin = async () => {
   if (loginType.value === 'password') {
     if (!loginForm.value.username || !loginForm.value.password) {
-      ElMessage('请输入账号和密码');
+      ElMessage('请输入手机号/邮箱和密码');
       return;
     }
 
     loading.value = true;
 
     try {
+      // 判断是邮箱还是手机号
+      const account = loginForm.value.username.trim();
+      const isEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(account);
+      const body = isEmail
+        ? { email: account, password: loginForm.value.password }
+        : { telephone: account, password: loginForm.value.password };
+
       // 使用 useApi$ 发送登录请求（$fetch：返回响应对象，失败会 throw）
       const res = await useApi$('/user/login', {
         method: 'POST',
-        body: {
-          telephone: loginForm.value.username,
-          password: loginForm.value.password
-        }
+        body
       });
 
       if (res && res.code === 200) {
@@ -314,6 +331,12 @@ const loginWithGitee = () => {
 
 
 <style scoped>
+/* 隐藏浏览器自带的密码显示/隐藏按钮 */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-webkit-credentials-auto-fill-button {
+  display: none !important;
+}
+
 .remember-checkbox {
   appearance: none;
   width: 1rem;

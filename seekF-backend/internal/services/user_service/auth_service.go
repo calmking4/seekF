@@ -31,7 +31,8 @@ type RegisterRequest struct {
 }
 
 type LoginRequest struct {
-	Telephone string `json:"telephone" binding:"required"`
+	Telephone string `json:"telephone"`
+	Email     string `json:"email"`
 	Password  string `json:"password" binding:"required"`
 }
 
@@ -110,10 +111,21 @@ func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
 	return nil
 }
 
-// Login 用户登录
+// Login 用户登录（支持手机号和邮箱）
 func (s *AuthServiceImpl) Login(req *LoginRequest) (*LoginRespond, error) {
-	// 根据手机号查找用户
-	user, err := s.userInfoDAO.FindUserByTelephone(req.Telephone)
+	if strings.TrimSpace(req.Telephone) == "" && strings.TrimSpace(req.Email) == "" {
+		return nil, fmt.Errorf("手机号和邮箱不能同时为空")
+	}
+
+	// 根据手机号或邮箱查找用户
+	var user *models.UserInfo
+	var err error
+
+	if isEmail(req.Email) {
+		user, err = s.userInfoDAO.FindUserByEmail(req.Email)
+	} else {
+		user, err = s.userInfoDAO.FindUserByTelephone(req.Telephone)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("登录失败：%v", err)
 	}

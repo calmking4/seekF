@@ -70,20 +70,40 @@
             </div>
             
             <!-- 密码 -->
-            <input 
-              type="password" 
-              v-model="registerForm.password" 
-              placeholder="请设置密码（6-16位）"
-              :class="inputClass"
-            />
+            <div class="relative">
+              <input
+                :type="showPassword ? 'text' : 'password'"
+                v-model="registerForm.password"
+                placeholder="请设置密码（6-16位）"
+                :class="passwordInputClass"
+              />
+              <button
+                type="button"
+                class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                @click="showPassword = !showPassword"
+              >
+                <Icon v-if="showPassword" name="uil:eye" class="text-xl" />
+                <Icon v-else name="uil:eye-slash" class="text-xl" />
+              </button>
+            </div>
             
             <!-- 确认密码 -->
-            <input 
-              type="password" 
-              v-model="registerForm.confirmPassword" 
-              placeholder="请确认密码"
-              :class="inputClass"
-            />
+            <div class="relative">
+              <input
+                :type="showConfirmPassword ? 'text' : 'password'"
+                v-model="registerForm.confirmPassword"
+                placeholder="请确认密码"
+                :class="passwordInputClass"
+              />
+              <button
+                type="button"
+                class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                @click="showConfirmPassword = !showConfirmPassword"
+              >
+                <Icon v-if="showConfirmPassword" name="uil:eye" class="text-xl" />
+                <Icon v-else name="uil:eye-slash" class="text-xl" />
+              </button>
+            </div>
             
             <!-- 协议勾选 -->
             <div class="flex items-center gap-2 text-xs text-gray-600">
@@ -144,8 +164,14 @@ const codeCountdown = ref(0);
 // 加载状态
 const loading = ref(false);
 
+// 密码可见性
+const showPassword = ref(false);
+const showConfirmPassword = ref(false);
+
 // 公共输入框样式（和登录页保持一致）
 const inputClass = "w-full h-12 px-4 border border-gray-300 rounded-lg transition-all duration-200 focus:border-[#60a5fa] focus:ring-2 focus:ring-[#60a5fa]/20 outline-none text-sm bg-white text-gray-900 placeholder:text-gray-400";
+// 密码输入框样式（右侧预留图标空间，和登录页保持一致）
+const passwordInputClass = "w-full h-12 pl-4 pr-10 border border-gray-300 rounded-lg transition-all duration-200 focus:border-[#60a5fa] focus:ring-2 focus:ring-[#60a5fa]/20 outline-none text-sm bg-white text-gray-900 placeholder:text-gray-400";
 
 // 获取验证码
 const getVerifyCode = () => {
@@ -256,6 +282,12 @@ const goBack = () => window.history.back();
 </script>
 
 <style scoped>
+/* 隐藏浏览器自带的密码显示/隐藏按钮 */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-webkit-credentials-auto-fill-button {
+  display: none !important;
+}
+
 /* 协议勾选框样式（和登录页记住密码样式保持一致） */
 .agree-checkbox {
   appearance: none;
