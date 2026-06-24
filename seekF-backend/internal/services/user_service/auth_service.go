@@ -26,7 +26,9 @@ import (
 
 type RegisterRequest struct {
 	Nickname  string `json:"nickname" binding:"required"`
-	Telephone string `json:"telephone" binding:"required"`
+	Telephone string `json:"telephone"`
+	Email     string `json:"email"`
+	Code      string `json:"code" binding:"required"`
 	Password  string `json:"password" binding:"required"`
 }
 
@@ -76,15 +78,44 @@ func NewAuthService(userInfoDAO userdao.UserInfoDAO) AuthService {
 	}
 }
 
-// Register 用户注册
+// Register 用户注册（支持手机号和邮箱）
 func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
-	// 检查手机号是否已存在
-	existingUser, err := s.userInfoDAO.FindUserByTelephone(req.Telephone)
+	// 校验：手机号和邮箱至少填一个
+	if strings.TrimSpace(req.Telephone) == "" && strings.TrimSpace(req.Email) == "" {
+		return fmt.Errorf("手机号和邮箱不能同时为空")
+	}
+
+	// 验证验证码
+	var verifyKey string
+	if isEmail(req.Email) {
+		verifyKey = fmt.Sprintf("verify_code:%s", req.Email)
+	} else {
+		verifyKey = fmt.Sprintf("verify_code:%s", req.Telephone)
+	}
+
+	storedCode, err := redis.GetKey(verifyKey)
+	if err != nil {
+		return fmt.Errorf("获取验证码失败：%v", err)
+	}
+	if storedCode == "" {
+		return fmt.Errorf("验证码不存在或已过期")
+	}
+	if storedCode != req.Code {
+		return fmt.Errorf("验证码错误")
+	}
+
+	// 验证成功，删除验证码
+	if err := redis.DelKeyIfExists(verifyKey); err != nil {
+		return fmt.Errorf("删除验证码失败：%v", err)
+	}
+
+	// 检查用户名是否已存在
+	existingUser, err := s.userInfoDAO.FindUserByNickname(req.Nickname)
 	if err != nil {
 		return err
 	}
 	if existingUser != nil {
-		return fmt.Errorf("该手机号已被注册")
+		return fmt.Errorf("该用户名已被使用")
 	}
 
 	// 创建新用户
@@ -97,10 +128,32 @@ func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
 	userUUID := "U" + util.GetNowAndLenRandomString(11)
 
 	user := &models.UserInfo{
-		Uuid:      userUUID,
-		Nickname:  req.Nickname,
-		Telephone: req.Telephone,
-		Password:  password,
+		Uuid:     userUUID,
+		Nickname: req.Nickname,
+		Password: password,
+	}
+
+	if isEmail(req.Email) {
+		// 邮箱注册：检查邮箱是否已存在
+		existingUser, err := s.userInfoDAO.FindUserByEmail(req.Email)
+		if err != nil {
+			return err
+		}
+		if existingUser != nil {
+			return fmt.Errorf("该邮箱已被注册")
+		}
+		user.Email = req.Email
+		user.Telephone = ""
+	} else {
+		// 手机号注册：检查手机号是否已存在
+		existingUser, err := s.userInfoDAO.FindUserByTelephone(req.Telephone)
+		if err != nil {
+			return err
+		}
+		if existingUser != nil {
+			return fmt.Errorf("该手机号已被注册")
+		}
+		user.Telephone = req.Telephone
 	}
 
 	err = s.userInfoDAO.CreateUser(user)

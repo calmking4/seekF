@@ -43,11 +43,11 @@
               :class="inputClass"
             />
             
-            <!-- 手机号 -->
-            <input 
-              type="tel" 
-              v-model="registerForm.telephone" 
-              placeholder="请输入手机号"
+            <!-- 手机号或邮箱 -->
+            <input
+              type="text"
+              v-model="registerForm.account"
+              placeholder="请输入手机号或邮箱"
               :class="inputClass"
             />
             
@@ -59,10 +59,10 @@
                 placeholder="请输入验证码"
                 :class="inputClass"
               />
-              <button 
+              <button
                 type="button"
                 class="w-32 h-12 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium transition-all duration-200 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                :disabled="!registerForm.telephone || codeCountdown > 0"
+                :disabled="!registerForm.account || codeCountdown > 0"
                 @click="getVerifyCode"
               >
                 {{ codeCountdown > 0 ? `${codeCountdown}s` : '获取验证码' }}
@@ -151,8 +151,8 @@ definePageMeta({
 // 注册表单数据
 const registerForm = ref({
   nickname: '',
-  telephone: '',
-  code: '', // 验证码字段保留
+  account: '',  // 手机号或邮箱
+  code: '',
   password: '',
   confirmPassword: '',
   agree: false
@@ -173,25 +173,48 @@ const inputClass = "w-full h-12 px-4 border border-gray-300 rounded-lg transitio
 // 密码输入框样式（右侧预留图标空间，和登录页保持一致）
 const passwordInputClass = "w-full h-12 pl-4 pr-10 border border-gray-300 rounded-lg transition-all duration-200 focus:border-[#60a5fa] focus:ring-2 focus:ring-[#60a5fa]/20 outline-none text-sm bg-white text-gray-900 placeholder:text-gray-400";
 
+// 判断是否为邮箱
+const isEmail = (s) => /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(s);
+
 // 获取验证码
-const getVerifyCode = () => {
-  // 手机号验证
-  if (!/^1[3-9]\d{9}$/.test(registerForm.value.telephone)) {
-    ElMessage.error('请输入正确的手机号');
+const getVerifyCode = async () => {
+  const account = registerForm.value.account.trim();
+  if (!account) {
+    ElMessage.error('请输入手机号或邮箱');
     return;
   }
-  
-  // 暂时模拟验证码发送
-  ElMessage.success('验证码已发送（暂为模拟）');
-  
+
+  const emailValid = isEmail(account);
+  const phoneValid = /^1[3-9]\d{9}$/.test(account);
+
+  if (!emailValid && !phoneValid) {
+    ElMessage.error('请输入正确的手机号或邮箱');
+    return;
+  }
+
+  try {
+    const body = emailValid ? { email: account } : { telephone: account };
+    const res = await useApi$('/user/sendVerifyCode', {
+      method: 'POST',
+      body
+    });
+
+    if (res && res.code === 200) {
+      ElMessage.success('验证码发送成功');
+    } else {
+      ElMessage.error(res?.message || '验证码发送失败');
+    }
+  } catch (err) {
+    
+    console.error('发送验证码错误:', err);
+  }
+
   // 启动倒计时
   codeCountdown.value = 60;
   const timer = setInterval(() => {
     codeCountdown.value--;
     if (codeCountdown.value <= 0) clearInterval(timer);
   }, 1000);
-  
-  console.log('发送注册验证码到：', registerForm.value.telephone);
 };
 
 // 处理注册
@@ -201,41 +224,56 @@ const handleRegister = async () => {
     ElMessage.error('请设置用户名');
     return;
   }
-  
-  if (!/^1[3-9]\d{9}$/.test(registerForm.value.telephone)) {
-    ElMessage.error('请输入正确的手机号');
+
+  const account = registerForm.value.account.trim();
+  if (!account) {
+    ElMessage.error('请输入手机号或邮箱');
     return;
   }
-  
-  // 暂时忽略验证码验证，因为后端还未实现
-  
+
+  const emailValid = isEmail(account);
+  const phoneValid = /^1[3-9]\d{9}$/.test(account);
+
+  if (!emailValid && !phoneValid) {
+    ElMessage.error('请输入正确的手机号或邮箱');
+    return;
+  }
+
   if (registerForm.value.password.length < 6 || registerForm.value.password.length > 16) {
     ElMessage.error('密码长度必须在6-16位之间');
     return;
   }
-  
+
   if (registerForm.value.password !== registerForm.value.confirmPassword) {
     ElMessage.error('两次输入的密码不一致');
     return;
   }
-  
+
   if (!registerForm.value.agree) {
     ElMessage.error('请阅读并同意用户协议和隐私政策');
     return;
   }
-  
+
   // 设置加载状态
   loading.value = true;
-  
+
   try {
+    // 构造请求参数
+    const body = {
+      nickname: registerForm.value.nickname,
+      code: registerForm.value.code,
+      password: registerForm.value.password
+    };
+    if (emailValid) {
+      body.email = account;
+    } else {
+      body.telephone = account;
+    }
+
     // 使用 useApi$ 发送注册请求到后端（$fetch：返回响应对象，失败会 throw）
     const res = await useApi$('/user/register', {
       method: 'POST',
-      body: {
-        nickname: registerForm.value.nickname,
-        telephone: registerForm.value.telephone,
-        password: registerForm.value.password
-      }
+      body
     });
 
     if (res && res.code === 200) {
@@ -249,7 +287,7 @@ const handleRegister = async () => {
     // 清空表单
     registerForm.value = {
       nickname: '',
-      telephone: '',
+      account: '',
       code: '',
       password: '',
       confirmPassword: '',
@@ -262,16 +300,8 @@ const handleRegister = async () => {
     }, 1500);
 
   } catch (err) {
+    
     console.error('注册错误:', err);
-    let errorMessage = '注册失败';
-    if (err.data && err.data.message) {
-      errorMessage = err.data.message;
-    } else if (typeof err === 'string') {
-      errorMessage = err;
-    } else if (err?.message) {
-      errorMessage = err.message;
-    }
-    ElMessage.error(errorMessage);
   } finally {
     loading.value = false;
   }

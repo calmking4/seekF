@@ -81,6 +81,14 @@ func (s *UserInfoServiceImpl) UpdateUserInfo(req *userreq.UpdateUserInfoRequest)
 		user.Email = req.Email
 	}
 	if req.Nickname != "" {
+		// 检查昵称是否已被其他用户使用
+		existingUser, err := s.userInfoDAO.FindUserByNickname(req.Nickname)
+		if err != nil {
+			return fmt.Errorf("检查昵称失败：%v", err)
+		}
+		if existingUser != nil && existingUser.Uuid != user.Uuid {
+			return fmt.Errorf("该用户名已被使用")
+		}
 		user.Nickname = req.Nickname
 	}
 	if req.Birthday != "" {

@@ -10,7 +10,7 @@ import (
 type UserInfo struct {
 	Id            int64          `gorm:"column:id;primaryKey;comment:自增id"`
 	Uuid          string         `gorm:"column:uuid;uniqueIndex;type:char(20);comment:用户唯一id"`
-	Nickname      string         `gorm:"column:nickname;type:varchar(20);not null;comment:昵称"`
+	Nickname      string         `gorm:"column:nickname;uniqueIndex;type:varchar(20);not null;comment:昵称"`
 	Telephone     string         `gorm:"column:telephone;index;type:char(11);comment:电话"`
 	Email         string         `gorm:"column:email;type:char(30);comment:邮箱"`
 	Avatar        string         `gorm:"column:avatar;type:char(255);default:https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png;not null;comment:头像"`

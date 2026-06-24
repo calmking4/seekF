@@ -222,7 +222,6 @@ const getVerifyCode = async () => {
     }
   } catch (err) {
     console.error('发送验证码错误:', err);
-    ElMessage.error(err?.data?.message || err?.message || '发送验证码请求失败');
   }
 };
 
@@ -265,8 +264,8 @@ const handleLogin = async () => {
         ElMessage.error(res?.message || '登录失败');
       }
     } catch (err) {
+      
       console.error('登录错误:', err);
-      ElMessage.error(err?.data?.message || err?.message || '登录请求失败');
     } finally {
       loading.value = false;
     }
@@ -308,8 +307,8 @@ const handleLogin = async () => {
         ElMessage.error(res?.message || '登录失败');
       }
     } catch (err) {
+      
       console.error('登录错误:', err);
-      ElMessage.error(err?.data?.message || err?.message || '登录请求失败');
     } finally {
       loading.value = false;
     }
