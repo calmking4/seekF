@@ -107,7 +107,7 @@
             <template v-else>
 
                 <!-- 消息列表区域 -->
-                <div class="chat-container" ref="chatContainerRef">
+                <div class="chat-container" ref="chatContainerRef" @scroll="handleScroll">
                     <div class="w-full max-w-[1000px] mx-auto px-10">
                         <!-- 加载更多 -->
                         <div v-if="hasMore && messageList.length > 0" class="text-center py-4">

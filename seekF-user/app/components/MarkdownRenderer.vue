@@ -246,6 +246,10 @@ const renderedHtml = computed(() => {
     background: #ebebeb;
     border-bottom: 1px solid #e5e7eb;
     border-radius: 0.5rem 0.5rem 0 0;
+    position: sticky;
+    top: 0;
+    left: 0;
+    z-index: 1;
 }
 
 .markdown-body pre.code-block .code-actions {
