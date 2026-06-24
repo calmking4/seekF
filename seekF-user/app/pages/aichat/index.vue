@@ -307,6 +307,15 @@
             :item="selectedDiscoverItem"
             @close="showDiscoverDetail = false"
         />
+
+        <!-- 图片预览组件 -->
+        <el-image-viewer
+            v-if="showImageViewer"
+            :url-list="[previewImageUrl]"
+            :initial-index="0"
+            :hide-on-click-modal="true"
+            @close="showImageViewer = false"
+        />
     </div>
 </template>
 
@@ -377,6 +386,10 @@ const useKnowledgeBase = ref(false)
 const useWebSearch = ref(false)
 const showDiscoverDetail = ref(false)
 const selectedDiscoverItem = ref(null)
+
+// 图片预览状态
+const showImageViewer = ref(false)
+const previewImageUrl = ref('')
 const fileInput = ref(null)
 const textareaRef = ref(null)
 
@@ -554,7 +567,8 @@ const isImageUrl = (url) => {
 
 // 图片预览
 const previewImage = (url) => {
-    window.open(url, '_blank')
+    previewImageUrl.value = url
+    showImageViewer.value = true
 }
 
 // 打开帖子详情

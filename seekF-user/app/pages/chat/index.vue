@@ -175,6 +175,15 @@
         </div>
       </template>
     </main>
+
+    <!-- 图片预览组件 -->
+    <el-image-viewer
+      v-if="showImageViewer"
+      :url-list="[previewImageUrl]"
+      :initial-index="0"
+      :hide-on-click-modal="true"
+      @close="showImageViewer = false"
+    />
   </div>
 </template>
 
@@ -200,6 +209,10 @@ const currentChat = computed(() => {
 
 const scrollbarRef = ref()
 const imageInputRef = ref()
+
+// 图片预览状态
+const showImageViewer = ref(false)
+const previewImageUrl = ref('')
 const hasMore = ref(true)
 const loadingMore = ref(false)
 const currentPage = ref(1)
@@ -427,7 +440,8 @@ const isImageUrl = (url) => {
 
 // 预览图片
 const previewImage = (url) => {
-  window.open(url, '_blank')
+  previewImageUrl.value = url
+  showImageViewer.value = true
 }
 
 // 处理图片上传

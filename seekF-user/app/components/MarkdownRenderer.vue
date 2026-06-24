@@ -1,8 +1,18 @@
 <template>
     <div ref="containerRef" class="markdown-body" v-html="renderedHtml" @click="handleCopyClick"></div>
+
+    <!-- 图片预览组件 -->
+    <el-image-viewer
+        v-if="showImageViewer"
+        :url-list="[previewImageUrl]"
+        :initial-index="0"
+        :hide-on-click-modal="true"
+        @close="showImageViewer = false"
+    />
 </template>
 
 <script setup>
+import { ref } from 'vue'
 import { marked } from 'marked'
 import hljs from 'highlight.js/lib/core'
 // 按需引入常用语言，减小包体积
@@ -59,6 +69,10 @@ const props = defineProps({
     }
 })
 
+// 图片预览状态
+const showImageViewer = ref(false)
+const previewImageUrl = ref('')
+
 // SVG图标常量
 const ICON_COPY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
 const ICON_CHECK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
@@ -78,7 +92,7 @@ const renderer = {
     }
 }
 
-// 事件委托处理复制和折叠
+// 事件委托处理复制、折叠和图片预览
 function handleCopyClick(e) {
     // 复制按钮
     const copyBtn = e.target.closest('.copy-btn')
@@ -107,6 +121,14 @@ function handleCopyClick(e) {
         const isCollapsed = pre.classList.contains('collapsed')
         toggleBtn.innerHTML = isCollapsed ? ICON_CHEVRON_DOWN : ICON_CHEVRON_UP
         toggleBtn.title = isCollapsed ? '展开' : '收起'
+        return
+    }
+    // 图片预览
+    const img = e.target.closest('img')
+    if (img && img.src) {
+        e.preventDefault()
+        previewImageUrl.value = img.src
+        showImageViewer.value = true
     }
 }
 
@@ -373,6 +395,12 @@ const renderedHtml = computed(() => {
 .markdown-body img {
     max-width: 100%;
     border-radius: 0.375rem;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+}
+
+.markdown-body img:hover {
+    opacity: 0.9;
 }
 
 /* 任务列表 */
