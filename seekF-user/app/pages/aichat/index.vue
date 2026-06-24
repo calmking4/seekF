@@ -840,12 +840,30 @@ const sendMessage = async () => {
 
 // 创建新会话
 const handleCreateSession = async () => {
+    // 先保存当前会话的缓存（使用sessionId，不依赖activeIndex）
+    const currentSessionId = currentSession.value?.sessionId
+    if (currentSessionId) {
+        sessionCaches.set(currentSessionId, {
+            messages: cloneSessionMessages(messageList.value),
+            oldestCursor: oldestCursor.value,
+            hasMore: hasMore.value,
+            totalMessages: totalMessages.value
+        })
+    }
+
     const result = await aiChat.createSession('deepseek')
     if (result) {
         await loadSessionList()
         const idx = sessionList.value.findIndex(s => s.sessionId === result.session_id)
         if (idx !== -1) {
-            selectSession(idx)
+            // 直接设置activeIndex，不调用selectSession避免重复保存
+            activeIndex.value = idx
+            // 清空消息列表，准备加载新会话
+            messageList.value = []
+            hasMore.value = true
+            loadingMore.value = false
+            oldestCursor.value = ''
+            totalMessages.value = 0
         }
         ElMessage.success('创建会话成功')
     } else {
