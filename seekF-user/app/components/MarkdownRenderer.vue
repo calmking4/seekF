@@ -138,7 +138,7 @@ const renderedHtml = computed(() => {
 <style>
 /* markdown-body样式，非scoped以作用于v-html内容 */
 .markdown-body {
-    font-size: 0.875rem;
+    font-size: 1rem;
     line-height: 1.6;
     word-break: break-word;
 }

@@ -1,245 +1,301 @@
 <template>
-    <div class="flex h-full bg-gray-100">
-        <!-- 左侧：AI 会话列表 -->
-        <aside class="w-80 bg-white border-r border-gray-200 h-full flex flex-col flex-shrink-0 pr-3">
-            <!-- 顶部：新建会话按钮 -->
-            <div class="p-3 border-b border-gray-200">
-                <el-button type="primary" class="w-full" @click="handleCreateSession">
+    <div class="flex h-screen bg-[#f7f7f7]">
+        <!-- 会话栏 -->
+        <aside
+            class="session-sidebar"
+            :class="{ collapsed: !expanded }"
+        >
+            <div class="session-header">
+                <button class="new-chat" @click="handleCreateSession">
                     <Icon name="uil:plus" class="mr-1" />
-                    新建 AI 对话
-                </el-button>
+                    新建会话
+                </button>
+
+                <button
+                    class="collapse-btn"
+                    @click="toggleSidebar"
+                >
+                    <Icon name="uil:columns" class="text-lg" />
+                </button>
             </div>
 
-            <!-- 会话列表 -->
-            <div class="flex-1 overflow-y-auto">
-                <div v-if="sessionList.length === 0" class="p-8 text-center text-gray-400">
+            <div class="divider"></div>
+
+            <div class="session-list">
+                <div v-if="sessionList.length === 0" class="text-center text-gray-400 mt-10 text-sm">
                     暂无 AI 会话
                 </div>
-                <div
-                    v-for="(item, index) in sessionList"
-                    :key="item.sessionId"
-                    class="flex items-center gap-3 px-3 py-3 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100 group"
-                    :class="{ 'bg-gray-100': activeIndex === index }"
-                    @click="selectSession(index)"
-                >
-                    <!-- AI 头像 -->
-                    <div class="relative flex-shrink-0">
-                        <el-avatar :size="48" :src="aiAvatarUrl" />
-                    </div>
-                    <!-- 会话信息 -->
-                    <div class="flex-1 min-w-0">
-                        <div class="flex justify-between items-start">
-                            <h3 class="font-medium text-sm truncate">AI 助手</h3>
-                            <div class="flex items-center gap-1">
-                                <span class="text-xs text-gray-400">{{ item.createdAt }}</span>
-                                <button
-                                    class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity p-1"
-                                    @click.stop="handleDeleteSession(item, index)"
-                                >
-                                    <Icon name="tabler:trash" class="text-sm" />
-                                </button>
-                            </div>
+
+                <template v-else>
+                    <div class="text-gray-400 text-sm mb-3">会话列表</div>
+
+                    <div
+                        v-for="(item, index) in sessionList"
+                        :key="item.sessionId"
+                        class="session-item"
+                        :class="{ active: activeIndex === index }"
+                        @click="selectSession(index)"
+                    >
+                        <div class="flex items-center justify-between">
+                            <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm">
+                                <span v-if="activeStreamSessions.has(item.sessionId)" class="streaming-dot"></span>
+                                {{ item.firstMessage || '新会话' }}
+                            </span>
+                            <button
+                                class="delete-btn"
+                                @click.stop="handleDeleteSession(item, index)"
+                            >
+                                <Icon name="uil:trash-alt" class="text-sm" />
+                            </button>
                         </div>
-                        <p class="text-xs text-gray-500 truncate flex items-center gap-1">
-                            <span v-if="activeStreamSessions.has(item.sessionId)" class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse flex-shrink-0"></span>
-                            <span class="truncate">{{ item.firstMessage || '点击开始对话' }}</span>
-                        </p>
                     </div>
+                </template>
+
+                <div v-if="sessionList.length > 0" class="text-center text-gray-400 mt-10 text-sm">
+                    没有更多了
                 </div>
             </div>
         </aside>
 
-        <!-- 右侧：聊天窗口 -->
-        <main class="flex-1 flex flex-col bg-[#f3f4f6] h-full overflow-hidden">
+        <!-- 聊天区 -->
+        <main class="flex-1 relative flex flex-col min-w-0">
+            <!-- 聊天头部 -->
+            <div class="h-[60px] bg-[#fafafa] border-b border-gray-200 flex items-center justify-between px-5 flex-shrink-0">
+                <div class="flex items-center gap-2 min-w-[120px]">
+                    <button
+                        v-if="!expanded"
+                        class="action-icon"
+                        @click="toggleSidebar"
+                    >
+                        <Icon name="uil:columns" class="text-xl" />
+                    </button>
+                    <button
+                        v-if="!expanded"
+                        class="action-icon"
+                        @click="handleCreateSession"
+                    >
+                        <Icon name="uil:plus" class="text-xl" />
+                    </button>
+                </div>
+
+                <div class="flex-1 flex justify-center">
+                    <span class="text-base font-semibold text-gray-700 max-w-[300px] overflow-hidden text-ellipsis whitespace-nowrap">
+                        {{ currentSessionTitle }}
+                    </span>
+                </div>
+
+                <div class="flex items-center gap-4 min-w-[120px] justify-end">
+                    <div v-if="isStreaming" class="streaming-indicator">
+                        <span class="streaming-dot"></span>
+                        <span>AI 正在思考...</span>
+                    </div>
+                    <button class="header-btn" @click="goToKnowledge">
+                        <Icon name="uil:book-open" class="mr-1" />
+                        知识库管理
+                    </button>
+                </div>
+            </div>
+
             <!-- 未选择会话时的占位 -->
             <div v-if="activeIndex === -1" class="flex-1 flex flex-col items-center justify-center text-gray-400">
-                <Icon name="uil:robot" class="text-6xl mb-4" />
-                <p class="text-lg">选择一个 AI 会话开始对话</p>
-                <p class="text-sm mt-2">支持 DeepSeek / Qwen / GLM</p>
+                <Icon name="uil:robot" class="text-6xl w-16 h-16 mb-4 text-gray-300" />
+                <p class="text-lg text-gray-700 mb-2">选择一个 AI 会话开始对话</p>
+                <p class="text-sm text-gray-400">支持 DeepSeek / Qwen / GLM</p>
             </div>
 
             <!-- 已选择会话的聊天界面 -->
             <template v-else>
-                <!-- 聊天头部 -->
-                <div class="bg-white border-b border-gray-200 p-3 flex items-center gap-2 flex-shrink-0">
-                    <el-avatar :size="40" :src="aiAvatarUrl" />
-                    <div class="flex items-center gap-2">
-                        <span class="text-base font-medium">AI 助手</span>
-                        <el-select v-model="currentSession.modelType" size="small" class="!w-24" @change="handleModelChange">
-                            <el-option label="DeepSeek" value="deepseek" />
-                            <el-option label="Qwen" value="qwen" />
-                            <el-option label="GLM" value="glm" />
-                            <el-option label="GLM-4.6V(图片识别)" value="glm-4v" />
-                            <el-option label="Qwen3.5-9B(本地)" value="qwen-local" />
-                        </el-select>
-                        <el-switch
-                            v-model="useKnowledgeBase"
-                            active-text="知识库"
-                            inactive-text=""
-                            class="ml-2"
-                        >
-                        </el-switch>
-                        <el-switch
-                            v-model="useWebSearch"
-                            active-text="联网搜索"
-                            inactive-text=""
-                            class="ml-2"
-                        >
-                        </el-switch>
-                    </div>
-                    <div class="flex-1"></div>
-                    <el-button size="small" @click="goToKnowledge">
-                        <Icon name="uil:book-open" class="mr-1" />
-                        知识库管理
-                    </el-button>
-                    <div v-if="isStreaming" class="flex items-center gap-2 text-xs mr-2">
-                        <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-                        <span class="text-blue-600">AI 正在思考...</span>
-                    </div>
-                </div>
 
                 <!-- 消息列表区域 -->
-                <div class="flex-1 min-h-0 overflow-hidden">
-                    <el-scrollbar
-                        ref="scrollbarRef"
-                        class="h-full"
-                        @end-reached="handleEndReached"
-                    >
-                        <div class="p-4 space-y-3">
-                            <div v-if="messageList.length === 0" class="flex items-center justify-center py-20 text-gray-400">
-                                <p>暂无消息，开始对话吧</p>
+                <div class="chat-container" ref="chatContainerRef">
+                    <div class="w-full max-w-[1000px] mx-auto px-10">
+                        <!-- 加载更多 -->
+                        <div v-if="hasMore && messageList.length > 0" class="text-center py-4">
+                            <span v-if="loadingMore" class="text-gray-400 text-sm">加载中...</span>
+                            <button v-else class="bg-transparent border-none text-[#0073ff] cursor-pointer text-sm hover:underline" @click="loadMoreMessages">加载更多消息</button>
+                        </div>
+
+                        <!-- 消息列表 -->
+                        <div
+                            v-for="(msg, idx) in messageList"
+                            :key="msg.messageId || idx"
+                            class="w-full flex mb-[30px]"
+                            :class="msg.isSelf ? 'justify-end' : 'justify-start'"
+                        >
+                            <!-- AI 消息 -->
+                            <div v-if="!msg.isSelf" class="ai-message-wrapper">
+                                <!-- 思考中动画 -->
+                                <div v-if="msg.isStreaming && !msg.content" class="thinking-animation">
+                                    <div class="thinking-dots">
+                                        <span class="dot"></span>
+                                        <span class="dot"></span>
+                                        <span class="dot"></span>
+                                    </div>
+                                    <span class="thinking-text">正在思考</span>
+                                </div>
+                                <!-- Markdown渲染 -->
+                                <MarkdownRenderer
+                                    v-else-if="msg.content && msg.content !== '图片'"
+                                    :content="msg.content"
+                                    :is-streaming="msg.isStreaming"
+                                />
+                                <!-- 搜索来源 -->
+                                <SearchSources v-if="msg.sources && msg.sources.length > 0" :sources="msg.sources" />
+                                <!-- 帖子列表 -->
+                                <DiscoverPosts
+                                    v-if="msg.posts && msg.posts.length > 0"
+                                    :posts="msg.posts"
+                                    @post-click="openDiscoverDetail"
+                                />
+                                <!-- 操作按钮 -->
+                                <div v-if="!msg.isStreaming && msg.content" class="message-actions">
+                                    <button
+                                        class="action-btn"
+                                        :class="{ 'copy-success': copiedMap[msg.messageId] }"
+                                        @click="copyMessage(msg)"
+                                    >
+                                        <Icon v-if="copiedMap[msg.messageId]" name="uil:check" class="text-base" />
+                                        <Icon v-else name="ph:copy-simple-bold" class="text-base" />
+                                    </button>
+                                    <TTSButton
+                                        :playing="tts.isMessagePlaying(msg.messageId)"
+                                        :loading="tts.isMessageLoading(msg.messageId)"
+                                        @speak="tts.speak(msg.content, msg.messageId)"
+                                    />
+                                    <span class="text-xs text-gray-400">{{ msg.sendTime }}</span>
+                                </div>
                             </div>
 
-                            <!-- 加载更多 -->
-                            <div v-if="hasMore && messageList.length > 0" class="text-center py-2">
-                                <span v-if="loadingMore" class="text-gray-400 text-sm">加载中...</span>
-                                <button v-else class="text-blue-500 text-sm hover:underline" @click="loadMoreMessages">
-                                    加载更多消息
-                                </button>
-                            </div>
-
-                            <!-- 消息列表 -->
-                            <div
-                                v-for="(msg, idx) in messageList"
-                                :key="msg.messageId || idx"
-                                class="flex items-start gap-3"
-                                :class="{ 'justify-end': msg.isSelf }"
-                            >
-                                <!-- AI 消息：头像在左 -->
-                                <div v-if="!msg.isSelf" class="flex-shrink-0">
-                                    <el-avatar :size="40" :src="aiAvatarUrl" />
+                            <!-- 用户消息 -->
+                            <div v-else class="user-message">
+                                <!-- 图片消息 -->
+                                <div v-if="msg.type === 2 && msg.url && isImageUrl(msg.url)">
+                                    <img :src="msg.url" class="max-w-[200px] rounded-lg cursor-pointer" @click="previewImage(msg.url)" />
                                 </div>
-
-                                <!-- 消息气泡 -->
-                                <div
-                                    class="rounded-lg px-4 py-2 max-w-[60%] shadow-sm flex-shrink-0"
-                                    :class="msg.isSelf ? 'bg-[#D9FDD3]' : 'bg-white'"
-                                >
-                                    <!-- 用户图片消息 -->
-                                    <div v-if="msg.isSelf && msg.type === 2 && msg.url && isImageUrl(msg.url)">
-                                        <img :src="msg.url" class="max-w-full rounded cursor-pointer mb-1" @click="previewImage(msg.url)" />
-                                    </div>
-                                    <!-- AI 思考中动画 -->
-                                    <div v-if="!msg.isSelf && msg.isStreaming && !msg.content" class="flex items-center gap-3 py-1.5 px-1">
-                                        <div class="flex items-center gap-1">
-                                            <span class="thinking-dot w-2 h-2 rounded-full bg-blue-400" style="animation-delay: 0s"></span>
-                                            <span class="thinking-dot w-2 h-2 rounded-full bg-blue-400" style="animation-delay: 0.2s"></span>
-                                            <span class="thinking-dot w-2 h-2 rounded-full bg-blue-400" style="animation-delay: 0.4s"></span>
-                                        </div>
-                                        <span class="text-xs text-blue-400 thinking-text">正在思考</span>
-                                    </div>
-                                    <!-- AI消息：Markdown渲染 -->
-                                    <MarkdownRenderer
-                                        v-if="!msg.isSelf && msg.content && msg.content !== '图片'"
-                                        :content="msg.content"
-                                        :is-streaming="msg.isStreaming"
-                                    />
-                                    <!-- 用户消息：纯文本 -->
-                                    <p v-else-if="msg.isSelf && msg.content && msg.content !== '图片'" class="text-sm whitespace-pre-wrap">
-                                        {{ msg.content }}
-                                    </p>
-                                    <!-- 搜索来源 -->
-                                    <SearchSources v-if="!msg.isSelf && msg.sources && msg.sources.length > 0" :sources="msg.sources" />
-                                    <!-- 帖子列表 -->
-                                    <DiscoverPosts
-                                        v-if="!msg.isSelf && msg.posts && msg.posts.length > 0"
-                                        :posts="msg.posts"
-                                        @post-click="openDiscoverDetail"
-                                    />
-                                    <div class="flex items-center justify-end gap-1 mt-1">
-                                        <button
-                                            v-if="!msg.isSelf && !msg.isStreaming && msg.content"
-                                            class="inline-flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 text-blue-500 hover:text-blue-600 hover:bg-blue-50 active:scale-95"
-                                            :class="{ 'copy-success': copiedMap[msg.messageId] }"
-                                            title="复制"
-                                            @click="copyMessage(msg)"
-                                        >
-                                            <Icon v-if="copiedMap[msg.messageId]" name="uil:check" class="text-base" />
-                                            <Icon v-else name="ph:copy-simple-bold" class="text-base" />
-                                        </button>
-                                        <TTSButton
-                                            v-if="!msg.isSelf && !msg.isStreaming && msg.content"
-                                            :playing="tts.isMessagePlaying(msg.messageId)"
-                                            :loading="tts.isMessageLoading(msg.messageId)"
-                                            @speak="tts.speak(msg.content, msg.messageId)"
-                                        />
-                                        <span class="text-xs text-gray-400">{{ msg.sendTime }}</span>
-                                    </div>
-                                </div>
-
-                                <!-- 用户消息：头像在右 -->
-                                <div v-if="msg.isSelf" class="flex-shrink-0">
-                                    <el-avatar :size="40" :src="currentUserAvatar">
-                                        我
-                                    </el-avatar>
-                                </div>
+                                <!-- 文本消息 -->
+                                <p v-else-if="msg.content && msg.content !== '图片'" class="m-0 whitespace-pre-wrap">
+                                    {{ msg.content }}
+                                </p>
                             </div>
                         </div>
-                    </el-scrollbar>
-                </div>
 
-                <!-- 输入框区域 -->
-                <div class="bg-white p-3 border-t border-gray-200 flex-shrink-0">
-                    <!-- 图片预览 -->
-                    <div v-if="selectedImage" class="mb-2 flex items-center gap-2">
-                        <div class="relative inline-block">
-                            <img :src="selectedImagePreview" class="h-16 w-16 object-cover rounded border" />
-                            <button
-                                class="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs hover:bg-red-600"
-                                @click="removeImage"
-                            >
-                                ×
-                            </button>
+                        <div v-if="messageList.length === 0" class="flex items-center justify-center h-[200px] text-gray-400">
+                            <p>暂无消息，开始对话吧</p>
                         </div>
                     </div>
-                    <div class="flex gap-3">
-                        <!-- 图片上传按钮：仅 GLM-4.6V 模型显示 -->
-                        <el-upload
-                            v-if="currentSession?.modelType === 'glm-4v' || currentSession?.modelType === 'qwen-local'"
-                            :show-file-list="false"
-                            :auto-upload="false"
-                            accept="image/*"
-                            :limit="1"
-                            @change="handleImageChange"
-                        >
-                            <el-button slot="trigger" size="small" class="!text-gray-500 !hover:text-blue-500">
-                                <Icon name="uil:image" class="text-xl" />
-                            </el-button>
-                        </el-upload>
+                </div>
+
+                <!-- 输入框 -->
+                <div class="input-wrapper">
+                    <div class="input-box">
+                        <!-- 图片预览 -->
+                        <div v-if="selectedImage" class="relative inline-block mb-3">
+                            <img :src="selectedImagePreview" class="h-16 w-16 object-cover rounded-lg border border-gray-200" />
+                            <button class="remove-img-btn" @click="removeImage">×</button>
+                        </div>
+
                         <textarea
+                            ref="textareaRef"
                             v-model="inputMessage"
-                            placeholder="输入消息，按 Enter 发送..."
-                            class="flex-1 border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm resize-none"
-                            rows="2"
+                            placeholder="搜索或者输入任何问题"
                             @keydown.enter.prevent="sendMessage"
-                        ></textarea>
-                        <button
-                            class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            :disabled="isStreaming || (!inputMessage.trim() && !selectedImage)"
-                            @click="sendMessage"
-                        >
-                            发送
-                        </button>
+                            @input="autoResize"
+                        />
+
+                        <div class="input-footer">
+                            <div class="left-actions">
+                                <!-- 上传图片 -->
+                                <div class="dropdown">
+                                    <button
+                                        class="footer-btn"
+                                        @click.stop="toggleUpload"
+                                    >
+                                        <Icon name="uil:plus" class="text-lg dropdown-arrow" :class="{ 'arrow-up': showUpload }" />
+                                    </button>
+
+                                    <div v-if="showUpload" class="dropdown-menu">
+                                        <div
+                                            class="menu-item"
+                                            :class="{ 'menu-item-disabled': !canUploadImage }"
+                                            @click="canUploadImage && chooseImage()"
+                                        >
+                                            <Icon name="uil:image" class="mr-2" />
+                                            本地图片
+                                            <span v-if="!canUploadImage" class="text-xs text-gray-400 ml-2">仅支持图片模型</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 工具 -->
+                                <div class="dropdown">
+                                    <button
+                                        class="footer-btn"
+                                        @click.stop="toggleTool"
+                                    >
+                                        <Icon name="uil:wrench" class="mr-1" />
+                                        工具
+                                        <Icon name="uil:angle-down" class="ml-1 dropdown-arrow" :class="{ 'arrow-up': showTool }" />
+                                    </button>
+
+                                    <div v-if="showTool" class="dropdown-menu" @click.stop>
+                                        <div
+                                            class="menu-item"
+                                            :class="{ active: useKnowledgeBase }"
+                                            @click.stop="useKnowledgeBase = !useKnowledgeBase"
+                                        >
+                                            <Icon name="uil:books" class="mr-2" />
+                                            知识库
+                                            <Icon v-if="useKnowledgeBase" name="uil:check" class="ml-auto text-green-500" />
+                                        </div>
+
+                                        <div
+                                            class="menu-item"
+                                            :class="{ active: useWebSearch }"
+                                            @click.stop="useWebSearch = !useWebSearch"
+                                        >
+                                            <Icon name="uil:globe" class="mr-2" />
+                                            联网搜索
+                                            <Icon v-if="useWebSearch" name="uil:check" class="ml-auto text-green-500" />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 模型 -->
+                                <div class="dropdown">
+                                    <button
+                                        class="footer-btn"
+                                        @click.stop="toggleModel"
+                                    >
+                                        {{ currentModelName }}
+                                        <Icon name="uil:angle-down" class="ml-1 dropdown-arrow" :class="{ 'arrow-up': showModel }" />
+                                    </button>
+
+                                    <div v-if="showModel" class="dropdown-menu">
+                                        <div class="menu-item" @click="selectModel('deepseek')">DeepSeek</div>
+                                        <div class="menu-item" @click="selectModel('qwen')">Qwen</div>
+                                        <div class="menu-item" @click="selectModel('glm')">GLM</div>
+                                        <div class="menu-item" @click="selectModel('glm-4v')">GLM-4.6V(图片)</div>
+                                        <div class="menu-item" @click="selectModel('qwen-local')">Qwen3.5-9B(本地)</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button
+                                class="send-btn"
+                                :disabled="isStreaming || (!inputMessage.trim() && !selectedImage)"
+                                @click="sendMessage"
+                            >
+                                <Icon name="uil:message" class="text-xl" />
+                            </button>
+                        </div>
+
+                        <input
+                            ref="fileInput"
+                            type="file"
+                            accept="image/*"
+                            style="display:none"
+                            @change="handleFileChange"
+                        />
                     </div>
                 </div>
             </template>
@@ -255,10 +311,47 @@
 </template>
 
 <script setup>
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+
 const aiChat = useAIChat()
 const knowledge = useKnowledge()
 const tts = useTTS()
 const aiAvatarUrl = 'https://seekf.oss-cn-shenzhen.aliyuncs.com/common/ai_avatar/AI%E5%8A%A9%E6%89%8B%E5%A4%B4%E5%83%8F.png'
+
+// 布局状态
+const expanded = ref(true)
+const toggleSidebar = () => {
+    expanded.value = !expanded.value
+}
+
+// 下拉菜单状态
+const showTool = ref(false)
+const showModel = ref(false)
+const showUpload = ref(false)
+
+const toggleTool = () => {
+    showTool.value = !showTool.value
+    showModel.value = false
+    showUpload.value = false
+}
+
+const toggleModel = () => {
+    showModel.value = !showModel.value
+    showTool.value = false
+    showUpload.value = false
+}
+
+const toggleUpload = () => {
+    showUpload.value = !showUpload.value
+    showTool.value = false
+    showModel.value = false
+}
+
+const closeMenus = () => {
+    showTool.value = false
+    showModel.value = false
+    showUpload.value = false
+}
 
 // AI消息复制功能
 const copiedMap = ref({})
@@ -284,12 +377,48 @@ const useKnowledgeBase = ref(false)
 const useWebSearch = ref(false)
 const showDiscoverDetail = ref(false)
 const selectedDiscoverItem = ref(null)
+const fileInput = ref(null)
+const textareaRef = ref(null)
+
+// 自动调整 textarea 高度
+const autoResize = () => {
+    const textarea = textareaRef.value
+    if (!textarea) return
+    textarea.style.height = 'auto'
+    // 加 1px 缓冲解决小数点精度问题
+    textarea.style.height = Math.min(textarea.scrollHeight + 1, 155) + 'px'
+}
+
+// 当前模型名称显示
+const currentModelName = computed(() => {
+    const modelMap = {
+        'deepseek': 'DeepSeek',
+        'qwen': 'Qwen',
+        'glm': 'GLM',
+        'glm-4v': 'GLM-4.6V',
+        'qwen-local': 'Qwen3.5-9B'
+    }
+    return modelMap[currentSession.value?.modelType] || 'DeepSeek'
+})
+
+// 当前会话标题
+const currentSessionTitle = computed(() => {
+    if (activeIndex.value === -1) return 'AI 助手'
+    const session = sessionList.value[activeIndex.value]
+    return session?.firstMessage || '新会话'
+})
+
+// 是否可以上传图片（仅 GLM-4.6V 和 Qwen3.5-9B 支持）
+const canUploadImage = computed(() => {
+    const modelType = currentSession.value?.modelType
+    return modelType === 'glm-4v' || modelType === 'qwen-local'
+})
 
 const goToKnowledge = () => {
     navigateTo('/knowledge')
 }
 
-const scrollbarRef = ref()
+const chatContainerRef = ref(null)
 const hasMore = ref(true)
 const loadingMore = ref(false)
 const pageSize = 20
@@ -382,11 +511,29 @@ const selectedImagePreview = computed(() => {
     return URL.createObjectURL(selectedImage.value)
 })
 
-// 图片选择
-const handleImageChange = (file) => {
-    if (file.raw) {
-        selectedImage.value = file.raw
+// 选择模型
+const selectModel = (model) => {
+    const session = currentSession.value
+    if (session) {
+        session.modelType = model
     }
+    showModel.value = false
+}
+
+// 选择图片
+const chooseImage = () => {
+    fileInput.value?.click()
+    showUpload.value = false
+}
+
+// 文件选择变化
+const handleFileChange = (event) => {
+    const file = event.target.files[0]
+    if (file) {
+        selectedImage.value = file
+    }
+    // 清空 input 以便重复选择同一文件
+    event.target.value = ''
 }
 
 // 移除图片
@@ -397,14 +544,11 @@ const removeImage = () => {
     }
 }
 
-// 判断 URL 是否为图片（支持 blob、data、http URL）
+// 判断 URL 是否为图片
 const isImageUrl = (url) => {
     if (!url) return false
-    // blob URL
     if (url.startsWith('blob:')) return true
-    // base64 数据 URL
     if (url.startsWith('data:image/')) return true
-    // http/https 图片 URL
     return /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(url)
 }
 
@@ -425,20 +569,18 @@ const openDiscoverDetail = (post) => {
     showDiscoverDetail.value = true
 }
 
-
 // 滚动到底部
 const scrollToBottom = () => {
     nextTick(() => {
-        if (scrollbarRef.value?.wrapRef) {
-            const wrap = scrollbarRef.value.wrapRef
-            scrollbarRef.value.setScrollTop(wrap.scrollHeight)
+        if (chatContainerRef.value) {
+            chatContainerRef.value.scrollTop = chatContainerRef.value.scrollHeight
         }
     })
 }
 
 // 滚动到顶部加载更多
-const handleEndReached = (direction) => {
-    if (direction === 'top') {
+const handleScroll = () => {
+    if (chatContainerRef.value && chatContainerRef.value.scrollTop < 50) {
         loadMoreMessages()
     }
 }
@@ -470,7 +612,7 @@ const loadSessionList = async () => {
     }
 }
 
-// 选择会话（不中断其它会话正在进行的 AI 生成）
+// 选择会话
 const selectSession = async (index) => {
     saveCurrentSessionCache()
     activeIndex.value = index
@@ -522,17 +664,13 @@ const loadMessageList = async (sessionId, cursor = '', direction = 'prev') => {
         }))
 
         if (!cursor) {
-            // 首次加载：后端返回倒序（最新在前），反转后最新在最后
             messageList.value = messages.reverse()
         } else if (direction === 'prev') {
-            // 向前加载更多（更旧的消息）：反转后追加到前面
             messageList.value = [...messages.reverse(), ...messageList.value]
         } else {
-            // 向后加载（更新的消息）：追加到后面
             messageList.value = [...messageList.value, ...messages]
         }
 
-        // 更新游标：记录最旧消息的时间戳
         if (list.length > 0) {
             const oldestMsg = list[list.length - 1]
             oldestCursor.value = oldestMsg.created_at
@@ -544,19 +682,19 @@ const loadMessageList = async (sessionId, cursor = '', direction = 'prev') => {
     }
 }
 
-// 加载更多消息（游标分页）
+// 加载更多消息
 const loadMoreMessages = async () => {
     if (loadingMore.value || !hasMore.value || !currentSession.value || !oldestCursor.value) return
     loadingMore.value = true
 
-    const oldScrollHeight = scrollbarRef.value?.wrapRef?.scrollHeight || 0
+    const oldScrollHeight = chatContainerRef.value?.scrollHeight || 0
 
     await loadMessageList(currentSession.value.sessionId, oldestCursor.value, 'prev')
 
     nextTick(() => {
-        if (scrollbarRef.value?.wrapRef) {
-            const newScrollHeight = scrollbarRef.value.wrapRef.scrollHeight
-            scrollbarRef.value.setScrollTop(newScrollHeight - oldScrollHeight)
+        if (chatContainerRef.value) {
+            const newScrollHeight = chatContainerRef.value.scrollHeight
+            chatContainerRef.value.scrollTop = newScrollHeight - oldScrollHeight
         }
     })
 
@@ -575,7 +713,7 @@ const sendMessage = async () => {
 
     if (!content && !imageFile) return
 
-    // 添加用户消息（如果是图片消息，保存图片 URL 用于显示）
+    // 添加用户消息
     const userMsgData = {
         messageId: 'user_' + Date.now(),
         content: content || '图片',
@@ -587,12 +725,15 @@ const sendMessage = async () => {
     }
     messageList.value.push(userMsgData)
 
-    // 清除已选择的图片
     if (imageFile) {
         removeImage()
     }
 
     inputMessage.value = ''
+    // 重置 textarea 高度
+    if (textareaRef.value) {
+        textareaRef.value.style.height = 'auto'
+    }
 
     // 添加 AI 流式消息占位
     const aiMsgIndex = messageList.value.length
@@ -688,7 +829,6 @@ const handleCreateSession = async () => {
     const result = await aiChat.createSession('deepseek')
     if (result) {
         await loadSessionList()
-        // 自动选中新创建的会话
         const idx = sessionList.value.findIndex(s => s.sessionId === result.session_id)
         if (idx !== -1) {
             selectSession(idx)
@@ -697,13 +837,6 @@ const handleCreateSession = async () => {
     } else {
         ElMessage.error('创建会话失败')
     }
-}
-
-// 切换模型
-const handleModelChange = (newModel) => {
-    const session = currentSession.value
-    if (!session) return
-    session.modelType = newModel
 }
 
 // 删除会话
@@ -736,11 +869,13 @@ const handleDeleteSession = async (item, index) => {
 }
 
 onMounted(async () => {
+    document.addEventListener('click', closeMenus)
     await getCurrentUserInfo()
     await loadSessionList()
 })
 
 onUnmounted(() => {
+    document.removeEventListener('click', closeMenus)
     for (const sessionId of activeStreams.keys()) {
         stopSessionStream(sessionId)
     }
@@ -748,20 +883,208 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-::-webkit-scrollbar-thumb {
-    background-color: rgba(0, 0, 0, 0.2);
-    border-radius: 3px;
-}
-::-webkit-scrollbar-track {
-    background: transparent;
+/* 会话栏 - 需要过渡动画 */
+.session-sidebar {
+    width: 260px;
+    background: #fafafa;
+    border-right: 1px solid #ececec;
+    transition: width 0.3s ease;
+    overflow: hidden;
 }
 
-.thinking-dot {
+.session-sidebar.collapsed {
+    width: 0;
+}
+
+/* 收缩时立即隐藏文字内容，避免挤压变形 */
+.session-sidebar.collapsed .session-header,
+.session-sidebar.collapsed .divider,
+.session-sidebar.collapsed .session-list {
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.session-sidebar:not(.collapsed) .session-header,
+.session-sidebar:not(.collapsed) .divider,
+.session-sidebar:not(.collapsed) .session-list {
+    opacity: 1;
+    transition: opacity 0.2s ease 0.1s;
+}
+
+.session-header {
+    height: 72px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 18px;
+}
+
+.new-chat,
+.collapse-btn {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 14px;
+    color: #333;
+    display: flex;
+    align-items: center;
+    transition: color 0.15s ease;
+}
+
+.new-chat:hover,
+.collapse-btn:hover {
+    color: #0073ff;
+}
+
+.divider {
+    height: 1px;
+    background: #ececec;
+    margin: 0 18px;
+}
+
+.session-list {
+    padding: 20px 18px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.session-item {
+    padding: 10px 0;
+    cursor: pointer;
+    border-bottom: 1px solid #f0f0f0;
+    transition: all 0.15s ease;
+}
+
+.session-item:hover {
+    background: #f0f0f0;
+    margin: 0 -18px;
+    padding: 10px 18px;
+}
+
+.session-item.active {
+    color: #0073ff;
+}
+
+.delete-btn {
+    opacity: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    transition: opacity 0.15s ease;
+}
+
+.session-item:hover .delete-btn {
+    opacity: 1;
+}
+
+/* 流式状态指示器 */
+.streaming-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #0073ff;
+}
+
+.streaming-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #0073ff;
+    animation: pulse 1.5s ease-in-out infinite;
+    margin-right: 6px;
+}
+
+/* 头部按钮 */
+.action-icon {
+    width: 36px;
+    height: 36px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #666;
+    transition: background 0.15s ease;
+}
+
+.action-icon:hover {
+    background: #ececec;
+}
+
+.header-btn {
+    height: 32px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 16px;
+    background: #f0f0f0;
+    cursor: pointer;
+    font-size: 13px;
+    color: #666;
+    display: flex;
+    align-items: center;
+    transition: background 0.15s ease;
+}
+
+.header-btn:hover {
+    background: #e5e5e5;
+}
+
+/* 消息列表区域 */
+.chat-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 40px 0 220px;
+}
+
+/* AI 消息 */
+.ai-message-wrapper {
+    max-width: 80%;
+    font-size: 16px;
+    line-height: 1.6;
+    color: #333;
+}
+
+/* 思考中动画 */
+.thinking-animation {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+}
+
+.thinking-dots {
+    display: flex;
+    gap: 4px;
+}
+
+.thinking-dots .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #0073ff;
     animation: thinking-bounce 1.4s ease-in-out infinite;
+}
+
+.thinking-dots .dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.thinking-dots .dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+.thinking-text {
+    font-size: 13px;
+    color: #0073ff;
+    animation: thinking-fade 1.4s ease-in-out infinite;
 }
 
 @keyframes thinking-bounce {
@@ -775,10 +1098,6 @@ onUnmounted(() => {
     }
 }
 
-.thinking-text {
-    animation: thinking-fade 1.4s ease-in-out infinite;
-}
-
 @keyframes thinking-fade {
     0%, 100% {
         opacity: 0.4;
@@ -786,6 +1105,35 @@ onUnmounted(() => {
     50% {
         opacity: 1;
     }
+}
+
+/* 消息操作按钮 */
+.message-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    justify-content: flex-start;
+}
+
+.action-btn {
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6b7280;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.action-btn:hover {
+    background: #e5e7eb;
+    color: #374151;
 }
 
 .copy-success {
@@ -797,5 +1145,217 @@ onUnmounted(() => {
     0% { transform: scale(1); }
     50% { transform: scale(1.3); }
     100% { transform: scale(1); }
+}
+
+/* 用户消息 */
+.user-message {
+    max-width: 70%;
+    padding: 14px 20px;
+    background: white;
+    color: #333;
+    border-radius: 20px 20px 4px 20px;
+    font-size: 16px;
+    line-height: 1.6;
+    box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+
+/* 输入框区域 */
+.input-wrapper {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 20px;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.input-box {
+    width: min(900px, calc(100% - 80px));
+    pointer-events: auto;
+    background: white;
+    border-radius: 28px;
+    padding: 20px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.06);
+}
+
+.remove-img-btn {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #ef4444;
+    color: white;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+textarea {
+    width: 100%;
+    min-height: 50px;
+    max-height: 155px;
+    padding: 0;
+    border: none;
+    outline: none;
+    resize: none;
+    font-size: 16px;
+    font-family: inherit;
+    line-height: 1.6;
+    overflow-y: auto;
+}
+
+.input-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 12px;
+}
+
+.left-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.footer-btn {
+    height: 38px;
+    padding: 0 16px;
+    border: none;
+    border-radius: 20px;
+    background: #f5f5f5;
+    cursor: pointer;
+    font-size: 14px;
+    color: #666;
+    display: flex;
+    align-items: center;
+    transition: background 0.15s ease;
+}
+
+.footer-btn:hover {
+    background: #e5e5e5;
+}
+
+/* 下拉箭头旋转动画 */
+.dropdown-arrow {
+    transition: transform 0.25s ease;
+    display: inline-block;
+}
+
+.dropdown-arrow.arrow-up {
+    transform: rotate(180deg);
+}
+
+.dropdown {
+    position: relative;
+}
+
+.dropdown-menu {
+    position: absolute;
+    bottom: 48px;
+    left: 0;
+    min-width: 180px;
+    background: white;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0,0,0,.12);
+    z-index: 1000;
+    animation: dropdown-show 0.2s ease;
+}
+
+@keyframes dropdown-show {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.menu-item {
+    padding: 14px 18px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #333;
+    transition: background 0.15s ease;
+}
+
+.menu-item:hover {
+    background: #f5f5f5;
+}
+
+.menu-item-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    color: #9ca3af;
+}
+
+.menu-item-disabled:hover {
+    background: transparent;
+}
+
+.menu-item.active {
+    color: #0073ff;
+    font-weight: 500;
+}
+
+.send-btn {
+    width: 42px;
+    height: 42px;
+    border: none;
+    border-radius: 50%;
+    background: #0073ff;
+    color: white;
+    cursor: pointer;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s ease, transform 0.15s ease;
+}
+
+.send-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.send-btn:not(:disabled):hover {
+    background: #0060d9;
+    transform: scale(1.05);
+}
+
+.send-btn:not(:disabled):active {
+    transform: scale(0.95);
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
 }
 </style>

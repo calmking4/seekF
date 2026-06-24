@@ -1,6 +1,6 @@
 <template>
     <button
-        class="inline-flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200"
+        class="tts-btn"
         :class="buttonClass"
         :disabled="loading"
         :title="buttonTitle"
@@ -21,9 +21,9 @@ const props = defineProps({
 defineEmits(['speak'])
 
 const buttonClass = computed(() => {
-    if (props.playing) return 'text-blue-500 hover:text-blue-600'
-    if (props.loading) return 'text-blue-400 cursor-wait'
-    return 'text-blue-500 hover:text-blue-600 hover:bg-blue-50 active:scale-95'
+    if (props.playing) return 'playing'
+    if (props.loading) return 'loading'
+    return ''
 })
 
 const buttonTitle = computed(() => {
@@ -32,3 +32,37 @@ const buttonTitle = computed(() => {
     return '朗读'
 })
 </script>
+
+<style scoped>
+.tts-btn {
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #6b7280;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tts-btn:hover:not(:disabled) {
+    background: #e5e7eb;
+    color: #374151;
+}
+
+.tts-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.tts-btn.playing {
+    color: #6b7280;
+}
+
+.tts-btn.loading {
+    color: #9ca3af;
+}
+</style>
