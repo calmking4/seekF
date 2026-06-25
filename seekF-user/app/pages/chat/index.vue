@@ -194,6 +194,12 @@
 </template>
 
 <script setup>
+// 页面级 SEO
+useSeoMeta({
+  title: '消息',
+  description: '与好友进行即时聊天，支持文字、图片、文件等多种消息类型。',
+})
+
 const route = useRoute()
 const router = useRouter()
 

@@ -143,6 +143,12 @@
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 
+// 页面级 SEO
+useSeoMeta({
+  title: '发现',
+  description: '发现有趣的人和内容，探索 seekF 社区的精彩动态。',
+})
+
 // 响应式数据
 const items = ref([])
 const columns = ref([])

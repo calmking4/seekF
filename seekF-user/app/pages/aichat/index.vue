@@ -322,6 +322,12 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 
+// 页面级 SEO
+useSeoMeta({
+  title: 'AIChat',
+  description: '与多种 AI 模型进行智能对话，支持 DeepSeek、通义千问、智谱等。',
+})
+
 const aiChat = useAIChat()
 const knowledge = useKnowledge()
 const tts = useTTS()

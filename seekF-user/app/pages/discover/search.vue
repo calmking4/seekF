@@ -153,6 +153,12 @@
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 
+// 页面级 SEO
+useSeoMeta({
+  title: '搜索发现',
+  description: '搜索用户、动态和内容。',
+})
+
 const route = useRoute()
 
 // 搜索相关状态

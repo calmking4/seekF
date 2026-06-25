@@ -79,6 +79,12 @@
 </template>
 
 <script setup>
+// 页面级 SEO
+useSeoMeta({
+  title: '知识库管理',
+  description: '上传和管理您的知识文档，构建专属 AI 知识库。',
+})
+
 const knowledge = useKnowledge()
 
 const docList = ref([])

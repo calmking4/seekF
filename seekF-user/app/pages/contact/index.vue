@@ -436,6 +436,12 @@ import { ref, onMounted } from 'vue'
 import { useApi$ } from '~/composables/useApi'
 import { ElMessage } from 'element-plus'
 
+// 页面级 SEO
+useSeoMeta({
+  title: '联系人',
+  description: '管理您的好友和群组，查看好友通知和群通知。',
+})
+
 const activeTab = ref('friend')
 const currentView = ref('default') // 'default', 'friendNotification', 'groupNotification', 'chat'
 const selectedContact = ref(null)

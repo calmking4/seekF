@@ -314,6 +314,12 @@
 import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { useApi$ } from '~/composables/useApi'
 import { ElMessage } from 'element-plus'
+
+// 页面级 SEO
+useSeoMeta({
+  title: '我的',
+  description: '查看和编辑个人信息，管理关注和粉丝。',
+})
 import { useAuthState } from '~/composables/useAuthState'
 import { Plus } from '@element-plus/icons-vue'
 

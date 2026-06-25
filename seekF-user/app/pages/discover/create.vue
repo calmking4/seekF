@@ -316,6 +316,12 @@ import {
   UploadPausedError,
   resumeUpload,
 } from '~/composables/useResumableUpload'
+
+// 页面级 SEO
+useSeoMeta({
+  title: '发布',
+  description: '发布图片或视频动态，分享您的生活。',
+})
 import {
   loadDiscoverDraft,
   saveDiscoverDraft,

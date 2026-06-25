@@ -143,6 +143,11 @@
 </template>
 
 <script setup>
+// 页面级 SEO
+useSeoMeta({
+  title: '注册',
+  description: '注册 seekF 账号，体验 AI 智能社交。',
+})
 
 definePageMeta({
   layout: 'auth'

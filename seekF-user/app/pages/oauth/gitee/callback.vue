@@ -59,6 +59,12 @@
 </template>
 
 <script setup>
+// 页面级 SEO
+useSeoMeta({
+  title: 'Gitee 登录',
+  description: '正在通过 Gitee 账号登录 seekF。',
+})
+
 definePageMeta({
   layout: 'auth'
 })

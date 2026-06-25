@@ -162,6 +162,12 @@
 <script setup>
 import loginBg from '~/assets/images/background.png'
 
+// 页面级 SEO
+useSeoMeta({
+  title: '登录',
+  description: '登录 seekF，体验 AI 智能社交。',
+})
+
 definePageMeta({
   layout: 'auth'
 })
