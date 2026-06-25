@@ -7,6 +7,9 @@ export default defineNuxtConfig({
     '@element-plus/nuxt',
     '@nuxt/icon',
   ],
+  css: [
+    '~/assets/css/scrollbar.css'
+  ],
   runtimeConfig:{
     public:{
       apiBase:"http://localhost:8080/",

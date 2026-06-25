@@ -1,7 +1,9 @@
 <template>
   <div class="flex h-full bg-gray-100">
     <!-- 左侧：搜索栏 + 联系人/会话列表 -->
-    <aside class="w-80 bg-white border-r border-gray-200 h-full flex flex-col flex-shrink-0 pr-3">
+    <aside class="bg-white border-r border-gray-200 h-full flex flex-col flex-shrink-0 pr-3 relative" :style="{ width: sidebarWidth + 'px' }">
+      <!-- 拖动条 -->
+      <div class="sidebar-resize-handle" @mousedown="startSidebarResize"></div>
       <!-- 顶部搜索栏 -->
       <SearchBar @search-select="handleSearchSelect" />
 
@@ -50,31 +52,18 @@
       <template v-else>
         <!-- 聊天头部 -->
         <div class="bg-white border-b border-gray-200 p-3 flex items-center gap-3 flex-shrink-0">
-          <div class="flex flex-col items-center">
-            <span class="text-xs mb-1">{{ currentChat.name }}</span>
-            <el-avatar :size="40" :src="currentChat.avatar">
-              {{ currentChat.name ? currentChat.name.charAt(0) : '?' }}
-            </el-avatar>
-          </div>
+          <el-avatar :size="40" :src="currentChat.avatar">
+            {{ currentChat.name ? currentChat.name.charAt(0) : '?' }}
+          </el-avatar>
+          <span class="font-medium text-sm">{{ currentChat.name }}</span>
           <div class="flex-1"></div>
-          <!-- WebSocket 连接状态 -->
-          <div class="flex items-center gap-2 text-xs mr-2">
-            <span
-              class="w-2 h-2 rounded-full"
-              :class="ws.isConnected ? 'bg-green-500' : 'bg-red-500'"
-            ></span>
-            <span :class="ws.isConnected ? 'text-green-600' : 'text-red-600'">
-              {{ ws.isConnected ? '已连接' : '未连接' }}
-            </span>
-          </div>
           <div class="flex gap-4 text-gray-500">
-            <button><Icon name="uil:search" /></button>
             <button><Icon name="uil:ellipsis-h" /></button>
           </div>
         </div>
 
-        <!-- 聊天内容区 - 固定高度 -->
-        <div class="flex-1 min-h-0 overflow-hidden">
+        <!-- 聊天内容区 - 自适应高度 -->
+        <div class="flex-1 min-h-0 overflow-hidden" :style="{ paddingBottom: '0' }">
           <el-scrollbar
             ref="scrollbarRef"
             class="h-full"
@@ -97,37 +86,43 @@
               <div
                 v-for="msg in messageList"
                 :key="msg.messageId"
-                class="flex items-center gap-3"
-                :class="{ 'justify-end': msg.isSelf }"
+                class="chat-item"
+                :class="{ 'chat-item-self': msg.isSelf }"
               >
-                <!-- 对方消息 -->
-                <div v-if="!msg.isSelf" class="flex-shrink-0">
-                  <div class="flex flex-col items-center">
-                    <span class="text-xs mb-1 text-gray-500">{{ msg.senderName }}</span>
-                    <el-avatar :size="48" :src="msg.avatar">
+                <!-- 用户名 - 在消息行外面 -->
+                <div class="user-name" :class="{ 'user-name-self': msg.isSelf }">
+                  {{ msg.isSelf ? '我' : msg.senderName }}
+                </div>
+
+                <!-- 消息行：气泡 + 头像 -->
+                <div class="message-row" :class="{ 'message-row-self': msg.isSelf }">
+                  <!-- 对方消息：头像在左，气泡在右 -->
+                  <template v-if="!msg.isSelf">
+                    <el-avatar class="avatar" :size="50" :src="msg.avatar">
                       {{ msg.senderName ? msg.senderName.charAt(0) : '?' }}
                     </el-avatar>
-                  </div>
-                </div>
-                <!-- 消息内容 -->
-                <div
-                  class="rounded-lg px-4 py-2 max-w-[60%] shadow-sm flex-shrink-0"
-                  :class="msg.isSelf ? 'bg-[#D9FDD3]' : 'bg-white'"
-                >
-                  <div v-if="msg.isImage || isImageUrl(msg.content)">
-                    <img :src="msg.content" class="max-w-full rounded cursor-pointer hover:opacity-90" style="max-height: 200px;" @click="previewImage(msg.content)" />
-                  </div>
-                  <p v-else class="text-sm">{{ msg.content }}</p>
-                  <p class="text-xs text-gray-400 text-right mt-1">{{ formatTime(msg.sendTime) }}</p>
-                </div>
-                <!-- 自己消息 -->
-                <div v-if="msg.isSelf" class="flex-shrink-0">
-                  <div class="flex flex-col items-center">
-                    <span class="text-xs mb-1 text-gray-500">我</span>
-                    <el-avatar :size="48" :src="currentUserAvatar">
+                    <div class="bubble bubble-left">
+                      <div v-if="msg.isImage || isImageUrl(msg.content)">
+                        <img :src="msg.content" class="max-w-full rounded cursor-pointer hover:opacity-90" style="max-height: 200px;" @click="previewImage(msg.content)" />
+                      </div>
+                      <p v-else class="text-sm">{{ msg.content }}</p>
+                      <p class="text-xs text-gray-400 text-right mt-1">{{ formatTime(msg.sendTime) }}</p>
+                    </div>
+                  </template>
+
+                  <!-- 自己消息：气泡在左，头像在右 -->
+                  <template v-else>
+                    <div class="bubble bubble-right">
+                      <div v-if="msg.isImage || isImageUrl(msg.content)">
+                        <img :src="msg.content" class="max-w-full rounded cursor-pointer hover:opacity-90" style="max-height: 200px;" @click="previewImage(msg.content)" />
+                      </div>
+                      <p v-else class="text-sm">{{ msg.content }}</p>
+                      <p class="msg-time text-xs text-right mt-1">{{ formatTime(msg.sendTime) }}</p>
+                    </div>
+                    <el-avatar class="avatar" :size="50" :src="currentUserAvatar">
                       我
                     </el-avatar>
-                  </div>
+                  </template>
                 </div>
               </div>
             </div>
@@ -135,42 +130,53 @@
         </div>
 
         <!-- 输入框区域 -->
-        <div class="bg-white p-3 border-t border-gray-200 flex-shrink-0">
-          <div class="flex items-center gap-3 mb-3">
-            <button class="text-gray-500"><Icon name="uil:smile" /></button>
-            <button class="text-gray-500 hover:text-blue-500 transition-colors" @click="triggerImageUpload">
-              <Icon name="tabler:photo" />
-            </button>
-            <input
-              ref="imageInputRef"
-              type="file"
-              accept="image/*"
-              class="hidden"
-              @change="handleImageUpload"
-            />
-            <button
-              v-if="currentChat && !currentChat.id?.startsWith('G')"
-              class="text-gray-500 hover:text-green-500 transition-colors"
-              @click="startCall"
-            >
-              <Icon name="fluent:call-24-regular" />
-            </button>
+        <div class="input-area flex-shrink-0" :style="{ height: inputAreaHeight + 'px' }">
+          <!-- 拖动条 -->
+          <div class="resize-handle" @mousedown="startResize">
+            <div class="resize-line"></div>
           </div>
-          <div class="flex gap-3">
+
+          <!-- 输入框和发送按钮 -->
+          <div class="input-container">
             <textarea
               v-model="inputMessage"
-              placeholder="请输入消息..."
-              class="flex-1 border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm resize-none"
-              rows="2"
+              placeholder="输入消息..."
+              class="message-input"
               @keydown.enter.prevent="sendMessage"
             ></textarea>
-            <button
-              class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              :disabled="!ws.isConnected"
-              @click="sendMessage"
-            >
-              发送
-            </button>
+            <div class="toolbar-send">
+              <div class="toolbar">
+                <button class="toolbar-btn" title="表情">
+                  <Icon name="uil:smile" class="text-base" />
+                </button>
+                <button class="toolbar-btn" title="发送图片" @click="triggerImageUpload">
+                  <Icon name="tabler:photo" class="text-base" />
+                </button>
+                <input
+                  ref="imageInputRef"
+                  type="file"
+                  accept="image/*"
+                  class="hidden"
+                  @change="handleImageUpload"
+                />
+                <button
+                  v-if="currentChat && !currentChat.id?.startsWith('G')"
+                  class="toolbar-btn"
+                  title="语音通话"
+                  @click="startCall"
+                >
+                  <Icon name="fluent:call-24-regular" class="text-base" />
+                </button>
+              </div>
+              <button
+                class="send-btn"
+                :disabled="!inputMessage.trim() || !ws.isConnected"
+                @click="sendMessage"
+              >
+                <Icon name="uil:message" class="text-base" />
+                <span>发送</span>
+              </button>
+            </div>
           </div>
         </div>
       </template>
@@ -209,6 +215,67 @@ const currentChat = computed(() => {
 
 const scrollbarRef = ref()
 const imageInputRef = ref()
+
+// 侧边栏宽度调整
+const sidebarWidth = ref(320)
+const isSidebarResizing = ref(false)
+const sidebarStartX = ref(0)
+const sidebarStartWidth = ref(0)
+
+const startSidebarResize = (e) => {
+  e.preventDefault()
+  isSidebarResizing.value = true
+  sidebarStartX.value = e.clientX
+  sidebarStartWidth.value = sidebarWidth.value
+  document.body.style.cursor = 'ew-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', handleSidebarResize)
+  document.addEventListener('mouseup', stopSidebarResize)
+}
+
+const handleSidebarResize = (e) => {
+  if (!isSidebarResizing.value) return
+  e.preventDefault()
+  const diff = e.clientX - sidebarStartX.value
+  const newWidth = Math.max(240, Math.min(500, sidebarStartWidth.value + diff))
+  sidebarWidth.value = newWidth
+}
+
+const stopSidebarResize = () => {
+  isSidebarResizing.value = false
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  document.removeEventListener('mousemove', handleSidebarResize)
+  document.removeEventListener('mouseup', stopSidebarResize)
+}
+
+// 输入区域高度调整
+const inputAreaHeight = ref(180)
+const isResizing = ref(false)
+const startY = ref(0)
+const startHeight = ref(0)
+
+const startResize = (e) => {
+  isResizing.value = true
+  startY.value = e.clientY
+  startHeight.value = inputAreaHeight.value
+  document.addEventListener('mousemove', handleResize)
+  document.addEventListener('mouseup', stopResize)
+}
+
+const handleResize = (e) => {
+  if (!isResizing.value) return
+  e.preventDefault()
+  const diff = startY.value - e.clientY
+  const newHeight = Math.max(120, Math.min(400, startHeight.value + diff))
+  inputAreaHeight.value = newHeight
+}
+
+const stopResize = () => {
+  isResizing.value = false
+  document.removeEventListener('mousemove', handleResize)
+  document.removeEventListener('mouseup', stopResize)
+}
 
 // 图片预览状态
 const showImageViewer = ref(false)
@@ -642,15 +709,240 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* 一条消息 */
+.chat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-bottom: 24px;
 }
-::-webkit-scrollbar-thumb {
-  background-color: rgba(0, 0, 0, 0.2);
-  border-radius: 3px;
+
+/* 自己的消息右对齐 */
+.chat-item-self {
+  align-items: flex-end;
 }
-::-webkit-scrollbar-track {
+
+/* 用户名 */
+.user-name {
+  width: 50px;
+  margin-bottom: 6px;
+  text-align: center;
+  font-size: 12px;
+  color: #666;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 气泡和头像 */
+.message-row {
+  display: flex;
+  align-items: flex-start; /* 关键：顶部对齐 */
+  gap: 15px;
+}
+
+/* 自己的消息行 */
+.message-row-self {
+  justify-content: flex-end;
+}
+
+/* 聊天气泡 */
+.bubble {
+  position: relative;
+  max-width: 500px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #333;
+  word-break: break-word;
+  box-sizing: border-box;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+/* 对方气泡 - 白色背景 */
+.bubble-left {
+  background: #fff;
+}
+
+/* 自己气泡 - 蓝色背景 */
+.bubble-right {
+  background: #7ab5fe;
+  color: #fff;
+}
+
+.bubble-right .msg-time {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* 对方气泡箭头 - 指向左边头像 */
+.bubble-left::after {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 15px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  transform: rotate(45deg);
+}
+
+/* 自己气泡箭头 - 指向右边头像 */
+.bubble-right::after {
+  content: "";
+  position: absolute;
+  right: -6px;
+  top: 15px;
+  width: 16px;
+  height: 16px;
+  background: #7ab5fe;
+  transform: rotate(45deg);
+}
+
+/* 头像 */
+.avatar {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+/* 输入区域 */
+.input-area {
+  background: #fff;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* 拖动条 */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.resize-handle:hover {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.resize-line {
+  width: 40px;
+  height: 3px;
+  background: #d1d5db;
+  border-radius: 2px;
+  transition: all 0.2s ease;
+}
+
+.resize-handle:hover .resize-line {
+  background: #3b82f6;
+  width: 50px;
+}
+
+/* 输入容器 */
+.input-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px;
+  padding-top: 16px;
+}
+
+/* 消息输入框 */
+.message-input {
+  flex: 1;
+  border: none;
   background: transparent;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+  min-height: 40px;
+}
+
+.message-input::placeholder {
+  color: #9ca3af;
+}
+
+/* 工具栏和发送按钮容器 */
+.toolbar-send {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+/* 工具栏 */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  color: #9ca3af;
+  transition: all 0.2s ease;
+}
+
+.toolbar-btn:hover {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+/* 发送按钮 */
+.send-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 24px;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.send-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+}
+
+.send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 侧边栏拖动条 */
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 10;
+  transition: background 0.2s ease;
+}
+
+.sidebar-resize-handle:hover {
+  background: rgba(59, 130, 246, 0.3);
 }
 </style>

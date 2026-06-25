@@ -1200,6 +1200,7 @@ onUnmounted(() => {
     display: flex;
     justify-content: center;
     pointer-events: none;
+    z-index: 10;
 }
 
 .input-box {
@@ -1368,20 +1369,6 @@ textarea {
 }
 
 /* 滚动条样式 */
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-
-::-webkit-scrollbar-thumb {
-    background-color: rgba(0, 0, 0, 0.2);
-    border-radius: 3px;
-}
-
-::-webkit-scrollbar-track {
-    background: transparent;
-}
-
 @keyframes pulse {
     0%, 100% {
         opacity: 1;

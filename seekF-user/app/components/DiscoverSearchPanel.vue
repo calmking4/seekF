@@ -177,21 +177,4 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 自定义滚动条 */
-::-webkit-scrollbar {
-  width: 4px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #e5e7eb;
-  border-radius: 2px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #d1d5db;
-}
 </style>

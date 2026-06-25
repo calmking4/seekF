@@ -1,7 +1,9 @@
 <template>
   <div class="flex h-screen bg-gray-100">
     <!-- 左侧侧边栏 -->
-    <aside class="w-80 bg-white border-r flex flex-col pr-3"> <!-- 这里添加 pr-3 -->
+    <aside class="bg-white border-r flex flex-col pr-3 relative" :style="{ width: sidebarWidth + 'px' }">
+      <!-- 拖动条 -->
+      <div class="sidebar-resize-handle" @mousedown="startSidebarResize"></div>
       <!-- 顶部搜索栏 - 参考样式 -->
       <SearchBar />
 
@@ -437,6 +439,39 @@ import { ElMessage } from 'element-plus'
 const activeTab = ref('friend')
 const currentView = ref('default') // 'default', 'friendNotification', 'groupNotification', 'chat'
 const selectedContact = ref(null)
+
+// 侧边栏宽度调整
+const sidebarWidth = ref(320)
+const isSidebarResizing = ref(false)
+const sidebarStartX = ref(0)
+const sidebarStartWidth = ref(0)
+
+const startSidebarResize = (e) => {
+  e.preventDefault()
+  isSidebarResizing.value = true
+  sidebarStartX.value = e.clientX
+  sidebarStartWidth.value = sidebarWidth.value
+  document.body.style.cursor = 'ew-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', handleSidebarResize)
+  document.addEventListener('mouseup', stopSidebarResize)
+}
+
+const handleSidebarResize = (e) => {
+  if (!isSidebarResizing.value) return
+  e.preventDefault()
+  const diff = e.clientX - sidebarStartX.value
+  const newWidth = Math.max(240, Math.min(500, sidebarStartWidth.value + diff))
+  sidebarWidth.value = newWidth
+}
+
+const stopSidebarResize = () => {
+  isSidebarResizing.value = false
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  document.removeEventListener('mousemove', handleSidebarResize)
+  document.removeEventListener('mouseup', stopSidebarResize)
+}
 
 // 好友列表数据
 const friends = ref([])
@@ -930,22 +965,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 自定义滚动条样式 */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: #d1d5db;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #9ca3af;
-}
-
 /* 旋转样式 */
 .rotate-90 {
   transform: rotate(90deg);
@@ -962,5 +981,21 @@ onMounted(() => {
 
 :deep(.el-tabs__nav-scroll) {
   padding-left: 0.75rem !important;
+}
+
+/* 侧边栏拖动条 */
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 10;
+  transition: background 0.2s ease;
+}
+
+.sidebar-resize-handle:hover {
+  background: rgba(59, 130, 246, 0.3);
 }
 </style>

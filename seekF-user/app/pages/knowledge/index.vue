@@ -218,18 +218,6 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-::-webkit-scrollbar-thumb {
-    background-color: rgba(0, 0, 0, 0.2);
-    border-radius: 3px;
-}
-::-webkit-scrollbar-track {
-    background: transparent;
-}
-
 .upload-area {
     border: 2px dashed #dcdfe6;
     border-radius: 8px;
