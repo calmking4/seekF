@@ -130,7 +130,7 @@
         </div>
 
         <!-- 输入框区域 -->
-        <div class="input-area flex-shrink-0" :style="{ height: inputAreaHeight + 'px' }">
+        <div class="input-area flex-shrink-0" :style="{ minHeight: inputAreaHeight + 'px' }">
           <!-- 拖动条 -->
           <div class="resize-handle" @mousedown="startResize">
             <div class="resize-line"></div>
@@ -138,11 +138,21 @@
 
           <!-- 输入框和发送按钮 -->
           <div class="input-container">
+            <!-- 待发送图片预览 -->
+            <div v-if="pendingImages.length > 0" class="pending-images">
+              <div v-for="(img, index) in pendingImages" :key="index" class="pending-image-item">
+                <img :src="img.preview" class="pending-image-thumb" />
+                <button class="pending-image-remove" @click="removePendingImage(index)">
+                  <Icon name="uil:times" class="text-xs" />
+                </button>
+              </div>
+            </div>
             <textarea
               v-model="inputMessage"
               placeholder="输入消息..."
               class="message-input"
               @keydown.enter.prevent="sendMessage"
+              @paste="handlePaste"
             ></textarea>
             <div class="toolbar-send">
               <div class="toolbar">
@@ -170,7 +180,7 @@
               </div>
               <button
                 class="send-btn"
-                :disabled="!inputMessage.trim() || !ws.isConnected"
+                :disabled="(!inputMessage.trim() && pendingImages.length === 0) || !ws.isConnected"
                 @click="sendMessage"
               >
                 <Icon name="uil:message" class="text-base" />
@@ -213,6 +223,7 @@ const chatList = ref([])
 const activeIndex = ref(-1)
 const messageList = ref([])
 const inputMessage = ref('')
+const pendingImages = ref([]) // 待发送的图片列表
 
 const currentChat = computed(() => {
   if (activeIndex.value === -1) return {}
@@ -469,34 +480,51 @@ const loadMoreMessages = async () => {
 }
 
 const sendMessage = async () => {
-  if (!inputMessage.value.trim()) return
+  const hasText = inputMessage.value.trim()
+  const hasImages = pendingImages.value.length > 0
+
+  if (!hasText && !hasImages) return
   if (activeIndex.value === -1) return
 
   const session = currentChat.value
   if (!session) return
 
-  const success = ws.sendTextMessage(
-    session.sessionId,
-    inputMessage.value.trim(),
-    session.id
-  )
+  // 发送待发送的图片
+  if (hasImages) {
+    const imagesToSend = [...pendingImages.value]
+    pendingImages.value = [] // 清空待发送列表
 
-  if (success) {
-    const tempId = 'temp_' + Date.now()
-    messageList.value.push({
-      messageId: tempId,
-      content: inputMessage.value.trim(),
-      senderName: '我',
-      avatar: currentUserAvatar.value,
-      sendTime: new Date().toISOString(),
-      isSelf: true
-    })
+    for (const img of imagesToSend) {
+      await uploadAndSendImage(img.file)
+      URL.revokeObjectURL(img.preview) // 释放预览 URL
+    }
+  }
 
-    session.lastMsg = inputMessage.value.trim()
-    session.time = '刚刚'
-    inputMessage.value = ''
+  // 发送文本消息
+  if (hasText) {
+    const success = ws.sendTextMessage(
+      session.sessionId,
+      inputMessage.value.trim(),
+      session.id
+    )
 
-    scrollToBottom()
+    if (success) {
+      const tempId = 'temp_' + Date.now()
+      messageList.value.push({
+        messageId: tempId,
+        content: inputMessage.value.trim(),
+        senderName: '我',
+        avatar: currentUserAvatar.value,
+        sendTime: new Date().toISOString(),
+        isSelf: true
+      })
+
+      session.lastMsg = inputMessage.value.trim()
+      session.time = '刚刚'
+      inputMessage.value = ''
+
+      scrollToBottom()
+    }
   }
 }
 
@@ -517,11 +545,60 @@ const previewImage = (url) => {
   showImageViewer.value = true
 }
 
-// 处理图片上传
-const handleImageUpload = async (event) => {
-  const file = event.target.files?.[0]
-  if (!file) return
+// 处理粘贴事件 - 支持粘贴图片
+const handlePaste = (event) => {
+  const clipboardData = event.clipboardData || window.clipboardData
+  if (!clipboardData) return
 
+  const items = clipboardData.items
+  if (!items) return
+
+  // 查找剪贴板中的图片
+  let imageFile = null
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].type.indexOf('image') !== -1) {
+      imageFile = items[i].getAsFile()
+      break
+    }
+  }
+
+  // 如果有图片，阻止默认粘贴行为，添加到待发送列表
+  if (imageFile) {
+    event.preventDefault()
+
+    // 验证文件类型
+    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    if (!validTypes.includes(imageFile.type)) {
+      ElMessage.error('只支持 JPG、PNG、GIF、WebP 格式的图片')
+      return
+    }
+
+    // 验证文件大小 (5MB)
+    if (imageFile.size > 5 * 1024 * 1024) {
+      ElMessage.error('图片大小不能超过 5MB')
+      return
+    }
+
+    // 创建预览 URL 并添加到待发送列表
+    const previewUrl = URL.createObjectURL(imageFile)
+    pendingImages.value.push({
+      file: imageFile,
+      preview: previewUrl
+    })
+  }
+}
+
+// 移除待发送图片
+const removePendingImage = (index) => {
+  const img = pendingImages.value[index]
+  if (img?.preview) {
+    URL.revokeObjectURL(img.preview) // 释放预览 URL
+  }
+  pendingImages.value.splice(index, 1)
+}
+
+// 上传并发送图片的通用方法
+const uploadAndSendImage = async (file) => {
   // 验证文件类型
   const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
   if (!validTypes.includes(file.type)) {
@@ -558,7 +635,7 @@ const handleImageUpload = async (event) => {
       const success = ws.sendFileMessage(
         session.sessionId,
         imageUrl,
-        file.name,
+        file.name || 'clipboard.png',
         file.size.toString(),
         file.type,
         session.id
@@ -590,6 +667,32 @@ const handleImageUpload = async (event) => {
     console.error('图片上传失败:', error)
     ElMessage.error('图片上传失败')
   }
+}
+
+// 处理图片上传
+const handleImageUpload = (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+
+  // 验证文件类型
+  const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+  if (!validTypes.includes(file.type)) {
+    ElMessage.error('只支持 JPG、PNG、GIF、WebP 格式的图片')
+    return
+  }
+
+  // 验证文件大小 (5MB)
+  if (file.size > 5 * 1024 * 1024) {
+    ElMessage.error('图片大小不能超过 5MB')
+    return
+  }
+
+  // 创建预览 URL 并添加到待发送列表
+  const previewUrl = URL.createObjectURL(file)
+  pendingImages.value.push({
+    file: file,
+    preview: previewUrl
+  })
 
   // 清空文件输入框，允许重复选择同一文件
   event.target.value = ''
@@ -822,6 +925,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   position: relative;
+  max-height: 50vh;
 }
 
 /* 拖动条 */
@@ -862,6 +966,8 @@ onUnmounted(() => {
   flex-direction: column;
   padding: 12px 16px;
   padding-top: 16px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* 消息输入框 */
@@ -874,7 +980,7 @@ onUnmounted(() => {
   line-height: 1.6;
   resize: none;
   outline: none;
-  min-height: 40px;
+  min-height: 20px;
 }
 
 .message-input::placeholder {
@@ -887,6 +993,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   margin-top: 12px;
+  flex-shrink: 0;
 }
 
 /* 工具栏 */
@@ -950,5 +1057,53 @@ onUnmounted(() => {
 
 .sidebar-resize-handle:hover {
   background: rgba(59, 130, 246, 0.3);
+}
+
+/* 待发送图片预览区域 */
+.pending-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+  background: #f9fafb;
+  border-radius: 8px;
+  border: 1px dashed #e5e7eb;
+  flex-shrink: 0;
+}
+
+.pending-image-item {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 2px solid #e5e7eb;
+}
+
+.pending-image-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pending-image-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.pending-image-remove:hover {
+  background: rgba(239, 68, 68, 0.8);
 }
 </style>
