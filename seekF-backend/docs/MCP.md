@@ -11,24 +11,25 @@ MCP（Model Context Protocol）可以理解为：
 
 ## 2. 本项目 MCP 的核心文件
 
-### 2.1 MCP Server（定义并注册工具）
-- 文件：`internal/pkg/ai/mcp/server.go`
+### 2.1 MCP Server（独立进程，stdio 模式）
+- 文件：`cmd/mcp-server/main.go`
 - 作用：
-  - 创建一个进程内 MCP Server（`server.NewMCPServer`）
-  - 注册天气工具：`mcpServer.AddTool(weatherTool.GetWeatherTool(), weatherTool.HandleWeatherRequest)`
-  - 通过 `sync.Once` 确保只初始化一次
+  - 创建一个独立的 MCP Server 进程
+  - 注册工具：天气、汇率、网页搜索、帖子搜索
+  - 通过 stdio（stdin/stdout）与主进程进行 JSON-RPC 通信
+  - 使用 `server.NewStdioServer(mcpServer)` 启动，监听 stdin/stdout
 
-你可以把它理解成：**“工具商店后台”**，负责告诉外界“我有哪些工具、每个工具怎么执行”。
+你可以把它理解成：**”工具商店后台”**，作为独立子进程运行，负责告诉外界”我有哪些工具、每个工具怎么执行”。
 
 ### 2.2 MCP Client（把 MCP 工具转换为 Eino 可用工具）
 - 文件：`internal/pkg/ai/mcp/client.go`
 - 作用：
-  - 通过 `client.NewInProcessClient(mcpServer)` 连接同进程 MCP Server
+  - 通过 `client.NewStdioMCPClient(command, nil, args...)` 启动 MCP Server 子进程并建立 stdio 连接
   - 执行 MCP 初始化握手（`Initialize`）
   - 调用 `eino-ext` 的 `mcpp.GetTools(...)`，把 MCP 工具转为 `[]tool.BaseTool`
   - 缓存工具列表（`sync.Once` + `einoTools`）
 
-你可以把它理解成：**“翻译层”**，把 MCP 工具元信息翻译成大模型可读的函数声明（tool schema）。
+你可以把它理解成：**”翻译层”**，启动 MCP Server 子进程并把 MCP 工具元信息翻译成大模型可读的函数声明（tool schema）。
 
 ### 2.3 具体工具实现（天气）
 - 文件：`internal/pkg/ai/mcp/tool/weather.go`
@@ -39,7 +40,13 @@ MCP（Model Context Protocol）可以理解为：
 
 这部分就是“真实业务逻辑”。
 
-### 2.4 AI 主流程（MCP 决策 + 工具执行 + 总结回复）
+### 2.4 进程内备用 Server（参考）
+- 文件：`internal/pkg/ai/mcp/server.go`
+- 作用：
+  - 进程内 MCP Server 的备用实现，仅用于参考
+  - 当前主应用使用 stdio 模式与独立的 MCP Server 进程通信
+
+### 2.5 AI 主流程（MCP 决策 + 工具执行 + 总结回复）
 - 文件：`internal/services/user_service/aichat_service.go`
 - 核心函数：
   - `SendMessageStream(...)`
@@ -152,9 +159,9 @@ MCP（Model Context Protocol）可以理解为：
 2. 参考 `WeatherTool` 实现：
    - 工具声明函数（名称、描述、参数）
    - 处理函数（参数解析 + 业务调用 + 文本结果）
-3. 在 `internal/pkg/ai/mcp/server.go` 的 `InitMCPServer()` 里 `AddTool(...)` 注册  
+3. 在 `cmd/mcp-server/main.go` 的 `main()` 里 `AddTool(...)` 注册（独立 MCP Server 进程）  
 4. 不需要改 `runMCPAgentFlow` 主流程（它会动态读取 MCP 工具列表）  
-5. 确保工具描述写清“何时使用”，这样模型更容易正确触发工具
+5. 确保工具描述写清”何时使用”，这样模型更容易正确触发工具
 
 ---
 

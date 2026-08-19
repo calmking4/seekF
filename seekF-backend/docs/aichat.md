@@ -282,24 +282,38 @@ multiMsg := &schema.Message{
 
 ---
 
-### 3.2 MCP 工具层（`pkg/ai/mcp/`）
+### 3.2 MCP 工具层（`pkg/ai/mcp/` + `cmd/mcp-server/`）
 
-**职责**：为 AI 提供可调用的外部工具。
+**职责**：为 AI 提供可调用的外部工具。采用 stdio 模式，MCP Server 作为独立子进程运行。
 
-#### 3.2.1 工具注册（`server.go`）
+#### 3.2.1 独立 MCP Server（`cmd/mcp-server/main.go`）
 
-使用 `mcp-go` 库创建 MCP Server，注册所有工具：
+MCP Server 作为独立进程运行，通过 stdin/stdout 进行 JSON-RPC 通信：
 
 ```go
-mcpServer = server.NewMCPServer("seekF-weather", "1.0.0", ...)
+// 创建工具实例
+weatherTool := tool.NewWeatherTool()
+exchangeRateTool := tool.NewExchangeRateTool()
+webSearchTool := tool.NewWebSearchTool()
+discoverPostsTool := tool.NewDiscoverPostsTool()
+
+// 创建 MCP Server
+mcpServer = server.NewMCPServer("seekF-mcp-server", "1.0.0", ...)
+
+// 注册工具
 mcpServer.AddTool(weatherTool.GetWeatherTool(), weatherTool.HandleWeatherRequest)
 mcpServer.AddTool(exchangeRateTool.GetExchangeRateTool(), exchangeRateTool.HandleExchangeRateRequest)
 mcpServer.AddTool(webSearchTool.GetWebSearchTool(), webSearchTool.HandleWebSearchRequest)
+mcpServer.AddTool(discoverPostsTool.GetDiscoverPostsTool(), discoverPostsTool.HandleDiscoverPostsRequest)
+
+// 使用 stdio 传输启动服务器
+stdioServer := server.NewStdioServer(mcpServer)
+stdioServer.Listen(ctx, os.Stdin, os.Stdout)
 ```
 
-#### 3.2.2 进程内连接（`client.go`）
+#### 3.2.2 stdio 客户端连接（`client.go`）
 
-使用 `client.NewInProcessClient` 实现进程内 MCP 连接，不需要网络通信。工具列表通过 `mcpp.GetTools` 转换为 Eino 的 `tool.BaseTool` 接口。
+主进程通过 `client.NewStdioMCPClient` 启动 MCP Server 子进程并建立 stdio 连接。工具列表通过 `mcpp.GetTools` 转换为 Eino 的 `tool.BaseTool` 接口。
 
 #### 3.2.3 工具实现
 
@@ -323,13 +337,18 @@ mcpServer.AddTool(webSearchTool.GetWebSearchTool(), webSearchTool.HandleWebSearc
 - 调用 Tavily Search API
 - 返回文本摘要 + `__SOURCES_JSON__` 标记的结构化来源数据
 
+**帖子搜索工具**（`tool/discover_posts.go`）：
+- 工具名：`search_discover_posts`
+- 参数：`query`（搜索关键词）
+- 在社区帖子中搜索相关内容
+
 #### 3.2.4 Agent 流程（`aichat_service.go` 的 `runMCPAgentFlow`）
 
 ```go
 func runMCPAgentFlow(ctx, chatModel, chatMessages, onChunk, enableWebSearch) (
     finalContent string, handled bool, sources []tool.SearchSource, err error) {
 
-    // 1. 获取 MCP 工具列表
+    // 1. 获取 MCP 工具列表（通过 stdio 连接 MCP Server 子进程）
     tools, _ := mcppkg.GetMCPTools(ctx)
 
     // 2. 根据开关过滤工具（enableWebSearch=false 时移除 web_search）
@@ -348,7 +367,7 @@ func runMCPAgentFlow(ctx, chatModel, chatMessages, onChunk, enableWebSearch) (
         return "", false, nil, nil
     }
 
-    // 5. 执行工具
+    // 5. 执行工具（通过 stdio 向 MCP Server 子进程发送请求）
     for _, tc := range first.ToolCalls {
         runOut, _ := inv.InvokableRun(ctx, tc.Function.Arguments)
         out := toolCallResultToText(runOut)
@@ -829,6 +848,8 @@ v1 不持久化。来源数据仅在当前会话的 SSE 流中推送一次，刷
 
 ```
 seekF-backend/
+├── cmd/mcp-server/
+│   └── main.go                               # MCP Server 独立进程入口（stdio 模式）
 ├── config/config.toml                        # 配置文件
 ├── internal/
 │   ├── configs/configs.go                    # 配置结构体（含 TavilyConfig）
@@ -857,12 +878,13 @@ seekF-backend/
 │   │   ├── ai_kafka.go                       # AI 消息 Kafka 消费者
 │   │   ├── ai_comment_kafka.go               # AI 评论回复 Kafka
 │   │   ├── mcp/
-│   │   │   ├── server.go                     # MCP Server（注册 3 个工具）
-│   │   │   ├── client.go                     # MCP Client（进程内连接）
+│   │   │   ├── server.go                     # MCP Server（进程内备用，仅参考）
+│   │   │   ├── client.go                     # MCP Client（stdio 连接子进程）
 │   │   │   └── tool/
 │   │   │       ├── weather.go                # 天气查询工具
 │   │   │       ├── exchange_rate.go          # 汇率查询工具
-│   │   │       └── web_search.go             # 联网搜索工具（Tavily）
+│   │   │       ├── web_search.go             # 联网搜索工具（Tavily）
+│   │   │       └── discover_posts.go         # 帖子搜索工具
 │   │   └── rag/
 │   │       ├── init.go                       # RAG 单例初始化
 │   │       ├── embedding.go                  # GLM Embedding 向量化

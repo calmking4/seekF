@@ -2,8 +2,9 @@ package mcp
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 
 	"seekF-backend/internal/pkg/zlog"
@@ -23,20 +24,26 @@ var (
 	toolsErr           error                             // 记录初始化过程中的错误
 )
 
-// GetInProcessTools 获取当前进程内的MCP工具实例
-func GetInProcessTools(ctx context.Context) ([]einotool.BaseTool, error) {
+// GetStdioTools 获取通过 stdio 连接的 MCP 工具实例
+func GetStdioTools(ctx context.Context) ([]einotool.BaseTool, error) {
 	toolsOnce.Do(func() {
-		mcpServer := GetMCPServer()
-		if mcpServer == nil {
-			toolsErr = errors.New("MCP server is not initialized")
-			return
+		// 从环境变量获取 MCP Server 命令
+		mcpCmd := os.Getenv("MCP_SERVER_COMMAND")
+		if mcpCmd == "" {
+			mcpCmd = "go run ./cmd/mcp-server" // 开发环境默认值
 		}
 
-		// 创建与MCP服务器的进程内客户端连接
-		mcpClient, err := client.NewInProcessClient(mcpServer) //同一进程内直接调用
+		// 解析命令和参数
+		parts := strings.Fields(mcpCmd)
+		command := parts[0]
+		args := parts[1:]
+
+		// 创建与 MCP Server 的 stdio 客户端连接
+		// 会启动一个子进程，通过 stdin/stdout 进行 JSON-RPC 通信
+		mcpClient, err := client.NewStdioMCPClient(command, nil, args...)
 		if err != nil {
 			toolsErr = err
-			zlog.Error("创建进程内MCP客户端失败: " + err.Error())
+			zlog.Error("创建 stdio MCP 客户端失败: " + err.Error())
 			return
 		}
 
@@ -82,7 +89,7 @@ func GetInProcessTools(ctx context.Context) ([]einotool.BaseTool, error) {
 			}
 		}
 
-		zlog.Info(fmt.Sprintf("MCP tools initialized: %d tools, %d tool infos cached", len(einoTools), len(allToolInfos)))
+		zlog.Info(fmt.Sprintf("MCP tools initialized via stdio: %d tools, %d tool infos cached", len(einoTools), len(allToolInfos)))
 	})
 	return einoTools, toolsErr
 }
@@ -90,7 +97,7 @@ func GetInProcessTools(ctx context.Context) ([]einotool.BaseTool, error) {
 // GetMCPTools 获取MCP工具列表，如果尚未初始化则先进行初始化
 func GetMCPTools(ctx context.Context) ([]einotool.BaseTool, error) {
 	if len(einoTools) == 0 {
-		return GetInProcessTools(ctx)
+		return GetStdioTools(ctx)
 	}
 	return einoTools, nil
 }
