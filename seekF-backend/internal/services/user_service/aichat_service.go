@@ -17,7 +17,6 @@ import (
 	aipkg "seekF-backend/internal/pkg/ai"
 	mcppkg "seekF-backend/internal/pkg/ai/mcp"
 	toolpkg "seekF-backend/internal/pkg/ai/mcp/tool"
-	"seekF-backend/internal/pkg/ai/rag"
 	"seekF-backend/internal/pkg/ai/tts"
 	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/util"
@@ -47,17 +46,19 @@ type AIChatService interface {
 
 // AIChatServiceImpl AI聊天服务实现
 type AIChatServiceImpl struct {
-	sessionDAO  userdao.SessionDAO
-	messageDAO  userdao.MessageDAO
-	userInfoDAO userdao.UserInfoDAO
+	sessionDAO      userdao.SessionDAO
+	messageDAO      userdao.MessageDAO
+	userInfoDAO     userdao.UserInfoDAO
+	knowledgeService KnowledgeService
 }
 
 // NewAIChatService 创建AI聊天服务实例
-func NewAIChatService(sessionDAO userdao.SessionDAO, messageDAO userdao.MessageDAO, userInfoDAO userdao.UserInfoDAO) AIChatService {
+func NewAIChatService(sessionDAO userdao.SessionDAO, messageDAO userdao.MessageDAO, userInfoDAO userdao.UserInfoDAO, knowledgeService KnowledgeService) AIChatService {
 	return &AIChatServiceImpl{
-		sessionDAO:  sessionDAO,
-		messageDAO:  messageDAO,
-		userInfoDAO: userInfoDAO,
+		sessionDAO:      sessionDAO,
+		messageDAO:      messageDAO,
+		userInfoDAO:     userInfoDAO,
+		knowledgeService: knowledgeService,
 	}
 }
 
@@ -276,11 +277,9 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	}
 
 	// 如果启用知识库，搜索相关知识
-	if req.UseKnowledge {
-		ragInst := rag.GetRAG()
-		collectionName := "knowledge_" + userId
+	if req.UseKnowledge && s.knowledgeService != nil {
 		// 搜索更多结果，后续用分数过滤
-		knowledgeResults, err := ragInst.Search(ctx, collectionName, content, 10)
+		knowledgeResults, err := s.knowledgeService.Search(ctx, userId, content, 10)
 		if err == nil && len(knowledgeResults) > 0 {
 			// 过滤低分结果（相似度 < 0.5），保留最多 5 条
 			filteredResults := filterByScore(knowledgeResults, 0.5, 5)
@@ -660,8 +659,8 @@ func isMultiModalModel(modelType string) bool {
 }
 
 // filterByScore 根据相似度分数过滤搜索结果，返回分数 >= minScore 的前 maxResults 条
-func filterByScore(results []db.SearchResult, minScore float32, maxResults int) []db.SearchResult {
-	var filtered []db.SearchResult
+func filterByScore(results []SearchResult, minScore float32, maxResults int) []SearchResult {
+	var filtered []SearchResult
 	for _, result := range results {
 		if result.Score >= minScore {
 			filtered = append(filtered, result)

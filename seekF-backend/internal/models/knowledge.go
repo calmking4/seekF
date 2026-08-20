@@ -4,6 +4,7 @@ import (
 	"time"
 )
 
+// Knowledge 知识库文档元数据
 type Knowledge struct {
 	Id         int64     `gorm:"column:id;primaryKey;comment:自增id"`
 	Uuid       string    `gorm:"column:uuid;uniqueIndex;type:varchar(32);not null;comment:唯一标识"`

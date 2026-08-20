@@ -67,8 +67,8 @@ func (r *RAG) DeleteCollection(ctx context.Context, collectionName string) error
 	return db.GetQdrant().DeleteCollection(ctx, collectionName)
 }
 
-// Search 语义搜索，返回结果包含相似度分数
-func (r *RAG) Search(ctx context.Context, collectionName string, query string, topK int) ([]db.SearchResult, error) {
+// Search 语义搜索，返回向量搜索结果（包含文档UUID、分块索引和相似度分数）
+func (r *RAG) Search(ctx context.Context, collectionName string, query string, topK int) ([]db.VectorSearchResult, error) {
 	vectors, err := r.embedding.EmbedTexts(ctx, []string{query})
 	if err != nil {
 		return nil, err
@@ -81,14 +81,14 @@ func (r *RAG) Search(ctx context.Context, collectionName string, query string, t
 	return db.GetQdrant().Search(ctx, collectionName, vectors[0], topK)
 }
 
-// UpsertChunks 批量插入向量数据
+// UpsertChunks 批量插入向量数据，只存储向量，文本由调用方存入MySQL
 func (r *RAG) UpsertChunks(ctx context.Context, collectionName string, chunks []string, docUUID string) error {
 	vectors, err := r.embedding.EmbedTexts(ctx, chunks)
 	if err != nil {
 		return err
 	}
 
-	return db.GetQdrant().UpsertChunks(ctx, collectionName, chunks, vectors, docUUID)
+	return db.GetQdrant().UpsertChunks(ctx, collectionName, len(chunks), vectors, docUUID)
 }
 
 // DeleteChunks 删除指定文档的向量数据

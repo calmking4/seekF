@@ -23,6 +23,7 @@ var daoProviderSet = wire.NewSet(
 	userdao.NewContactApplyDAO,
 	userdao.NewMessageDAO,
 	userdao.NewKnowledgeDAO,
+	userdao.NewKnowledgeChunkDAO,
 	userdao.NewDiscoverDAO,
 )
 

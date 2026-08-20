@@ -19,10 +19,11 @@ type QdrantUtil struct {
 	client *qdrant.Client
 }
 
-// SearchResult 搜索结果，包含文本和相似度分数
-type SearchResult struct {
-	Text  string
-	Score float32
+// VectorSearchResult 向量搜索结果，包含文档ID和分块索引
+type VectorSearchResult struct {
+	DocUUID  string
+	ChunkIdx int
+	Score    float32
 }
 
 // InitQdrant 初始化Qdrant客户端
@@ -88,15 +89,14 @@ func generateChunkID(docUUID string, chunkIndex int) string {
 	return uuid.NewSHA1(namespace, []byte(name)).String()
 }
 
-// UpsertChunks 批量插入或更新向量数据
-func (q *QdrantUtil) UpsertChunks(ctx context.Context, collectionName string, chunks []string, vectors [][]float32, docUUID string) error {
-	points := make([]*qdrant.PointStruct, len(chunks))
-	for i, chunk := range chunks {
+// UpsertChunks 批量插入或更新向量数据，只存储关联信息，不存储文本
+func (q *QdrantUtil) UpsertChunks(ctx context.Context, collectionName string, chunkCount int, vectors [][]float32, docUUID string) error {
+	points := make([]*qdrant.PointStruct, chunkCount)
+	for i := 0; i < chunkCount; i++ {
 		points[i] = &qdrant.PointStruct{
 			Id:      qdrant.NewIDUUID(generateChunkID(docUUID, i)),
 			Vectors: qdrant.NewVectors(vectors[i]...),
 			Payload: qdrant.NewValueMap(map[string]any{
-				"text":      chunk,
 				"doc_uuid":  docUUID,
 				"chunk_idx": int64(i),
 			}),
@@ -111,7 +111,7 @@ func (q *QdrantUtil) UpsertChunks(ctx context.Context, collectionName string, ch
 		return err
 	}
 
-	zlog.Info(fmt.Sprintf("upserted %d chunks to collection %s", len(chunks), collectionName))
+	zlog.Info(fmt.Sprintf("upserted %d chunks to collection %s", chunkCount, collectionName))
 	return nil
 }
 
@@ -137,8 +137,8 @@ func (q *QdrantUtil) DeleteByDocUUID(ctx context.Context, collectionName string,
 	return nil
 }
 
-// Search 向量相似性搜索，返回文本和相似度分数
-func (q *QdrantUtil) Search(ctx context.Context, collectionName string, queryVector []float32, topK int) ([]SearchResult, error) {
+// Search 向量相似性搜索，返回文档UUID、分块索引和相似度分数
+func (q *QdrantUtil) Search(ctx context.Context, collectionName string, queryVector []float32, topK int) ([]VectorSearchResult, error) {
 	limit := uint64(topK)
 	result, err := q.client.Query(ctx, &qdrant.QueryPoints{
 		CollectionName: collectionName,
@@ -150,17 +150,18 @@ func (q *QdrantUtil) Search(ctx context.Context, collectionName string, queryVec
 		return nil, err
 	}
 
-	var results []SearchResult
+	var results []VectorSearchResult
 	for _, point := range result {
 		if point.Payload != nil {
-			if text, ok := point.Payload["text"]; ok {
-				textStr := text.GetStringValue()
-				if textStr != "" {
-					results = append(results, SearchResult{
-						Text:  textStr,
-						Score: point.Score,
-					})
-				}
+			docUUID := point.Payload["doc_uuid"].GetStringValue()
+			chunkIdx := int(point.Payload["chunk_idx"].GetIntegerValue())
+
+			if docUUID != "" {
+				results = append(results, VectorSearchResult{
+					DocUUID:  docUUID,
+					ChunkIdx: chunkIdx,
+					Score:    point.Score,
+				})
 			}
 		}
 	}

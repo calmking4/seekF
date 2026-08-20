@@ -11,7 +11,6 @@ import (
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/ai/rag"
-	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 )
@@ -29,15 +28,23 @@ var httpClient = &http.Client{
 // maxDownloadSize 最大下载大小 10MB
 const maxDownloadSize = 10 * 1024 * 1024
 
+// SearchResult 搜索结果，包含文本和相似度分数
+type SearchResult struct {
+	Text  string
+	Score float32
+}
+
 type KnowledgeService interface {
 	AddDocument(ctx context.Context, userId, fileName, fileURL, fileType string) (*DocInfo, error)
 	ListDocuments(ctx context.Context, userId string) ([]DocInfo, error)
 	RemoveDocument(ctx context.Context, userId, uuid string) error
-	Search(ctx context.Context, userId, query string, topK int) ([]db.SearchResult, error)
+	Search(ctx context.Context, userId, query string, topK int) ([]SearchResult, error)
 	GetDocumentContent(ctx context.Context, userId, uuid string) (string, error)
 }
+
 type KnowledgeServiceImpl struct {
-	knowledgeDAO userdao.KnowledgeDAO
+	knowledgeDAO      userdao.KnowledgeDAO
+	knowledgeChunkDAO userdao.KnowledgeChunkDAO
 }
 
 // DocInfo 文档信息
@@ -50,9 +57,10 @@ type DocInfo struct {
 	CreatedAt string
 }
 
-func NewKnowledgeService(knowledgeDAO userdao.KnowledgeDAO) KnowledgeService {
+func NewKnowledgeService(knowledgeDAO userdao.KnowledgeDAO, knowledgeChunkDAO userdao.KnowledgeChunkDAO) KnowledgeService {
 	return &KnowledgeServiceImpl{
-		knowledgeDAO: knowledgeDAO,
+		knowledgeDAO:      knowledgeDAO,
+		knowledgeChunkDAO: knowledgeChunkDAO,
 	}
 }
 
@@ -83,8 +91,26 @@ func (s *KnowledgeServiceImpl) AddDocument(ctx context.Context, userId, fileName
 	}
 
 	docUUID := "K" + util.GetNowAndLenRandomString(11)
+
+	// 1. 存储分块文本到 MySQL
+	chunkModels := make([]models.KnowledgeChunk, len(chunks))
+	for i, chunk := range chunks {
+		chunkModels[i] = models.KnowledgeChunk{
+			DocUUID:  docUUID,
+			ChunkIdx: i,
+			Content:  chunk,
+		}
+	}
+	err = s.knowledgeChunkDAO.BatchCreate(chunkModels)
+	if err != nil {
+		return nil, fmt.Errorf("存储分块文本失败: %v", err)
+	}
+
+	// 2. 存储向量到 Qdrant（只存向量，不存文本）
 	err = ragInst.UpsertChunks(ctx, collectionName, chunks, docUUID)
 	if err != nil {
+		// 回滚：删除已存储的分块文本
+		_ = s.knowledgeChunkDAO.DeleteByDocUUID(docUUID)
 		return nil, fmt.Errorf("存储向量失败: %v", err)
 	}
 
@@ -150,11 +176,20 @@ func (s *KnowledgeServiceImpl) RemoveDocument(ctx context.Context, userId, uuid 
 
 	ragInst := rag.GetRAG()
 	collectionName := s.collectionName(userId)
+
+	// 1. 删除向量数据
 	err = ragInst.DeleteChunks(ctx, collectionName, uuid)
 	if err != nil {
 		zlog.Error("从向量数据库删除数据失败: " + err.Error())
 	}
 
+	// 2. 删除分块文本
+	err = s.knowledgeChunkDAO.DeleteByDocUUID(uuid)
+	if err != nil {
+		zlog.Error("从MySQL删除分块数据失败: " + err.Error())
+	}
+
+	// 3. 删除文档记录
 	err = s.knowledgeDAO.Delete(uuid)
 	if err != nil {
 		return err
@@ -164,10 +199,59 @@ func (s *KnowledgeServiceImpl) RemoveDocument(ctx context.Context, userId, uuid 
 }
 
 // Search 在知识库中搜索相关内容，返回结果包含相似度分数
-func (s *KnowledgeServiceImpl) Search(ctx context.Context, userId, query string, topK int) ([]db.SearchResult, error) {
+func (s *KnowledgeServiceImpl) Search(ctx context.Context, userId, query string, topK int) ([]SearchResult, error) {
 	ragInst := rag.GetRAG()
 	collectionName := s.collectionName(userId)
-	return ragInst.Search(ctx, collectionName, query, topK)
+
+	// 1. 向量搜索，获取 docUUID 和 chunkIdx
+	vectorResults, err := ragInst.Search(ctx, collectionName, query, topK)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(vectorResults) == 0 {
+		return nil, nil
+	}
+
+	// 2. 收集所有 docUUID，一次性批量查询
+	docUUIDSet := make(map[string]struct{})
+	for _, vr := range vectorResults {
+		docUUIDSet[vr.DocUUID] = struct{}{}
+	}
+	docUUIDs := make([]string, 0, len(docUUIDSet))
+	for uuid := range docUUIDSet {
+		docUUIDs = append(docUUIDs, uuid)
+	}
+
+	// 3. 一次性从 MySQL 批量查询所有分块文本
+	chunks, err := s.knowledgeChunkDAO.FindByDocUUIDs(docUUIDs)
+	if err != nil {
+		return nil, fmt.Errorf("查询分块文本失败: %w", err)
+	}
+
+	// 4. 构建索引 map: "docUUID:chunkIdx" -> content
+	chunkTexts := make(map[string]string, len(chunks))
+	for _, chunk := range chunks {
+		key := fmt.Sprintf("%s:%d", chunk.DocUUID, chunk.ChunkIdx)
+		chunkTexts[key] = chunk.Content
+	}
+
+	// 5. 组装结果
+	var results []SearchResult
+	for _, vr := range vectorResults {
+		key := fmt.Sprintf("%s:%d", vr.DocUUID, vr.ChunkIdx)
+		text, ok := chunkTexts[key]
+		if !ok {
+			zlog.Warn("未找到分块文本: " + key)
+			continue
+		}
+		results = append(results, SearchResult{
+			Text:  text,
+			Score: vr.Score,
+		})
+	}
+
+	return results, nil
 }
 
 // downloadFile 从URL下载文件内容（带超时和大小限制）

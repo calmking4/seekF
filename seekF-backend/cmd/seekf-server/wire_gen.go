@@ -42,10 +42,11 @@ func initApp(db *gorm.DB) App {
 	fileService := userservice.NewFileService()
 	fileController := user.NewFileController(fileService)
 	wsController := user.NewWsController()
-	aiChatService := userservice.NewAIChatService(sessionDAO, messageDAO, userInfoDAO)
-	aiChatController := user.NewAIChatController(aiChatService, fileService)
 	knowledgeDAO := userdao.NewKnowledgeDAO(db)
-	knowledgeService := userservice.NewKnowledgeService(knowledgeDAO)
+	knowledgeChunkDAO := userdao.NewKnowledgeChunkDAO(db)
+	knowledgeService := userservice.NewKnowledgeService(knowledgeDAO, knowledgeChunkDAO)
+	aiChatService := userservice.NewAIChatService(sessionDAO, messageDAO, userInfoDAO, knowledgeService)
+	aiChatController := user.NewAIChatController(aiChatService, fileService)
 	knowledgeController := user.NewKnowledgeController(knowledgeService)
 	discoverDAO := userdao.NewDiscoverDAO(db)
 	discoverService := userservice.NewDiscoverService(discoverDAO, userInfoDAO)
@@ -66,7 +67,7 @@ func initApp(db *gorm.DB) App {
 // wire.go:
 
 // DAO ProviderSet — 所有数据访问层依赖
-var daoProviderSet = wire.NewSet(userdao.NewUserInfoDAO, userdao.NewContactDAO, userdao.NewSessionDAO, userdao.NewGroupDAO, userdao.NewContactApplyDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewDiscoverDAO)
+var daoProviderSet = wire.NewSet(userdao.NewUserInfoDAO, userdao.NewContactDAO, userdao.NewSessionDAO, userdao.NewGroupDAO, userdao.NewContactApplyDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO)
 
 // ServiceProviderSet — 所有业务逻辑层依赖
 var serviceProviderSet = wire.NewSet(userservice.NewAuthService, userservice.NewUserInfoService, userservice.NewContactService, userservice.NewGroupService, userservice.NewSessionService, userservice.NewMessageService, userservice.NewFileService, userservice.NewAIChatService, userservice.NewKnowledgeService, userservice.NewDiscoverService)
