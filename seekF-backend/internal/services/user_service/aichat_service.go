@@ -279,15 +279,20 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	if req.UseKnowledge {
 		ragInst := rag.GetRAG()
 		collectionName := "knowledge_" + userId
-		knowledgeResults, err := ragInst.Search(ctx, collectionName, content, 3)
+		// 搜索更多结果，后续用分数过滤
+		knowledgeResults, err := ragInst.Search(ctx, collectionName, content, 10)
 		if err == nil && len(knowledgeResults) > 0 {
-			knowledgeContext := "以下是你应该了解的知识库内容：\n"
-			for i, result := range knowledgeResults {
-				knowledgeContext += fmt.Sprintf("%d. %s\n", i+1, result)
+			// 过滤低分结果（相似度 < 0.5），保留最多 5 条
+			filteredResults := filterByScore(knowledgeResults, 0.5, 5)
+			if len(filteredResults) > 0 {
+				knowledgeContext := "以下是你应该了解的知识库内容：\n"
+				for i, result := range filteredResults {
+					knowledgeContext += fmt.Sprintf("%d. %s\n", i+1, result.Text)
+				}
+				knowledgeContext += "请根据以上知识库内容回答用户的问题。如果知识库没有相关信息，请忽略并按你原来的知识回答。"
+				systemPrompt = knowledgeContext + "\n\n" + systemPrompt
+				zlog.Info(fmt.Sprintf("知识库搜索找到 %d 条结果（过滤后）", len(filteredResults)))
 			}
-			knowledgeContext += "请根据以上知识库内容回答用户的问题。如果知识库没有相关信息，请忽略并按你原来的知识回答。"
-			systemPrompt = knowledgeContext + "\n\n" + systemPrompt
-			zlog.Info("知识库搜索找到 " + fmt.Sprint(len(knowledgeResults)) + " 条结果")
 		}
 	}
 
@@ -652,4 +657,18 @@ func isMultiModalModel(modelType string) bool {
 		}
 	}
 	return false
+}
+
+// filterByScore 根据相似度分数过滤搜索结果，返回分数 >= minScore 的前 maxResults 条
+func filterByScore(results []db.SearchResult, minScore float32, maxResults int) []db.SearchResult {
+	var filtered []db.SearchResult
+	for _, result := range results {
+		if result.Score >= minScore {
+			filtered = append(filtered, result)
+			if len(filtered) >= maxResults {
+				break
+			}
+		}
+	}
+	return filtered
 }

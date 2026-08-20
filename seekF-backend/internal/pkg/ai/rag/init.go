@@ -67,8 +67,8 @@ func (r *RAG) DeleteCollection(ctx context.Context, collectionName string) error
 	return db.GetQdrant().DeleteCollection(ctx, collectionName)
 }
 
-// Search 语义搜索
-func (r *RAG) Search(ctx context.Context, collectionName string, query string, topK int) ([]string, error) {
+// Search 语义搜索，返回结果包含相似度分数
+func (r *RAG) Search(ctx context.Context, collectionName string, query string, topK int) ([]db.SearchResult, error) {
 	vectors, err := r.embedding.EmbedTexts(ctx, []string{query})
 	if err != nil {
 		return nil, err

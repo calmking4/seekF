@@ -3,11 +3,12 @@ package db
 import (
 	"context"
 	"fmt"
-	"time"
 
-	"github.com/qdrant/go-client/qdrant"
 	"seekF-backend/internal/configs"
 	"seekF-backend/internal/pkg/zlog"
+
+	"github.com/google/uuid"
+	"github.com/qdrant/go-client/qdrant"
 )
 
 // qdrantClient Qdrant客户端单例
@@ -16,6 +17,12 @@ var qdrantClient *QdrantUtil
 // QdrantUtil Qdrant向量数据库工具
 type QdrantUtil struct {
 	client *qdrant.Client
+}
+
+// SearchResult 搜索结果，包含文本和相似度分数
+type SearchResult struct {
+	Text  string
+	Score float32
 }
 
 // InitQdrant 初始化Qdrant客户端
@@ -73,16 +80,25 @@ func (q *QdrantUtil) DeleteCollection(ctx context.Context, collectionName string
 	return nil
 }
 
+// generateChunkID 基于 docUUID 和 chunkIndex 生成确定性 UUID
+func generateChunkID(docUUID string, chunkIndex int) string {
+	// 使用固定的命名空间和 docUUID+index 生成确定性 UUID
+	namespace := uuid.NameSpaceURL
+	name := fmt.Sprintf("%s-chunk-%d", docUUID, chunkIndex)
+	return uuid.NewSHA1(namespace, []byte(name)).String()
+}
+
 // UpsertChunks 批量插入或更新向量数据
 func (q *QdrantUtil) UpsertChunks(ctx context.Context, collectionName string, chunks []string, vectors [][]float32, docUUID string) error {
 	points := make([]*qdrant.PointStruct, len(chunks))
 	for i, chunk := range chunks {
 		points[i] = &qdrant.PointStruct{
-			Id:      qdrant.NewIDNum(uint64(i+1) + uint64(time.Now().UnixNano())),
+			Id:      qdrant.NewIDUUID(generateChunkID(docUUID, i)),
 			Vectors: qdrant.NewVectors(vectors[i]...),
 			Payload: qdrant.NewValueMap(map[string]any{
-				"text":     chunk,
-				"doc_uuid": docUUID,
+				"text":      chunk,
+				"doc_uuid":  docUUID,
+				"chunk_idx": int64(i),
 			}),
 		}
 	}
@@ -121,8 +137,8 @@ func (q *QdrantUtil) DeleteByDocUUID(ctx context.Context, collectionName string,
 	return nil
 }
 
-// Search 向量相似性搜索
-func (q *QdrantUtil) Search(ctx context.Context, collectionName string, queryVector []float32, topK int) ([]string, error) {
+// Search 向量相似性搜索，返回文本和相似度分数
+func (q *QdrantUtil) Search(ctx context.Context, collectionName string, queryVector []float32, topK int) ([]SearchResult, error) {
 	limit := uint64(topK)
 	result, err := q.client.Query(ctx, &qdrant.QueryPoints{
 		CollectionName: collectionName,
@@ -134,13 +150,16 @@ func (q *QdrantUtil) Search(ctx context.Context, collectionName string, queryVec
 		return nil, err
 	}
 
-	var results []string
+	var results []SearchResult
 	for _, point := range result {
 		if point.Payload != nil {
 			if text, ok := point.Payload["text"]; ok {
 				textStr := text.GetStringValue()
 				if textStr != "" {
-					results = append(results, textStr)
+					results = append(results, SearchResult{
+						Text:  textStr,
+						Score: point.Score,
+					})
 				}
 			}
 		}

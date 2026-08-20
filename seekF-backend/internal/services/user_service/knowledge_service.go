@@ -11,6 +11,7 @@ import (
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/ai/rag"
+	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 )
@@ -32,7 +33,7 @@ type KnowledgeService interface {
 	AddDocument(ctx context.Context, userId, fileName, fileURL, fileType string) (*DocInfo, error)
 	ListDocuments(ctx context.Context, userId string) ([]DocInfo, error)
 	RemoveDocument(ctx context.Context, userId, uuid string) error
-	Search(ctx context.Context, userId, query string, topK int) ([]string, error)
+	Search(ctx context.Context, userId, query string, topK int) ([]db.SearchResult, error)
 	GetDocumentContent(ctx context.Context, userId, uuid string) (string, error)
 }
 type KnowledgeServiceImpl struct {
@@ -162,8 +163,8 @@ func (s *KnowledgeServiceImpl) RemoveDocument(ctx context.Context, userId, uuid 
 	return nil
 }
 
-// Search 在知识库中搜索相关内容
-func (s *KnowledgeServiceImpl) Search(ctx context.Context, userId, query string, topK int) ([]string, error) {
+// Search 在知识库中搜索相关内容，返回结果包含相似度分数
+func (s *KnowledgeServiceImpl) Search(ctx context.Context, userId, query string, topK int) ([]db.SearchResult, error) {
 	ragInst := rag.GetRAG()
 	collectionName := s.collectionName(userId)
 	return ragInst.Search(ctx, collectionName, query, topK)
