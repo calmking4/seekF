@@ -106,7 +106,10 @@ func (s *KnowledgeServiceImpl) AddDocument(ctx context.Context, userId, fileName
 		return nil, fmt.Errorf("存储分块文本失败: %v", err)
 	}
 
-	// 2. 存储向量到 Qdrant（只存向量，不存文本）
+	// 2. 构建稀疏向量词汇表（用于混合检索）
+	ragInst.BuildSparseVocabulary(chunks)
+
+	// 3. 存储向量到 Qdrant（包含 Dense 和 Sparse 向量）
 	err = ragInst.UpsertChunks(ctx, collectionName, chunks, docUUID)
 	if err != nil {
 		// 回滚：删除已存储的分块文本
@@ -198,13 +201,13 @@ func (s *KnowledgeServiceImpl) RemoveDocument(ctx context.Context, userId, uuid 
 	return nil
 }
 
-// Search 在知识库中搜索相关内容，返回结果包含相似度分数
+// Search 在知识库中搜索相关内容，使用混合检索（Dense + Sparse 向量）
 func (s *KnowledgeServiceImpl) Search(ctx context.Context, userId, query string, topK int) ([]SearchResult, error) {
 	ragInst := rag.GetRAG()
 	collectionName := s.collectionName(userId)
 
-	// 1. 向量搜索，获取 docUUID 和 chunkIdx
-	vectorResults, err := ragInst.Search(ctx, collectionName, query, topK)
+	// 1. 混合检索，获取 docUUID 和 chunkIdx
+	vectorResults, err := ragInst.HybridSearch(ctx, collectionName, query, topK)
 	if err != nil {
 		return nil, err
 	}

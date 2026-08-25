@@ -18,8 +18,9 @@ var (
 
 // RAG RAG核心模块,封装向量化和分块功能
 type RAG struct {
-	embedding *Embedding
-	splitter  *TextSplitter
+	embedding      *Embedding
+	splitter       *TextSplitter
+	sparseVector   *SparseVectorizer
 }
 
 // GetRAG 获取RAG单例实例(线程安全)
@@ -36,10 +37,12 @@ func GetRAG() *RAG {
 		)
 
 		spl := NewTextSplitter(500, 50)
+		sparse := NewSparseVectorizer()
 
 		ragInstance = &RAG{
-			embedding: emb,
-			splitter:  spl,
+			embedding:    emb,
+			splitter:     spl,
+			sparseVector: sparse,
 		}
 
 		zlog.Info("RAG初始化完成")
@@ -57,6 +60,11 @@ func (r *RAG) GetSplitter() *TextSplitter {
 	return r.splitter
 }
 
+// GetSparseVectorizer 获取稀疏向量化器
+func (r *RAG) GetSparseVectorizer() *SparseVectorizer {
+	return r.sparseVector
+}
+
 // EnsureCollection 确保向量集合存在
 func (r *RAG) EnsureCollection(ctx context.Context, collectionName string) error {
 	return db.GetQdrant().EnsureCollection(ctx, collectionName, 2048)
@@ -67,7 +75,7 @@ func (r *RAG) DeleteCollection(ctx context.Context, collectionName string) error
 	return db.GetQdrant().DeleteCollection(ctx, collectionName)
 }
 
-// Search 语义搜索，返回向量搜索结果（包含文档UUID、分块索引和相似度分数）
+// Search 语义搜索（仅Dense向量，向后兼容）
 func (r *RAG) Search(ctx context.Context, collectionName string, query string, topK int) ([]db.VectorSearchResult, error) {
 	vectors, err := r.embedding.EmbedTexts(ctx, []string{query})
 	if err != nil {
@@ -81,14 +89,50 @@ func (r *RAG) Search(ctx context.Context, collectionName string, query string, t
 	return db.GetQdrant().Search(ctx, collectionName, vectors[0], topK)
 }
 
-// UpsertChunks 批量插入向量数据，只存储向量，文本由调用方存入MySQL
-func (r *RAG) UpsertChunks(ctx context.Context, collectionName string, chunks []string, docUUID string) error {
-	vectors, err := r.embedding.EmbedTexts(ctx, chunks)
+// HybridSearch 混合检索，结合 Dense 和 Sparse 向量
+func (r *RAG) HybridSearch(ctx context.Context, collectionName string, query string, topK int) ([]db.VectorSearchResult, error) {
+	// 1. 生成 Dense 向量
+	denseVectors, err := r.embedding.EmbedTexts(ctx, []string{query})
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("Dense向量化失败: %w", err)
+	}
+	if len(denseVectors) == 0 {
+		return nil, fmt.Errorf("Dense向量化失败")
 	}
 
-	return db.GetQdrant().UpsertChunks(ctx, collectionName, len(chunks), vectors, docUUID)
+	// 2. 生成 Sparse 向量
+	sparseVector := r.sparseVector.Vectorize(query)
+
+	// 3. 执行混合检索
+	return db.GetQdrant().HybridSearch(ctx, collectionName, denseVectors[0], sparseVector, topK)
+}
+
+// BuildSparseVocabulary 从文档集合构建稀疏向量词汇表
+func (r *RAG) BuildSparseVocabulary(documents []string) {
+	r.sparseVector.BuildVocabulary(documents)
+	zlog.Info(fmt.Sprintf("已构建稀疏向量词汇表，词汇量: %d", r.sparseVector.GetVocabularySize()))
+}
+
+// UpsertChunks 批量插入向量数据，同时生成 Dense 和 Sparse 向量
+func (r *RAG) UpsertChunks(ctx context.Context, collectionName string, chunks []string, docUUID string) error {
+	// 1. 生成 Dense 向量
+	denseVectors, err := r.embedding.EmbedTexts(ctx, chunks)
+	if err != nil {
+		return fmt.Errorf("Dense向量化失败: %w", err)
+	}
+
+	// 2. 生成 Sparse 向量
+	sparseVectors := make([]db.SparseVector, len(chunks))
+	for i, chunk := range chunks {
+		sv := r.sparseVector.Vectorize(chunk)
+		sparseVectors[i] = db.SparseVector{
+			Indices: sv.Indices,
+			Values:  sv.Values,
+		}
+	}
+
+	// 3. 存储向量到 Qdrant
+	return db.GetQdrant().UpsertChunks(ctx, collectionName, len(chunks), denseVectors, sparseVectors, docUUID)
 }
 
 // DeleteChunks 删除指定文档的向量数据
