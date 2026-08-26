@@ -38,6 +38,7 @@ type PostDetailRespond struct {
 	LikeCount    int      `json:"like_count"`
 	CommentCount int      `json:"comment_count"`
 	CollectCount int      `json:"collect_count"`
+	ViewCount    int      `json:"view_count"`
 	IsLiked      bool     `json:"is_liked"`
 	IsCollected  bool     `json:"is_collected"`
 	CreatedAt    string   `json:"created_at"`
@@ -77,4 +78,17 @@ type FolderItem struct {
 
 type ListFoldersRespond struct {
 	List []FolderItem `json:"list"`
+}
+
+type UserProfileRespond struct {
+	Uuid       string     `json:"uuid"`
+	Nickname   string     `json:"nickname"`
+	Avatar     string     `json:"avatar"`
+	Signature  string     `json:"signature"`
+	PostCount  int64      `json:"post_count"`
+	TotalLikes int        `json:"total_likes"`
+	IsFollowed bool       `json:"is_followed"`
+	IsFriend   bool       `json:"is_friend"`
+	Posts      []PostItem `json:"posts"`
+	Total      int64      `json:"total"`
 }

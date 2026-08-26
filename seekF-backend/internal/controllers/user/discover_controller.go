@@ -259,6 +259,7 @@ func (c *DiscoverController) GetPostDetail(ctx *gin.Context) {
 		LikeCount:    detail.LikeCount,
 		CommentCount: detail.CommentCount,
 		CollectCount: detail.CollectCount,
+		ViewCount:    detail.ViewCount,
 		IsLiked:      detail.IsLiked,
 		IsCollected:  detail.IsCollected,
 		CreatedAt:    detail.CreatedAt,
@@ -728,4 +729,66 @@ func (c *DiscoverController) CheckCollected(ctx *gin.Context) {
 	}
 
 	resp.Success(ctx, "获取成功", gin.H{"is_collected": isCollected, "folder_uuid": folderUuid})
+}
+
+// GetUserProfile 获取用户主页信息
+func (c *DiscoverController) GetUserProfile(ctx *gin.Context) {
+	userId := ctx.GetString("Uuid")
+
+	var req userreq.GetUserProfileRequest
+	if err := ctx.ShouldBind(&req); err != nil {
+		resp.Error(ctx, "参数错误", http.StatusBadRequest)
+		return
+	}
+	// 如果未指定用户ID，默认查自己
+	if req.UserId == "" {
+		req.UserId = userId
+	}
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+	if req.PageSize <= 0 || req.PageSize > 20 {
+		req.PageSize = 12
+	}
+
+	profile, err := c.discoverService.GetUserProfile(ctx.Request.Context(), req.UserId, userId, req.Page, req.PageSize)
+	if err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var items []userresp.PostItem
+	for _, p := range profile.Posts {
+		items = append(items, userresp.PostItem{
+			Uuid:         p.Uuid,
+			UserId:       p.UserId,
+			Nickname:     p.Nickname,
+			Avatar:       p.Avatar,
+			Title:        p.Title,
+			Content:      p.Content,
+			MediaType:    p.MediaType,
+			CoverUrl:     p.CoverUrl,
+			Tags:         p.Tags,
+			FirstUrl:     p.FirstUrl,
+			LikeCount:    p.LikeCount,
+			CommentCount: p.CommentCount,
+			CollectCount: p.CollectCount,
+			IsLiked:      p.IsLiked,
+			IsCollected:  p.IsCollected,
+			CreatedAt:    p.CreatedAt,
+		})
+	}
+
+	resp.Success(ctx, "获取成功", userresp.UserProfileRespond{
+		Uuid:       profile.Uuid,
+		Nickname:   profile.Nickname,
+		Avatar:     profile.Avatar,
+		Signature:  profile.Signature,
+		PostCount:  profile.PostCount,
+		TotalLikes: profile.TotalLikes,
+		IsFollowed: profile.IsFollowed,
+		IsFriend:   profile.IsFriend,
+		Posts:      items,
+		Total:      profile.Total,
+	})
 }

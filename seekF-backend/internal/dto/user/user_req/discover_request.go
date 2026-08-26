@@ -96,3 +96,9 @@ type SearchPostsRequest struct {
 	Page     int    `json:"page"`
 	PageSize int    `json:"page_size"`
 }
+
+type GetUserProfileRequest struct {
+	UserId   string `json:"user_id" form:"user_id"`
+	Page     int    `json:"page" form:"page"`
+	PageSize int    `json:"page_size" form:"page_size"`
+}

@@ -27,6 +27,8 @@ type DiscoverService interface {
 	AddAIComment(ctx context.Context, userId, postUuid, content, aiQuestion, parentUuid, replyToUserId, replyToContent string) (*CommentInfo, error)
 	// SearchPosts 搜索帖子（ES全文搜索）
 	SearchPosts(ctx context.Context, userId string, keyword string, page, pageSize int) ([]PostInfo, int64, error)
+	// GetUserProfile 获取用户主页信息
+	GetUserProfile(ctx context.Context, profileUserId, currentUserId string, page, pageSize int) (*UserProfileInfo, error)
 
 	// 收藏夹
 	CreateFolder(ctx context.Context, userId, name, description string, isPublic int8) (*FolderInfo, error)
@@ -45,6 +47,7 @@ type DiscoverService interface {
 type DiscoverServiceImpl struct {
 	discoverDAO    userdao.DiscoverDAO
 	userInfoDAO    userdao.UserInfoDAO
+	contactDAO     userdao.ContactDAO
 }
 
 type PostInfo struct {
@@ -80,6 +83,7 @@ type PostDetailInfo struct {
 	LikeCount    int
 	CommentCount int
 	CollectCount int
+	ViewCount    int
 	IsLiked      bool
 	IsCollected  bool
 	CreatedAt    string
@@ -118,10 +122,11 @@ type FolderDetailInfo struct {
 	CreatedAt   string
 }
 
-func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.UserInfoDAO) DiscoverService {
+func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.UserInfoDAO, contactDAO userdao.ContactDAO) DiscoverService {
 	return &DiscoverServiceImpl{
 		discoverDAO: discoverDAO,
 		userInfoDAO: userInfoDAO,
+		contactDAO:  contactDAO,
 	}
 }
 
@@ -363,6 +368,13 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 		return nil, fmt.Errorf("帖子不存在")
 	}
 
+	// 异步增加浏览量
+	go func() {
+		if err := s.discoverDAO.IncrementViewCount(post.Id); err != nil {
+			zlog.Error("增加帖子浏览量失败: " + err.Error())
+		}
+	}()
+
 	mediaList, _ := s.discoverDAO.FindMediaByPostId(post.Id)
 	var urls []string
 	for _, m := range mediaList {
@@ -408,6 +420,7 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 		LikeCount:    post.LikeCount,
 		CommentCount: post.CommentCount,
 		CollectCount: post.CollectCount,
+		ViewCount:    post.ViewCount,
 		IsLiked:      isLiked,
 		IsCollected:  isCollected,
 		CreatedAt:    post.CreatedAt.Format("2006-01-02 15:04:05"),
@@ -1058,4 +1071,126 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 	}
 
 	return result, total, nil
+}
+
+// ========== 用户主页 ==========
+
+type UserProfileInfo struct {
+	Uuid       string
+	Nickname   string
+	Avatar     string
+	Signature  string
+	PostCount  int64
+	TotalLikes int
+	IsFollowed bool
+	IsFriend   bool
+	Posts      []PostInfo
+	Total      int64
+}
+
+func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId, currentUserId string, page, pageSize int) (*UserProfileInfo, error) {
+	// 查询用户信息
+	user, err := s.userInfoDAO.FindUserByUuid(profileUserId)
+	if err != nil {
+		return nil, fmt.Errorf("查询用户信息失败: %v", err)
+	}
+	if user == nil {
+		return nil, fmt.Errorf("用户不存在")
+	}
+
+	// 查询帖子列表
+	posts, err := s.discoverDAO.ListPostsByUserId(profileUserId, page, pageSize)
+	if err != nil {
+		return nil, fmt.Errorf("查询帖子列表失败: %v", err)
+	}
+
+	total, err := s.discoverDAO.CountPostsByUserId(profileUserId)
+	if err != nil {
+		return nil, fmt.Errorf("查询帖子总数失败: %v", err)
+	}
+
+	totalLikes, err := s.discoverDAO.GetUserTotalLikes(profileUserId)
+	if err != nil {
+		totalLikes = 0
+	}
+
+	// 查询是否为好友
+	isFriend := false
+	if currentUserId != "" && currentUserId != profileUserId {
+		contact, _ := s.contactDAO.GetUserContactByUserIdAndContactId(currentUserId, profileUserId)
+		if contact != nil && contact.Status == 0 {
+			isFriend = true
+		}
+	}
+
+	// 批量查询帖子的媒体、点赞、收藏状态
+	var postInfos []PostInfo
+	if len(posts) > 0 {
+		postIds := make([]int64, 0, len(posts))
+		postUuids := make([]string, 0, len(posts))
+		for _, post := range posts {
+			postIds = append(postIds, post.Id)
+			postUuids = append(postUuids, post.Uuid)
+		}
+
+		mediaList, _ := s.discoverDAO.FindMediaByPostIds(postIds)
+		mediaMap := make(map[int64]string)
+		for _, media := range mediaList {
+			if _, exists := mediaMap[media.PostId]; !exists {
+				mediaMap[media.PostId] = media.Url
+			}
+		}
+
+		likedMap := make(map[string]bool)
+		collectedMap := make(map[string]bool)
+		if currentUserId != "" {
+			likes, _ := s.discoverDAO.FindLikesByUserIdAndTargetUuids(currentUserId, postUuids)
+			for _, like := range likes {
+				likedMap[like.TargetUuid] = true
+			}
+			collections, _ := s.discoverDAO.FindCollectionsByUserIdAndTargetUuids(currentUserId, postUuids)
+			for _, col := range collections {
+				collectedMap[col.TargetUuid] = true
+			}
+		}
+
+		for _, post := range posts {
+			firstUrl := mediaMap[post.Id]
+			var tags []string
+			if len(post.Tags) > 0 {
+				json.Unmarshal(post.Tags, &tags)
+			}
+			postInfos = append(postInfos, PostInfo{
+				Uuid:         post.Uuid,
+				UserId:       post.UserId,
+				Nickname:     user.Nickname,
+				Avatar:       user.Avatar,
+				Title:        post.Title,
+				Content:      post.Content,
+				MediaType:    post.MediaType,
+				CoverUrl:     post.CoverUrl,
+				Tags:         tags,
+				FirstUrl:     firstUrl,
+				LikeCount:    post.LikeCount,
+				CommentCount: post.CommentCount,
+				CollectCount: post.CollectCount,
+				IsLiked:      likedMap[post.Uuid],
+				IsCollected:  collectedMap[post.Uuid],
+				CreatedAt:    post.CreatedAt.Format("2006-01-02 15:04:05"),
+			})
+		}
+	}
+
+	return &UserProfileInfo{
+		Uuid:       user.Uuid,
+		Nickname:   user.Nickname,
+		Avatar:     user.Avatar,
+		Signature:  user.Signature,
+		PostCount:  total,
+		TotalLikes: totalLikes,
+		IsFollowed: false, // 第二步关注功能实现后更新
+		IsFriend:   isFriend,
+		Posts:      postInfos,
+		Total:      total,
+	}, nil
 }

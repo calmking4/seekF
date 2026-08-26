@@ -18,6 +18,10 @@ type DiscoverDAO interface {
 	IncrementLikeCount(postId int64) error
 	DecrementLikeCount(postId int64) error
 	IncrementCommentCount(postId int64) error
+	IncrementViewCount(postId int64) error
+	ListPostsByUserId(userId string, page, pageSize int) ([]models.DiscoverPost, error)
+	CountPostsByUserId(userId string) (int64, error)
+	GetUserTotalLikes(userId string) (int, error)
 
 	CreateMedia(media *models.DiscoverMedia) error
 	FindMediaByPostId(postId int64) ([]models.DiscoverMedia, error)
@@ -145,6 +149,29 @@ func (d *DiscoverDAOImpl) DecrementLikeCount(postId int64) error {
 
 func (d *DiscoverDAOImpl) IncrementCommentCount(postId int64) error {
 	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("comment_count", gorm.Expr("comment_count + 1")).Error
+}
+
+func (d *DiscoverDAOImpl) IncrementViewCount(postId int64) error {
+	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("view_count", gorm.Expr("view_count + 1")).Error
+}
+
+func (d *DiscoverDAOImpl) ListPostsByUserId(userId string, page, pageSize int) ([]models.DiscoverPost, error) {
+	var posts []models.DiscoverPost
+	offset := (page - 1) * pageSize
+	result := d.db.Where("user_id = ? AND status = ?", userId, 0).Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&posts)
+	return posts, result.Error
+}
+
+func (d *DiscoverDAOImpl) CountPostsByUserId(userId string) (int64, error) {
+	var count int64
+	result := d.db.Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ?", userId, 0).Count(&count)
+	return count, result.Error
+}
+
+func (d *DiscoverDAOImpl) GetUserTotalLikes(userId string) (int, error) {
+	var total int
+	result := d.db.Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ?", userId, 0).Select("COALESCE(SUM(like_count), 0)").Scan(&total)
+	return total, result.Error
 }
 
 func (d *DiscoverDAOImpl) CreateMedia(media *models.DiscoverMedia) error {

@@ -49,7 +49,7 @@ func initApp(db *gorm.DB) App {
 	aiChatController := user.NewAIChatController(aiChatService, fileService)
 	knowledgeController := user.NewKnowledgeController(knowledgeService)
 	discoverDAO := userdao.NewDiscoverDAO(db)
-	discoverService := userservice.NewDiscoverService(discoverDAO, userInfoDAO)
+	discoverService := userservice.NewDiscoverService(discoverDAO, userInfoDAO, contactDAO)
 	discoverController := user.NewDiscoverController(discoverService)
 	engine := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController, wsController, aiChatController, knowledgeController, discoverController)
 	app := App{
