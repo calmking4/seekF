@@ -57,12 +57,12 @@
       <div v-if="!isSelf" class="flex items-center gap-3 mt-4">
         <button
           class="flex-1 py-2 rounded-full text-sm font-medium transition-colors"
-          :class="profile.is_friend
+          :class="isFollowing
             ? 'bg-gray-100 text-gray-600'
             : 'bg-[#60a5fa] text-white hover:bg-[#4b91e8]'"
-          @click="handleFollowOrFriend"
+          @click="handleToggleFollow"
         >
-          {{ profile.is_friend ? '已添加好友' : '加为好友' }}
+          {{ isFollowing ? '已关注' : '关注' }}
         </button>
         <button
           class="flex-1 py-2 rounded-full text-sm font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
@@ -200,6 +200,7 @@ const page = ref(1)
 const pageSize = 12
 const activeTab = ref('posts')
 const isSelf = ref(false)
+const isFollowing = ref(false)
 
 // 头像颜色
 const avatarColors = [
@@ -272,6 +273,16 @@ const fetchProfile = async () => {
         isSelf.value = myData.value.data.uuid === userId
       }
 
+      // 获取关注状态
+      if (!isSelf.value) {
+        const { data: followData } = await useApi('/user/follow/counts', {
+          body: { user_id: userId },
+        })
+        if (followData.value?.code === 200) {
+          isFollowing.value = followData.value.data.is_following || false
+        }
+      }
+
       // 处理帖子列表
       const newPosts = (d.posts || []).map((p) => ({
         ...p,
@@ -310,9 +321,23 @@ const handleScroll = () => {
 }
 
 // 操作
-const handleFollowOrFriend = () => {
-  // TODO: 跳转到好友申请或关注
-  navigateTo(`/contact`)
+const handleToggleFollow = async () => {
+  try {
+    const { data } = await useApi('/user/follow/toggle', {
+      body: { follow_user_id: userId },
+    })
+    if (data.value?.code === 200) {
+      isFollowing.value = !isFollowing.value
+      // 更新粉丝数（当前用户的关注操作影响对方的粉丝数）
+      if (isFollowing.value) {
+        profile.value.follower_count = (profile.value.follower_count || 0) + 1
+      } else {
+        profile.value.follower_count = Math.max(0, (profile.value.follower_count || 0) - 1)
+      }
+    }
+  } catch (e) {
+    console.error('关注操作失败:', e)
+  }
 }
 
 const goToChat = () => {
@@ -320,11 +345,11 @@ const goToChat = () => {
 }
 
 const goToFollowing = () => {
-  // TODO: 跳转到关注列表
+  navigateTo(`/user/${userId}/following`)
 }
 
 const goToFollowers = () => {
-  // TODO: 跳转到粉丝列表
+  navigateTo(`/user/${userId}/followers`)
 }
 
 // Tab 切换时重新加载

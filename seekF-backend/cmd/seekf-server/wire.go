@@ -25,6 +25,7 @@ var daoProviderSet = wire.NewSet(
 	userdao.NewKnowledgeDAO,
 	userdao.NewKnowledgeChunkDAO,
 	userdao.NewDiscoverDAO,
+	userdao.NewFollowDAO,
 )
 
 // ServiceProviderSet — 所有业务逻辑层依赖
@@ -39,6 +40,7 @@ var serviceProviderSet = wire.NewSet(
 	userservice.NewAIChatService,
 	userservice.NewKnowledgeService,
 	userservice.NewDiscoverService,
+	userservice.NewFollowService,
 )
 
 // controllerProviderSet — 所有控制器依赖
@@ -54,6 +56,7 @@ var controllerProviderSet = wire.NewSet(
 	usercontroller.NewAIChatController,
 	usercontroller.NewKnowledgeController,
 	usercontroller.NewDiscoverController,
+	usercontroller.NewFollowController,
 )
 
 // App 包含所有需要暴露的依赖

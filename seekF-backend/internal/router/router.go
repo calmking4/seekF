@@ -20,6 +20,7 @@ func SetupRouter(
 	aichatController *user.AIChatController,
 	knowledgeController *user.KnowledgeController,
 	discoverController *user.DiscoverController,
+	followController *user.FollowController,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -134,6 +135,11 @@ func SetupRouter(
 			protectedGroup.POST("/discover/uncollect", discoverController.UncollectPost)
 			protectedGroup.POST("/discover/check-collected", discoverController.CheckCollected)
 			protectedGroup.POST("/discover/collected-list", discoverController.ListCollectedPosts)
+			// 关注
+			protectedGroup.POST("/follow/toggle", followController.ToggleFollow)
+			protectedGroup.POST("/follow/counts", followController.GetFollowCounts)
+			protectedGroup.POST("/follow/list-following", followController.ListFollowing)
+			protectedGroup.POST("/follow/list-followers", followController.ListFollowers)
 		}
 
 	}

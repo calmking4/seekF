@@ -780,15 +780,17 @@ func (c *DiscoverController) GetUserProfile(ctx *gin.Context) {
 	}
 
 	resp.Success(ctx, "获取成功", userresp.UserProfileRespond{
-		Uuid:       profile.Uuid,
-		Nickname:   profile.Nickname,
-		Avatar:     profile.Avatar,
-		Signature:  profile.Signature,
-		PostCount:  profile.PostCount,
-		TotalLikes: profile.TotalLikes,
-		IsFollowed: profile.IsFollowed,
-		IsFriend:   profile.IsFriend,
-		Posts:      items,
-		Total:      profile.Total,
+		Uuid:           profile.Uuid,
+		Nickname:       profile.Nickname,
+		Avatar:         profile.Avatar,
+		Signature:      profile.Signature,
+		PostCount:      profile.PostCount,
+		TotalLikes:     profile.TotalLikes,
+		FollowingCount: profile.FollowingCount,
+		FollowerCount:  profile.FollowerCount,
+		IsFollowed:     profile.IsFollowed,
+		IsFriend:       profile.IsFriend,
+		Posts:          items,
+		Total:          profile.Total,
 	})
 }

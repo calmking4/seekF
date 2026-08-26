@@ -81,14 +81,16 @@ type ListFoldersRespond struct {
 }
 
 type UserProfileRespond struct {
-	Uuid       string     `json:"uuid"`
-	Nickname   string     `json:"nickname"`
-	Avatar     string     `json:"avatar"`
-	Signature  string     `json:"signature"`
-	PostCount  int64      `json:"post_count"`
-	TotalLikes int        `json:"total_likes"`
-	IsFollowed bool       `json:"is_followed"`
-	IsFriend   bool       `json:"is_friend"`
-	Posts      []PostItem `json:"posts"`
-	Total      int64      `json:"total"`
+	Uuid          string     `json:"uuid"`
+	Nickname      string     `json:"nickname"`
+	Avatar        string     `json:"avatar"`
+	Signature     string     `json:"signature"`
+	PostCount     int64      `json:"post_count"`
+	TotalLikes    int        `json:"total_likes"`
+	FollowingCount int64     `json:"following_count"`
+	FollowerCount int64     `json:"follower_count"`
+	IsFollowed    bool       `json:"is_followed"`
+	IsFriend      bool       `json:"is_friend"`
+	Posts         []PostItem `json:"posts"`
+	Total         int64      `json:"total"`
 }

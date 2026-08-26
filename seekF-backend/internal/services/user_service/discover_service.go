@@ -48,6 +48,7 @@ type DiscoverServiceImpl struct {
 	discoverDAO    userdao.DiscoverDAO
 	userInfoDAO    userdao.UserInfoDAO
 	contactDAO     userdao.ContactDAO
+	followDAO      userdao.FollowDAO
 }
 
 type PostInfo struct {
@@ -122,11 +123,12 @@ type FolderDetailInfo struct {
 	CreatedAt   string
 }
 
-func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.UserInfoDAO, contactDAO userdao.ContactDAO) DiscoverService {
+func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.UserInfoDAO, contactDAO userdao.ContactDAO, followDAO userdao.FollowDAO) DiscoverService {
 	return &DiscoverServiceImpl{
 		discoverDAO: discoverDAO,
 		userInfoDAO: userInfoDAO,
 		contactDAO:  contactDAO,
+		followDAO:   followDAO,
 	}
 }
 
@@ -1076,16 +1078,18 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 // ========== 用户主页 ==========
 
 type UserProfileInfo struct {
-	Uuid       string
-	Nickname   string
-	Avatar     string
-	Signature  string
-	PostCount  int64
-	TotalLikes int
-	IsFollowed bool
-	IsFriend   bool
-	Posts      []PostInfo
-	Total      int64
+	Uuid           string
+	Nickname       string
+	Avatar         string
+	Signature      string
+	PostCount      int64
+	TotalLikes     int
+	FollowingCount int64
+	FollowerCount  int64
+	IsFollowed     bool
+	IsFriend       bool
+	Posts          []PostInfo
+	Total          int64
 }
 
 func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId, currentUserId string, page, pageSize int) (*UserProfileInfo, error) {
@@ -1181,16 +1185,31 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 		}
 	}
 
+	// 查询关注/粉丝数
+	followingCount, _ := s.followDAO.CountFollowing(profileUserId)
+	followerCount, _ := s.followDAO.CountFollowers(profileUserId)
+
+	// 查询当前用户是否关注了该用户
+	isFollowed := false
+	if currentUserId != "" && currentUserId != profileUserId {
+		follow, _ := s.followDAO.FindFollow(currentUserId, profileUserId)
+		if follow != nil {
+			isFollowed = true
+		}
+	}
+
 	return &UserProfileInfo{
-		Uuid:       user.Uuid,
-		Nickname:   user.Nickname,
-		Avatar:     user.Avatar,
-		Signature:  user.Signature,
-		PostCount:  total,
-		TotalLikes: totalLikes,
-		IsFollowed: false, // 第二步关注功能实现后更新
-		IsFriend:   isFriend,
-		Posts:      postInfos,
-		Total:      total,
+		Uuid:           user.Uuid,
+		Nickname:       user.Nickname,
+		Avatar:         user.Avatar,
+		Signature:      user.Signature,
+		PostCount:      total,
+		TotalLikes:     totalLikes,
+		FollowingCount: followingCount,
+		FollowerCount:  followerCount,
+		IsFollowed:     isFollowed,
+		IsFriend:       isFriend,
+		Posts:          postInfos,
+		Total:          total,
 	}, nil
 }
