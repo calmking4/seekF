@@ -45,10 +45,11 @@ type DiscoverService interface {
 }
 
 type DiscoverServiceImpl struct {
-	discoverDAO    userdao.DiscoverDAO
-	userInfoDAO    userdao.UserInfoDAO
-	contactDAO     userdao.ContactDAO
-	followDAO      userdao.FollowDAO
+	discoverDAO     userdao.DiscoverDAO
+	userInfoDAO     userdao.UserInfoDAO
+	contactDAO      userdao.ContactDAO
+	followDAO       userdao.FollowDAO
+	notificationDAO userdao.NotificationDAO
 }
 
 type PostInfo struct {
@@ -123,12 +124,13 @@ type FolderDetailInfo struct {
 	CreatedAt   string
 }
 
-func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.UserInfoDAO, contactDAO userdao.ContactDAO, followDAO userdao.FollowDAO) DiscoverService {
+func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.UserInfoDAO, contactDAO userdao.ContactDAO, followDAO userdao.FollowDAO, notificationDAO userdao.NotificationDAO) DiscoverService {
 	return &DiscoverServiceImpl{
-		discoverDAO: discoverDAO,
-		userInfoDAO: userInfoDAO,
-		contactDAO:  contactDAO,
-		followDAO:   followDAO,
+		discoverDAO:     discoverDAO,
+		userInfoDAO:     userInfoDAO,
+		contactDAO:      contactDAO,
+		followDAO:       followDAO,
+		notificationDAO: notificationDAO,
 	}
 }
 
@@ -478,6 +480,24 @@ func (s *DiscoverServiceImpl) ToggleLike(ctx context.Context, userId, targetUuid
 	if err != nil {
 		return false, 0, err
 	}
+
+	// 异步创建点赞通知
+	go func() {
+		post, _ := s.discoverDAO.FindPostByUuid(targetUuid)
+		if post != nil && post.UserId != userId {
+			notification := &models.Notification{
+				UserId:     post.UserId,
+				ActorId:    userId,
+				Type:       NotificationTypeLikePost,
+				TargetUuid: targetUuid,
+				Content:    "赞了你的帖子",
+			}
+			if err := s.notificationDAO.CreateNotification(notification); err != nil {
+				zlog.Error("创建点赞通知失败: " + err.Error())
+			}
+		}
+	}()
+
 	// 重新获取帖子以获取更新后的点赞数
 	updatedPost, _ := s.discoverDAO.FindPostByUuid(targetUuid)
 	if updatedPost != nil {
@@ -528,6 +548,39 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 		avatar = user.Avatar
 	}
 
+	// 异步创建评论/回复通知
+	go func() {
+		if parentUuid != "" {
+			// 回复评论，通知被回复者
+			if replyToUserId != "" && replyToUserId != userId {
+				notification := &models.Notification{
+					UserId:     replyToUserId,
+					ActorId:    userId,
+					Type:       NotificationTypeReply,
+					TargetUuid: postUuid,
+					Content:    "回复了你的评论：" + truncateContent(content, 50),
+				}
+				if err := s.notificationDAO.CreateNotification(notification); err != nil {
+					zlog.Error("创建回复通知失败: " + err.Error())
+				}
+			}
+		} else {
+			// 评论帖子，通知帖子作者
+			if post.UserId != userId {
+				notification := &models.Notification{
+					UserId:     post.UserId,
+					ActorId:    userId,
+					Type:       NotificationTypeCommentPost,
+					TargetUuid: postUuid,
+					Content:    "评论了你的帖子：" + truncateContent(content, 50),
+				}
+				if err := s.notificationDAO.CreateNotification(notification); err != nil {
+					zlog.Error("创建评论通知失败: " + err.Error())
+				}
+			}
+		}
+	}()
+
 	return &CommentInfo{
 		Uuid:          commentUUID,
 		UserId:        userId,
@@ -538,6 +591,15 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 		Content:       content,
 		CreatedAt:     comment.CreatedAt.Format("2006-01-02 15:04:05"),
 	}, nil
+}
+
+// truncateContent 截断内容，超过 maxLen 加省略号
+func truncateContent(content string, maxLen int) string {
+	runes := []rune(content)
+	if len(runes) <= maxLen {
+		return content
+	}
+	return string(runes[:maxLen]) + "..."
 }
 
 func (s *DiscoverServiceImpl) ListComments(ctx context.Context, userId, postUuid string, page, pageSize int) ([]CommentInfo, error) {

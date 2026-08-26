@@ -23,7 +23,16 @@
           :class="{ 'text-[#0073ff]': isActiveRoute(item.path) }"
           :data-path="item.path"
         >
-          <Icon :name="item.icon" class="text-lg" />
+          <div class="relative">
+            <Icon :name="item.icon" class="text-lg" />
+            <!-- 通知小红点 -->
+            <span
+              v-if="item.showBadge && unreadCount > 0"
+              class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center"
+            >
+              {{ unreadCount > 99 ? '99+' : unreadCount }}
+            </span>
+          </div>
           <span class="font-medium">{{ item.label }}</span>
         </NuxtLink>
       </nav>
@@ -79,6 +88,9 @@ const route = useRoute()
 const ws = useWebSocket()
 const avCall = useAVCall()
 
+// 引入通知未读数
+const { unreadCount, fetchUnreadCount } = useNotification()
+
 // 导航栏引用和指示器位置
 const navRef = ref(null)
 const indicatorTop = ref(-100)
@@ -95,6 +107,7 @@ const navItems = [
   { path: '/chat', label: '消息', icon: 'uil:comment-alt' },
   { path: '/contact', label: '联系人', icon: 'uil:users-alt' },
   { path: '/discover', label: '发现', icon: 'uil:plus-square' },
+  { path: '/notification', label: '通知', icon: 'uil:bell', showBadge: true },
   { path: '/aichat', label: 'AIChat', icon: 'uil:robot' },
   { path: '/my', label: '我', icon: 'uil:user' }
 ]
@@ -191,6 +204,9 @@ onMounted(async () => {
 
   // 初始化指示器位置
   nextTick(updateIndicator)
+
+  // 获取通知未读数
+  fetchUnreadCount()
 })
 
 const logout = async () => {

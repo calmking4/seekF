@@ -21,6 +21,7 @@ func SetupRouter(
 	knowledgeController *user.KnowledgeController,
 	discoverController *user.DiscoverController,
 	followController *user.FollowController,
+	notificationController *user.NotificationController,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -140,6 +141,11 @@ func SetupRouter(
 			protectedGroup.POST("/follow/counts", followController.GetFollowCounts)
 			protectedGroup.POST("/follow/list-following", followController.ListFollowing)
 			protectedGroup.POST("/follow/list-followers", followController.ListFollowers)
+			// 通知
+			protectedGroup.POST("/notification/list", notificationController.ListNotifications)
+			protectedGroup.POST("/notification/unread-count", notificationController.GetUnreadCount)
+			protectedGroup.POST("/notification/read", notificationController.MarkAsRead)
+			protectedGroup.POST("/notification/read-all", notificationController.MarkAllAsRead)
 		}
 
 	}

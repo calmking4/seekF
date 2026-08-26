@@ -6,6 +6,7 @@ import (
 
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
+	"seekF-backend/internal/pkg/zlog"
 )
 
 type FollowService interface {
@@ -30,16 +31,18 @@ type FollowUserInfo struct {
 }
 
 type FollowServiceImpl struct {
-	followDAO  userdao.FollowDAO
-	userInfoDAO userdao.UserInfoDAO
-	contactDAO  userdao.ContactDAO
+	followDAO       userdao.FollowDAO
+	userInfoDAO     userdao.UserInfoDAO
+	contactDAO      userdao.ContactDAO
+	notificationDAO userdao.NotificationDAO
 }
 
-func NewFollowService(followDAO userdao.FollowDAO, userInfoDAO userdao.UserInfoDAO, contactDAO userdao.ContactDAO) FollowService {
+func NewFollowService(followDAO userdao.FollowDAO, userInfoDAO userdao.UserInfoDAO, contactDAO userdao.ContactDAO, notificationDAO userdao.NotificationDAO) FollowService {
 	return &FollowServiceImpl{
-		followDAO:  followDAO,
-		userInfoDAO: userInfoDAO,
-		contactDAO:  contactDAO,
+		followDAO:       followDAO,
+		userInfoDAO:     userInfoDAO,
+		contactDAO:      contactDAO,
+		notificationDAO: notificationDAO,
 	}
 }
 
@@ -81,6 +84,21 @@ func (s *FollowServiceImpl) ToggleFollow(ctx context.Context, userId, followUser
 	if err := s.followDAO.CreateFollow(follow); err != nil {
 		return false, fmt.Errorf("关注失败: %v", err)
 	}
+
+	// 异步创建关注通知
+	go func() {
+		notification := &models.Notification{
+			UserId:     followUserId,
+			ActorId:    userId,
+			Type:       NotificationTypeFollow,
+			TargetUuid: userId,
+			Content:    "关注了你",
+		}
+		if err := s.notificationDAO.CreateNotification(notification); err != nil {
+			zlog.Error("创建关注通知失败: " + err.Error())
+		}
+	}()
+
 	return true, nil
 }
 

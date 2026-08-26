@@ -649,3 +649,29 @@ func (s *Server) updateSessionLastMessage(sessionId string, lastMessage string) 
 		myredis.DelKeysWithPattern("session_list_" + session.SendId)
 	}
 }
+
+// PushNotification 推送通知给指定用户
+func (s *Server) PushNotification(userId string, notification interface{}) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if client, ok := s.Clients[userId]; ok {
+		msg, err := json.Marshal(notification)
+		if err != nil {
+			zlog.Error("序列化通知失败: " + err.Error())
+			return
+		}
+
+		notificationMsg := &MessageBack{
+			Message: msg,
+			Uuid:    "",
+		}
+
+		select {
+		case client.SendBack <- notificationMsg:
+			// 推送成功
+		default:
+			zlog.Warn("用户 " + userId + " 的通知通道已满，丢弃通知")
+		}
+	}
+}

@@ -50,11 +50,14 @@ func initApp(db *gorm.DB) App {
 	knowledgeController := user.NewKnowledgeController(knowledgeService)
 	discoverDAO := userdao.NewDiscoverDAO(db)
 	followDAO := userdao.NewFollowDAO(db)
-	discoverService := userservice.NewDiscoverService(discoverDAO, userInfoDAO, contactDAO, followDAO)
+	notificationDAO := userdao.NewNotificationDAO(db)
+	discoverService := userservice.NewDiscoverService(discoverDAO, userInfoDAO, contactDAO, followDAO, notificationDAO)
 	discoverController := user.NewDiscoverController(discoverService)
-	followService := userservice.NewFollowService(followDAO, userInfoDAO, contactDAO)
+	followService := userservice.NewFollowService(followDAO, userInfoDAO, contactDAO, notificationDAO)
 	followController := user.NewFollowController(followService)
-	engine := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController, wsController, aiChatController, knowledgeController, discoverController, followController)
+	notificationService := userservice.NewNotificationService(notificationDAO, userInfoDAO)
+	notificationController := user.NewNotificationController(notificationService)
+	engine := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController, wsController, aiChatController, knowledgeController, discoverController, followController, notificationController)
 	app := App{
 		Router:         engine,
 		SessionService: sessionService,
@@ -70,13 +73,13 @@ func initApp(db *gorm.DB) App {
 // wire.go:
 
 // DAO ProviderSet — 所有数据访问层依赖
-var daoProviderSet = wire.NewSet(userdao.NewUserInfoDAO, userdao.NewContactDAO, userdao.NewSessionDAO, userdao.NewGroupDAO, userdao.NewContactApplyDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO, userdao.NewFollowDAO)
+var daoProviderSet = wire.NewSet(userdao.NewUserInfoDAO, userdao.NewContactDAO, userdao.NewSessionDAO, userdao.NewGroupDAO, userdao.NewContactApplyDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO, userdao.NewFollowDAO, userdao.NewNotificationDAO)
 
 // ServiceProviderSet — 所有业务逻辑层依赖
-var serviceProviderSet = wire.NewSet(userservice.NewAuthService, userservice.NewUserInfoService, userservice.NewContactService, userservice.NewGroupService, userservice.NewSessionService, userservice.NewMessageService, userservice.NewFileService, userservice.NewAIChatService, userservice.NewKnowledgeService, userservice.NewDiscoverService, userservice.NewFollowService)
+var serviceProviderSet = wire.NewSet(userservice.NewAuthService, userservice.NewUserInfoService, userservice.NewContactService, userservice.NewGroupService, userservice.NewSessionService, userservice.NewMessageService, userservice.NewFileService, userservice.NewAIChatService, userservice.NewKnowledgeService, userservice.NewDiscoverService, userservice.NewFollowService, userservice.NewNotificationService)
 
 // controllerProviderSet — 所有控制器依赖
-var controllerProviderSet = wire.NewSet(user.NewAuthController, user.NewUserInfoController, user.NewContactController, user.NewGroupController, user.NewSessionController, user.NewMessageController, user.NewFileController, user.NewWsController, user.NewAIChatController, user.NewKnowledgeController, user.NewDiscoverController, user.NewFollowController)
+var controllerProviderSet = wire.NewSet(user.NewAuthController, user.NewUserInfoController, user.NewContactController, user.NewGroupController, user.NewSessionController, user.NewMessageController, user.NewFileController, user.NewWsController, user.NewAIChatController, user.NewKnowledgeController, user.NewDiscoverController, user.NewFollowController, user.NewNotificationController)
 
 // App 包含所有需要暴露的依赖
 // 全局单例（websocket、ai 等）需要通过 App 暴露给 main.go 使用
