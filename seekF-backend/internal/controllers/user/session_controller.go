@@ -38,15 +38,15 @@ func (c *SessionController) OpenSession(ctx *gin.Context) {
 		return
 	}
 
-	// 调用服务层方法
-	sessionId, err := c.sessionService.OpenSession(userUuid.(string), openSessionReq.ReceiveId)
+	// 调用服务层方法（返回包含好友状态的详细信息）
+	result, err := c.sessionService.OpenSessionWithInfo(userUuid.(string), openSessionReq.ReceiveId)
 	if err != nil {
 		zlog.Info("打开会话服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(ctx, "会话创建成功", sessionId)
+	resp.Success(ctx, "会话创建成功", result)
 }
 
 // GetSessionList 获取会话列表（用户和群聊）

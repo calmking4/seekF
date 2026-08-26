@@ -26,7 +26,16 @@
           <!-- 消息内容 -->
           <div class="flex-1 min-w-0">
             <div class="flex justify-between items-start">
-              <h3 class="font-medium text-sm truncate">{{ item.name }}</h3>
+              <div class="flex items-center gap-2">
+                <h3 class="font-medium text-sm truncate">{{ item.name }}</h3>
+                <!-- 非好友标签 -->
+                <span
+                  v-if="!item.isFriend && !item.id?.startsWith('G')"
+                  class="text-xs text-orange-500 border border-orange-300 rounded px-1 flex-shrink-0"
+                >
+                  非好友
+                </span>
+              </div>
               <span class="text-xs text-gray-400">{{ item.time }}</span>
             </div>
             <p class="text-xs text-gray-500 truncate">{{ item.lastMsg }}</p>
@@ -56,10 +65,31 @@
             {{ currentChat.name ? currentChat.name.charAt(0) : '?' }}
           </el-avatar>
           <span class="font-medium text-sm">{{ currentChat.name }}</span>
+          <!-- 非好友标签 -->
+          <span
+            v-if="!currentChat.isFriend && !currentChat.id?.startsWith('G')"
+            class="text-xs text-orange-500 border border-orange-300 rounded px-2 py-0.5"
+          >
+            非好友
+          </span>
           <div class="flex-1"></div>
           <div class="flex gap-4 text-gray-500">
             <button><Icon name="uil:ellipsis-h" /></button>
           </div>
+        </div>
+
+        <!-- 非好友提示条 -->
+        <div
+          v-if="!currentChat.isFriend && !currentChat.id?.startsWith('G')"
+          class="bg-orange-50 border-b border-orange-200 px-4 py-2 text-sm text-orange-600 flex items-center justify-between flex-shrink-0"
+        >
+          <span>对方还不是你的好友，只能发送一条文字消息</span>
+          <button
+            class="text-orange-500 hover:text-orange-700 font-medium underline"
+            @click="navigateTo('/contact')"
+          >
+            添加好友
+          </button>
         </div>
 
         <!-- 聊天内容区 - 自适应高度 -->
@@ -159,7 +189,13 @@
                 <button class="toolbar-btn" title="表情">
                   <Icon name="uil:smile" class="text-base" />
                 </button>
-                <button class="toolbar-btn" title="发送图片" @click="triggerImageUpload">
+                <!-- 非好友时隐藏图片上传按钮 -->
+                <button
+                  v-if="currentChat.isFriend || currentChat.id?.startsWith('G')"
+                  class="toolbar-btn"
+                  title="发送图片"
+                  @click="triggerImageUpload"
+                >
                   <Icon name="tabler:photo" class="text-base" />
                 </button>
                 <input
@@ -169,8 +205,9 @@
                   class="hidden"
                   @change="handleImageUpload"
                 />
+                <!-- 非好友时隐藏音视频通话按钮 -->
                 <button
-                  v-if="currentChat && !currentChat.id?.startsWith('G')"
+                  v-if="currentChat && !currentChat.id?.startsWith('G') && currentChat.isFriend"
                   class="toolbar-btn"
                   title="语音通话"
                   @click="startCall"
@@ -180,11 +217,11 @@
               </div>
               <button
                 class="send-btn"
-                :disabled="(!inputMessage.trim() && pendingImages.length === 0) || !ws.isConnected"
+                :disabled="(!inputMessage.trim() && pendingImages.length === 0) || !ws.isConnected || isNonFriendRestricted"
                 @click="sendMessage"
               >
                 <Icon name="uil:message" class="text-base" />
-                <span>发送</span>
+                <span>{{ isNonFriendRestricted ? '等待回复' : '发送' }}</span>
               </button>
             </div>
           </div>
@@ -228,6 +265,16 @@ const pendingImages = ref([]) // 待发送的图片列表
 const currentChat = computed(() => {
   if (activeIndex.value === -1) return {}
   return chatList.value[activeIndex.value]
+})
+
+// 判断非好友是否已发过消息（限制只能发一条）
+const isNonFriendRestricted = computed(() => {
+  if (!currentChat.value || currentChat.value.isFriend || currentChat.value.id?.startsWith('G')) {
+    return false
+  }
+  // 统计自己在当前会话中发送的消息数
+  const selfMessages = messageList.value.filter(msg => msg.isSelf)
+  return selfMessages.length >= 1
 })
 
 const scrollbarRef = ref()
@@ -354,7 +401,8 @@ const loadSessionList = async () => {
         avatar: session.avatar,
         lastMsg: session.last_message || '点击开始聊天',
         time: session.last_message_at || '',
-        unread: 0
+        unread: 0,
+        isFriend: session.is_friend || false
       }))
 
       const { session_id, receive_id } = route.query

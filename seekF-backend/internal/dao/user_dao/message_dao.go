@@ -23,6 +23,8 @@ type MessageDAO interface {
 	GetMessagesBySessionIdWithCursor(sessionId string, cursor string, limit int, direction string) ([]models.Message, error)
 	// SearchMessagesBySessionIds 在指定会话列表中搜索消息（MySQL LIKE 降级）
 	SearchMessagesBySessionIds(sessionIds []string, keyword string, limit int) ([]models.Message, error)
+	// CountMessagesBySenderInSession 统计指定会话中某用户发送的消息数（用于非好友限制判断）
+	CountMessagesBySenderInSession(sessionId string, senderId string) (int64, error)
 }
 
 // MessageDAOImpl 消息DAO实现
@@ -151,4 +153,13 @@ func (d *MessageDAOImpl) SearchMessagesBySessionIds(sessionIds []string, keyword
 		Limit(limit).
 		Find(&messageList)
 	return messageList, result.Error
+}
+
+// CountMessagesBySenderInSession 统计指定会话中某用户发送的消息数（用于非好友限制判断）
+func (d *MessageDAOImpl) CountMessagesBySenderInSession(sessionId string, senderId string) (int64, error) {
+	var count int64
+	result := d.db.Model(&models.Message{}).
+		Where("session_id = ? AND send_id = ?", sessionId, senderId).
+		Count(&count)
+	return count, result.Error
 }

@@ -21,8 +21,15 @@ import (
 	"gorm.io/gorm"
 )
 
+// OpenSessionResult 打开会话结果
+type OpenSessionResult struct {
+	SessionId string `json:"session_id"`
+	IsFriend  bool   `json:"is_friend"`
+}
+
 type SessionService interface {
 	OpenSession(sendId string, receiveId string) (string, error)
+	OpenSessionWithInfo(sendId string, receiveId string) (*OpenSessionResult, error)
 	CreateSession(sendId string, receiveId string) (string, error)
 	GetSessionList(userId string) ([]userresp.GetSessionListRespond, error)
 	DeleteSession(userId string, sessionId string) error
@@ -79,6 +86,25 @@ func (s *SessionServiceImpl) OpenSession(sendId string, receiveId string) (strin
 		return "", fmt.Errorf("系统错误")
 	}
 	return session.Uuid, nil
+}
+
+// OpenSessionWithInfo 打开会话并返回详细信息（包括好友状态）
+func (s *SessionServiceImpl) OpenSessionWithInfo(sendId string, receiveId string) (*OpenSessionResult, error) {
+	sessionId, err := s.OpenSession(sendId, receiveId)
+	if err != nil {
+		return nil, err
+	}
+
+	// 查询好友状态（仅单聊）
+	isFriend := false
+	if receiveId[0] == 'U' {
+		isFriend, _ = s.contactDAO.IsFriend(sendId, receiveId)
+	}
+
+	return &OpenSessionResult{
+		SessionId: sessionId,
+		IsFriend:  isFriend,
+	}, nil
 }
 
 // CreateSession 创建会话
@@ -230,6 +256,12 @@ func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessio
 					lastMessageAt = session.LastMessageAt.Time.Format("2006-01-02 15:04:05")
 				}
 
+				// 查询好友状态（仅单聊）
+				isFriend := false
+				if session.ReceiveId[0] == 'U' {
+					isFriend, _ = s.contactDAO.IsFriend(userId, session.ReceiveId)
+				}
+
 				sessionRsp := userresp.GetSessionListRespond{
 					SessionId:     session.Uuid,
 					Avatar:        avatar,
@@ -237,6 +269,7 @@ func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessio
 					Name:          name,
 					LastMessage:   session.LastMessage,
 					LastMessageAt: lastMessageAt,
+					IsFriend:      isFriend,
 				}
 				sessionListRsp = append(sessionListRsp, sessionRsp)
 			}

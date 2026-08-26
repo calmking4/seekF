@@ -17,6 +17,8 @@ type ContactDAO interface {
 	GetUserJoinedGroupContactsByUserId(userId string) ([]models.UserContact, error)
 	GetUserContactList(ownerId string) ([]models.UserContact, error)
 	GetUserContactByUserIdAndContactId(userId string, contactId string) (*models.UserContact, error)
+	// IsFriend 判断两人是否为好友（双向查询）
+	IsFriend(userId, contactId string) (bool, error)
 }
 
 type ContactDAOImpl struct {
@@ -85,4 +87,18 @@ func (d *ContactDAOImpl) GetUserContactByUserIdAndContactId(userId string, conta
 	var contact models.UserContact
 	result := d.db.Where("user_id = ? AND contact_id = ?", userId, contactId).First(&contact)
 	return &contact, result.Error
+}
+
+// IsFriend 判断两人是否为好友（双向查询）
+func (d *ContactDAOImpl) IsFriend(userId, contactId string) (bool, error) {
+	var count int64
+	// 查询双向好友关系（status=0 表示正常好友）
+	result := d.db.Model(&models.UserContact{}).
+		Where("((user_id = ? AND contact_id = ?) OR (user_id = ? AND contact_id = ?)) AND status = ?",
+			userId, contactId, contactId, userId, contactstatusenum.NORMAL).
+		Count(&count)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return count > 0, nil
 }

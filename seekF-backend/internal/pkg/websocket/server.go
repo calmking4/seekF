@@ -41,10 +41,11 @@ type Server struct {
 	messageDAO     userdao.MessageDAO
 	sessionDAO     userdao.SessionDAO
 	groupDAO       userdao.GroupDAO
+	contactDAO     userdao.ContactDAO
 }
 
 // NewServer 创建新的WebSocket服务器
-func NewServer(sessionService userservice.SessionService, messageDAO userdao.MessageDAO, sessionDAO userdao.SessionDAO, groupDAO userdao.GroupDAO) *Server {
+func NewServer(sessionService userservice.SessionService, messageDAO userdao.MessageDAO, sessionDAO userdao.SessionDAO, groupDAO userdao.GroupDAO, contactDAO userdao.ContactDAO) *Server {
 	return &Server{
 		Clients:        make(map[string]*Client),
 		mutex:          &sync.Mutex{},
@@ -54,6 +55,7 @@ func NewServer(sessionService userservice.SessionService, messageDAO userdao.Mes
 		messageDAO:     messageDAO,
 		sessionDAO:     sessionDAO,
 		groupDAO:       groupDAO,
+		contactDAO:     contactDAO,
 	}
 }
 
@@ -139,6 +141,14 @@ func (s *Server) readKafkaMessages() {
 
 // handleTextMessage 处理文本消息
 func (s *Server) handleTextMessage(chatMessageReq *userreq.ChatMessageRequest) {
+	// 单聊时检查好友限制
+	if chatMessageReq.ReceiveId[0] == 'U' {
+		if allowed, errStr := s.checkFriendRestriction(chatMessageReq.SendId, chatMessageReq.ReceiveId, chatMessageReq.SessionId); !allowed {
+			s.sendErrorToClient(chatMessageReq.SendId, errStr)
+			return
+		}
+	}
+
 	// 创建消息记录
 	message := &models.Message{
 		Uuid:       fmt.Sprintf("M%s", util.GetNowAndLenRandomString(11)),
@@ -213,6 +223,19 @@ func (s *Server) handleTextMessage(chatMessageReq *userreq.ChatMessageRequest) {
 
 // handleFileMessage 处理文件消息
 func (s *Server) handleFileMessage(chatMessageReq *userreq.ChatMessageRequest) {
+	// 单聊时检查好友限制（非好友不能发文件）
+	if chatMessageReq.ReceiveId[0] == 'U' {
+		isFriend, err := s.contactDAO.IsFriend(chatMessageReq.SendId, chatMessageReq.ReceiveId)
+		if err != nil {
+			zlog.Error("查询好友关系失败: " + err.Error())
+			return
+		}
+		if !isFriend {
+			s.sendErrorToClient(chatMessageReq.SendId, "非好友只能发送文字消息，请先添加好友")
+			return
+		}
+	}
+
 	// 创建消息记录
 	message := &models.Message{
 		Uuid:       fmt.Sprintf("M%s", util.GetNowAndLenRandomString(11)),
@@ -299,6 +322,19 @@ func (s *Server) handleFileMessage(chatMessageReq *userreq.ChatMessageRequest) {
 
 // handleAVCallMessage 处理音视频通话消息
 func (s *Server) handleAVCallMessage(chatMessageReq *userreq.ChatMessageRequest) {
+	// 单聊时检查好友限制（非好友不能发起音视频通话）
+	if chatMessageReq.ReceiveId[0] == 'U' {
+		isFriend, err := s.contactDAO.IsFriend(chatMessageReq.SendId, chatMessageReq.ReceiveId)
+		if err != nil {
+			zlog.Error("查询好友关系失败: " + err.Error())
+			return
+		}
+		if !isFriend {
+			s.sendErrorToClient(chatMessageReq.SendId, "非好友无法发起音视频通话，请先添加好友")
+			return
+		}
+	}
+
 	var avData userreq.AVData
 	if err := json.Unmarshal([]byte(chatMessageReq.AVdata), &avData); err != nil {
 		zlog.Error("解析音视频通话数据失败: " + err.Error())
@@ -672,6 +708,74 @@ func (s *Server) PushNotification(userId string, notification interface{}) {
 			// 推送成功
 		default:
 			zlog.Warn("用户 " + userId + " 的通知通道已满，丢弃通知")
+		}
+	}
+}
+
+// checkFriendRestriction 检查非好友消息限制
+// 返回值：(是否允许发送, 错误信息)
+func (s *Server) checkFriendRestriction(sendId, receiveId, sessionId string) (bool, string) {
+	// 查询是否为好友
+	isFriend, err := s.contactDAO.IsFriend(sendId, receiveId)
+	if err != nil {
+		zlog.Error("查询好友关系失败: " + err.Error())
+		return false, "查询好友关系失败"
+	}
+
+	// 好友无限制
+	if isFriend {
+		return true, ""
+	}
+
+	// 非好友限制：对方未回复前只能发一条消息
+	// 统计当前用户在该会话中发送的消息数
+	sentCount, err := s.messageDAO.CountMessagesBySenderInSession(sessionId, sendId)
+	if err != nil {
+		zlog.Error("查询发送消息数失败: " + err.Error())
+		return false, "查询消息数失败"
+	}
+
+	// 如果已发送过消息，检查对方是否回复过
+	if sentCount >= 1 {
+		replyCount, err := s.messageDAO.CountMessagesBySenderInSession(sessionId, receiveId)
+		if err != nil {
+			zlog.Error("查询回复消息数失败: " + err.Error())
+			return false, "查询回复数失败"
+		}
+		if replyCount == 0 {
+			return false, "对方回复前只能发送一条消息"
+		}
+	}
+
+	return true, ""
+}
+
+// sendErrorToClient 发送错误消息给客户端
+func (s *Server) sendErrorToClient(clientId string, errMsg string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if client, ok := s.Clients[clientId]; ok {
+		errorResp := map[string]interface{}{
+			"type":    "error",
+			"message": errMsg,
+		}
+		msg, err := json.Marshal(errorResp)
+		if err != nil {
+			zlog.Error("序列化错误消息失败: " + err.Error())
+			return
+		}
+
+		errorMsg := &MessageBack{
+			Message: msg,
+			Uuid:    "",
+		}
+
+		select {
+		case client.SendBack <- errorMsg:
+			// 发送成功
+		default:
+			zlog.Warn("用户 " + clientId + " 的错误消息通道已满，丢弃消息")
 		}
 	}
 }

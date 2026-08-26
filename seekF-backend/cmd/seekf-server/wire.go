@@ -70,6 +70,7 @@ type App struct {
 	MessageDAO     userdao.MessageDAO
 	SessionDAO     userdao.SessionDAO
 	GroupDAO       userdao.GroupDAO
+	ContactDAO     userdao.ContactDAO
 	DiscoverDAO    userdao.DiscoverDAO
 	UserInfoDAO    userdao.UserInfoDAO
 }
