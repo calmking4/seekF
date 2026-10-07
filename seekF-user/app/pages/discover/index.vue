@@ -91,7 +91,12 @@
             <div class="p-3">
               <h3 class="text-sm font-medium line-clamp-2 mb-2">{{ item.title }}</h3>
               <div class="flex items-center justify-between text-xs text-gray-500">
-                <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  class="flex items-center gap-2 text-left hover:text-blue-500 disabled:cursor-default"
+                  :disabled="!item.user_id"
+                  @click.stop="navigateTo(`/user/${encodeURIComponent(item.user_id)}`)"
+                >
                   <img
                     v-if="item.avatar"
                     :src="item.avatar"
@@ -105,7 +110,7 @@
                     {{ item.title.slice(0, 1) }}
                   </div>
                   <span>{{ item.nickname || '用户' + item.id.slice(-2) }}</span>
-                </div>
+                </button>
                 <div
                   class="flex items-center gap-1 cursor-pointer"
                   :class="{ 'text-red-500': item.isLiked }"
@@ -295,6 +300,7 @@ const loadMore = async () => {
         orderCounter++
         return {
           id: item.uuid,
+          user_id: item.user_id,
           uid: `${page.value}-${idx}-${item.uuid}-${orderCounter}`,
           src: item.first_url,
           coverUrl: item.cover_url || '',

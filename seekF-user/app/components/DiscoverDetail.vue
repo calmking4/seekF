@@ -74,11 +74,20 @@
         <div class="content-container">
           <!-- 作者信息（固定顶部） -->
           <div class="author-header">
-            <div class="author-info">
+            <button type="button" class="author-info" :disabled="!authorId" @click="goToAuthor">
               <el-avatar :size="40" :src="detail?.avatar || item?.avatar" />
               <span class="author-name">{{ detail?.nickname || item?.nickname || '匿名用户' }}</span>
-            </div>
-            <el-button type="primary" size="small" round class="follow-btn" :style="{ backgroundColor: '#60a5fa', borderColor: '#60a5fa',padding: '15px 30px' }">关注</el-button>
+            </button>
+            <el-button
+              v-if="!isSelf"
+              :type="isFollowing ? 'default' : 'primary'"
+              size="small"
+              round
+              class="follow-btn"
+              :loading="followLoading"
+              :disabled="!authorId || !detail"
+              @click="toggleFollow"
+            >{{ isFollowing ? '已关注' : '关注' }}</el-button>
           </div>
 
           <!-- 可滚动的中间区域 -->
@@ -227,7 +236,7 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, onMounted, watch, nextTick } from 'vue'
+import { ref, shallowRef, computed, onMounted, watch, nextTick } from 'vue'
 
 const props = defineProps({
   item: {
@@ -236,10 +245,15 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['close', 'like-updated', 'collect-updated'])
+const emit = defineEmits(['close', 'like-updated', 'collect-updated', 'follow-updated'])
 
 const show = ref(false)
 const detail = ref(null)
+const auth = useAuthState()
+const authorId = computed(() => detail.value?.user_id || props.item?.user_id || '')
+const isSelf = computed(() => !!authorId.value && authorId.value === auth.getUser()?.uuid)
+const isFollowing = ref(false)
+const followLoading = ref(false)
 const comments = shallowRef([])
 const currentIndex = ref(0)
 const isLiked = ref(false)
@@ -291,6 +305,7 @@ const fetchDetail = async () => {
     })
     if (res.code === 200 && res.data) {
       detail.value = res.data
+      fetchFollowState()
       currentIndex.value = 0
       isLiked.value = res.data.is_liked || false
       likeCount.value = res.data.like_count || 0
@@ -304,6 +319,50 @@ const fetchDetail = async () => {
     }
   } catch (e) {
     console.error('获取帖子详情失败:', e)
+  }
+}
+
+const goToAuthor = () => {
+  if (!authorId.value) return
+  emit('close')
+  return navigateTo(`/user/${encodeURIComponent(authorId.value)}`)
+}
+
+const fetchFollowState = async () => {
+  if (!authorId.value || isSelf.value) return
+  followLoading.value = true
+  try {
+    const res = await useApi$('/user/follow/counts', {
+      body: { user_id: authorId.value },
+    })
+    if (res.code === 200) {
+      isFollowing.value = !!res.data?.is_following
+    }
+  } catch (error) {
+    console.error('获取作者关注状态失败:', error)
+  } finally {
+    followLoading.value = false
+  }
+}
+
+const toggleFollow = async () => {
+  if (!authorId.value || isSelf.value || followLoading.value || !detail.value) return
+  followLoading.value = true
+  try {
+    const res = await useApi$('/user/follow/toggle', {
+      body: { follow_user_id: authorId.value },
+    })
+    if (res.code === 200) {
+      isFollowing.value = !!res.data.is_followed
+      emit('follow-updated', { userId: authorId.value, isFollowing: isFollowing.value })
+      ElMessage.success(isFollowing.value ? '关注成功' : '已取消关注')
+    } else {
+      ElMessage.error(res.message || '关注操作失败，请稍后重试')
+    }
+  } catch (error) {
+    console.error('关注作者失败:', error)
+  } finally {
+    followLoading.value = false
   }
 }
 
@@ -784,6 +843,20 @@ const handleClose = () => {
 .author-info {
   display: flex;
   align-items: center;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.author-info:disabled {
+  cursor: default;
+}
+
+.author-info:hover:not(:disabled) .author-name {
+  color: #409eff;
 }
 
 .author-name {
@@ -794,7 +867,7 @@ const handleClose = () => {
 
 .follow-btn {
   border-radius: 20px;
-  padding: 0 15px;
+  padding: 15px 30px;
 }
 
 .post-title {

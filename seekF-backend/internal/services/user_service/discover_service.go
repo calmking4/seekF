@@ -812,9 +812,12 @@ func (s *DiscoverServiceImpl) ListFolders(ctx context.Context, userId string) ([
 		coverUrl := ""
 		posts, _ := s.discoverDAO.ListCollectedPostsByFolder(f.Id, 1, 1)
 		if len(posts) > 0 {
-			mediaList, _ := s.discoverDAO.FindMediaByPostId(posts[0].Id)
-			if len(mediaList) > 0 {
-				coverUrl = mediaList[0].Url
+			coverUrl = posts[0].CoverUrl
+			if coverUrl == "" && posts[0].MediaType != 1 {
+				mediaList, _ := s.discoverDAO.FindMediaByPostId(posts[0].Id)
+				if len(mediaList) > 0 {
+					coverUrl = mediaList[0].Url
+				}
 			}
 		}
 		result = append(result, FolderInfo{
@@ -838,6 +841,9 @@ func (s *DiscoverServiceImpl) GetFolderDetail(ctx context.Context, userId, folde
 	if folder == nil {
 		return nil, fmt.Errorf("收藏夹不存在")
 	}
+	if folder.UserId != userId && folder.IsPublic != 1 {
+		return nil, fmt.Errorf("无权查看私密收藏夹")
+	}
 	return &FolderDetailInfo{
 		Uuid:        folder.Uuid,
 		Name:        folder.Name,
@@ -856,6 +862,9 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 	if folder == nil {
 		return nil, 0, fmt.Errorf("收藏夹不存在")
 	}
+	if folder.UserId != userId && folder.IsPublic != 1 {
+		return nil, 0, fmt.Errorf("无权查看私密收藏夹")
+	}
 
 	posts, err := s.discoverDAO.ListCollectedPostsByFolder(folder.Id, page, pageSize)
 	if err != nil {
@@ -868,6 +877,28 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 	}
 
 	var result []PostInfo
+	postUuids := make([]string, 0, len(posts))
+	for _, post := range posts {
+		postUuids = append(postUuids, post.Uuid)
+	}
+	likedMap := make(map[string]bool)
+	collectedMap := make(map[string]bool)
+	if len(postUuids) > 0 && userId != "" {
+		likes, err := s.discoverDAO.FindLikesByUserIdAndTargetUuids(userId, postUuids)
+		if err != nil {
+			return nil, 0, err
+		}
+		for _, like := range likes {
+			likedMap[like.TargetUuid] = true
+		}
+		collections, err := s.discoverDAO.FindCollectionsByUserIdAndTargetUuids(userId, postUuids)
+		if err != nil {
+			return nil, 0, err
+		}
+		for _, collection := range collections {
+			collectedMap[collection.TargetUuid] = true
+		}
+	}
 	for _, post := range posts {
 		mediaList, _ := s.discoverDAO.FindMediaByPostId(post.Id)
 		firstUrl := ""
@@ -899,8 +930,8 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 			LikeCount:    post.LikeCount,
 			CommentCount: post.CommentCount,
 			CollectCount: post.CollectCount,
-			IsLiked:      true,
-			IsCollected:  true,
+			IsLiked:      likedMap[post.Uuid],
+			IsCollected:  collectedMap[post.Uuid],
 			CreatedAt:    post.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}

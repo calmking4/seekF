@@ -32,9 +32,14 @@
 
     <!-- 标签切换区 -->
     <div class="max-w-5xl mx-auto">
-      <el-tabs v-model="activeTab" class="w-full" @tab-change="handleTabChange">
+      <ProfileTabs
+        v-model="activeTab"
+        :tabs="[{ name: 'collections', label: '收藏' }, { name: 'likes', label: '点赞' }]"
+        @tab-change="handleTabChange"
+        @after-enter="observeNewItems"
+      >
         <!-- 收藏标签 -->
-        <el-tab-pane label="收藏" name="collections">
+        <template #collections>
           <!-- 收藏夹列表视图 -->
           <div v-if="!currentFolder" class="p-4">
             <div v-if="folders.length === 0 && !foldersLoading" class="py-20 flex flex-col items-center justify-center text-gray-400">
@@ -150,10 +155,10 @@
               没有更多内容了
             </div>
           </div>
-        </el-tab-pane>
+        </template>
 
         <!-- 点赞标签 -->
-        <el-tab-pane label="点赞" name="likes">
+        <template #likes>
           <div v-if="likedPosts.length === 0" class="py-20 flex flex-col items-center justify-center text-gray-400">
             <div class="w-20 h-20 rounded-full border border-gray-200 flex items-center justify-center mb-4 bg-gray-50">
               <Icon name="uil:heart" class="text-2xl" />
@@ -216,8 +221,8 @@
               没有更多内容了
             </div>
           </div>
-        </el-tab-pane>
-      </el-tabs>
+        </template>
+      </ProfileTabs>
     </div>
 
     <!-- 编辑用户信息弹窗 -->
@@ -277,6 +282,7 @@
       :item="selectedLikedItem"
       @close="selectedLikedItem = null"
       @like-updated="handleLikedItemLikeUpdated"
+      @follow-updated="loadFollowCounts"
     />
 
     <!-- 帖子详情弹窗（收藏） -->
@@ -285,6 +291,7 @@
       :item="selectedCollectedItem"
       @close="selectedCollectedItem = null"
       @collect-updated="handleCollectedItemUpdated"
+      @follow-updated="loadFollowCounts"
     />
 
     <!-- 创建/编辑收藏夹弹窗 -->
@@ -436,9 +443,6 @@ const loadUserInfo = async () => {
         email: data.data.email,  // 添加邮箱
         birthday: data.data.birthday,  // 添加生日
         signature: data.data.signature,
-        // 这些计数可能需要单独的API获取，暂时设为默认值
-        followCount: data.data.followCount || 0,
-        followerCount: data.data.followerCount || 0,
         likeCount: data.data.likeCount || 0
       })
     } else {
@@ -446,6 +450,26 @@ const loadUserInfo = async () => {
     }
   } catch (err) {
     console.error('获取用户信息时发生错误:', err)
+  }
+}
+
+// 个人资料接口不返回关注统计，使用当前登录用户的实时统计接口。
+let followCountsRequestId = 0
+const loadFollowCounts = async () => {
+  const requestId = ++followCountsRequestId
+  try {
+    const res = await useApi$('/user/follow/counts', { method: 'POST' })
+    if (requestId !== followCountsRequestId) return
+    if (res.code === 200 && res.data) {
+      userInfo.followCount = res.data.following ?? 0
+      userInfo.followerCount = res.data.followers ?? 0
+    } else {
+      console.error('获取我的关注统计失败:', res.message || '未知错误')
+    }
+  } catch (error) {
+    if (requestId === followCountsRequestId) {
+      console.error('获取我的关注统计失败:', error)
+    }
   }
 }
 
@@ -762,10 +786,12 @@ const confirmEdit = async () => {
 
 onMounted(() => {
   loadUserInfo()
+  loadFollowCounts()
   loadLikedPosts()
 })
 
 onUnmounted(() => {
+  followCountsRequestId++
   cardObserver?.disconnect()
 })
 </script>
@@ -780,51 +806,6 @@ onUnmounted(() => {
 .fade-in.visible {
   opacity: 1;
   transform: translateY(0);
-}
-
-/* 自定义 Element Plus 标签样式，匹配小红书风格 */
-:deep(.el-tabs__header) {
-  margin: 0;
-  border-bottom: 1px solid #e5e7eb;
-}
-
-:deep(.el-tabs__nav-wrap) {
-  padding: 0;
-}
-
-:deep(.el-tabs__nav) {
-  display: flex;
-  border: none;
-}
-
-:deep(.el-tabs__item) {
-  padding: 0 24px;
-  height: 48px;
-  line-height: 48px;
-  color: #6b7280;
-  font-size: 15px;
-  border: none;
-  position: relative;
-}
-
-:deep(.el-tabs__item.is-active) {
-  color: #111827;
-  font-weight: 500;
-}
-
-:deep(.el-tabs__item.is-active::after) {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 2px;
-  background-color: #111827;
-  transform: none;
-}
-
-:deep(.el-tabs__active-bar) {
-  display: none;
 }
 
 .dialog-footer {

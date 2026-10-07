@@ -438,7 +438,7 @@ const goToKnowledge = () => {
 }
 
 const chatContainerRef = ref(null)
-const hasMore = ref(true)
+const hasMore = ref(false) // 仅在历史消息接口确认还有未加载消息时开启
 const loadingMore = ref(false)
 const pageSize = 20
 const totalMessages = ref(0)
@@ -652,9 +652,10 @@ const selectSession = async (index) => {
         return
     }
 
-    hasMore.value = true
+    hasMore.value = false
     loadingMore.value = false
     oldestCursor.value = ''
+    totalMessages.value = 0
     messageList.value = []
 
     await loadMessageList(sessionId)
@@ -864,9 +865,9 @@ const handleCreateSession = async () => {
         if (idx !== -1) {
             // 直接设置activeIndex，不调用selectSession避免重复保存
             activeIndex.value = idx
-            // 清空消息列表，准备加载新会话
+            // 新会话没有历史消息，发送消息时也不应显示加载更多
             messageList.value = []
-            hasMore.value = true
+            hasMore.value = false
             loadingMore.value = false
             oldestCursor.value = ''
             totalMessages.value = 0

@@ -544,7 +544,19 @@ func (c *DiscoverController) ListFolders(ctx *gin.Context) {
 		return
 	}
 
-	folders, err := c.discoverService.ListFolders(ctx.Request.Context(), userId)
+	var req userreq.ListFoldersRequest
+	// 原有调用可能没有请求体，继续默认读取自己的收藏夹。
+	if ctx.Request.ContentLength != 0 {
+		if err := ctx.ShouldBind(&req); err != nil {
+			resp.Error(ctx, "参数错误", http.StatusBadRequest)
+			return
+		}
+	}
+	ownerId := req.UserId
+	if ownerId == "" {
+		ownerId = userId
+	}
+	folders, err := c.discoverService.ListFolders(ctx.Request.Context(), ownerId)
 	if err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
@@ -552,6 +564,9 @@ func (c *DiscoverController) ListFolders(ctx *gin.Context) {
 
 	var items []userresp.FolderItem
 	for _, f := range folders {
+		if ownerId != userId && !f.IsPublic {
+			continue
+		}
 		items = append(items, userresp.FolderItem{
 			Uuid:        f.Uuid,
 			Name:        f.Name,

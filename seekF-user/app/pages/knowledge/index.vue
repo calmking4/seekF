@@ -1,12 +1,18 @@
 <template>
     <div class="h-full bg-gray-100 p-4">
         <div class="bg-white rounded-lg shadow p-4 h-full flex flex-col">
-            <div class="flex items-center justify-between mb-4">
+            <div class="knowledge-header">
                 <h1 class="text-xl font-medium">知识库管理</h1>
-                <el-button type="primary" @click="showUploadDialog">
-                    <Icon name="uil:plus" class="mr-1" />
-                    上传知识文件
-                </el-button>
+                <div class="knowledge-actions">
+                    <el-button type="primary" class="header-button upload-button" @click="showUploadDialog">
+                        <Icon name="uil:upload-alt" class="button-icon" />
+                        上传知识文件
+                    </el-button>
+                    <el-button class="header-button back-button" @click="navigateTo('/aichat')">
+                        <Icon name="uil:arrow-left" class="button-icon" />
+                        返回
+                    </el-button>
+                </div>
             </div>
 
             <div v-if="docList.length === 0" class="flex-1 flex items-center justify-center text-gray-400">
@@ -224,6 +230,49 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.knowledge-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+.knowledge-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+}
+.header-button {
+    height: 40px;
+    margin-left: 0;
+    padding: 0 18px;
+    border-radius: 10px;
+    font-weight: 500;
+    transition: background-color 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.button-icon {
+    margin-right: 6px;
+    font-size: 18px;
+}
+.upload-button {
+    box-shadow: 0 3px 8px rgb(64 158 255 / 18%);
+}
+.upload-button:hover {
+    box-shadow: 0 4px 12px rgb(64 158 255 / 28%);
+}
+.back-button {
+    color: #475569;
+    background-color: #f8fafc;
+    border-color: #e2e8f0;
+}
+.back-button:hover,
+.back-button:focus-visible {
+    color: #2563eb;
+    background-color: #eff6ff;
+    border-color: #93c5fd;
+}
 .upload-area {
     border: 2px dashed #dcdfe6;
     border-radius: 8px;

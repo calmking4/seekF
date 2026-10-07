@@ -93,7 +93,12 @@
               <div class="p-3">
                 <h3 class="text-sm font-medium line-clamp-2 mb-2">{{ item.title }}</h3>
                 <div class="flex items-center justify-between text-xs text-gray-500">
-                  <div class="flex items-center gap-2">
+                  <button
+                    type="button"
+                    class="flex items-center gap-2 text-left hover:text-blue-500 disabled:cursor-default"
+                    :disabled="!item.user_id"
+                    @click.stop="navigateTo(`/user/${encodeURIComponent(item.user_id)}`)"
+                  >
                     <img
                       v-if="item.avatar"
                       :src="item.avatar"
@@ -107,7 +112,7 @@
                       {{ (item.nickname || '').slice(0, 1) }}
                     </div>
                     <span>{{ item.nickname || '匿名用户' }}</span>
-                  </div>
+                  </button>
                   <div
                     class="flex items-center gap-1 cursor-pointer"
                     :class="{ 'text-red-500': item.is_liked }"
@@ -310,6 +315,7 @@ const loadMoreSearch = async () => {
 const handleItemClick = (item) => {
   selectedItem.value = {
     id: item.uuid,
+    user_id: item.user_id,
     uid: item.uuid,
     src: item.first_url,
     coverUrl: item.cover_url || '',

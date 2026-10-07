@@ -23,10 +23,10 @@ type ToggleLikeRequest struct {
 }
 
 type AddCommentRequest struct {
-	PostUuid       string `json:"post_uuid" form:"post_uuid"`
-	ParentUuid     string `json:"parent_id" form:"parent_id"`
-	ReplyToUserId  string `json:"reply_to_user_id" form:"reply_to_user_id"`
-	Content        string `json:"content" form:"content"`
+	PostUuid      string `json:"post_uuid" form:"post_uuid"`
+	ParentUuid    string `json:"parent_id" form:"parent_id"`
+	ReplyToUserId string `json:"reply_to_user_id" form:"reply_to_user_id"`
+	Content       string `json:"content" form:"content"`
 }
 
 type ListCommentsRequest struct {
@@ -69,6 +69,10 @@ type GetFolderDetailRequest struct {
 	Uuid     string `json:"uuid" form:"uuid"`
 	Page     int    `json:"page" form:"page"`
 	PageSize int    `json:"page_size" form:"page_size"`
+}
+
+type ListFoldersRequest struct {
+	UserId string `json:"user_id" form:"user_id"` // 为空时查看自己的收藏夹
 }
 
 type CollectPostRequest struct {
