@@ -55,7 +55,7 @@ func initApp(db *gorm.DB) App {
 	discoverController := user.NewDiscoverController(discoverService)
 	followService := userservice.NewFollowService(followDAO, userInfoDAO, contactDAO, notificationDAO)
 	followController := user.NewFollowController(followService)
-	notificationService := userservice.NewNotificationService(notificationDAO, userInfoDAO)
+	notificationService := userservice.NewNotificationService(notificationDAO, userInfoDAO, discoverDAO, followDAO)
 	notificationController := user.NewNotificationController(notificationService)
 	engine := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController, wsController, aiChatController, knowledgeController, discoverController, followController, notificationController)
 	app := App{

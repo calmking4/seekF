@@ -514,6 +514,20 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 	if post == nil {
 		return nil, fmt.Errorf("帖子不存在")
 	}
+	// 回复顶级评论时客户端不传回复用户，从父评论确定通知接收者。
+	replyRecipient := replyToUserId
+	if parentUuid != "" {
+		parent, err := s.discoverDAO.FindCommentByUuid(parentUuid)
+		if err != nil {
+			return nil, fmt.Errorf("查询被回复评论失败: %w", err)
+		}
+		if parent == nil || parent.PostId != post.Id {
+			return nil, fmt.Errorf("被回复的评论不存在或不属于当前帖子")
+		}
+		if replyRecipient == "" {
+			replyRecipient = parent.UserId
+		}
+	}
 
 	commentUUID := "C" + util.GetNowAndLenRandomString(11)
 	comment := &models.DiscoverComment{
@@ -552,12 +566,12 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 	go func() {
 		if parentUuid != "" {
 			// 回复评论，通知被回复者
-			if replyToUserId != "" && replyToUserId != userId {
+			if replyRecipient != "" && replyRecipient != userId {
 				notification := &models.Notification{
-					UserId:     replyToUserId,
+					UserId:     replyRecipient,
 					ActorId:    userId,
 					Type:       NotificationTypeReply,
-					TargetUuid: postUuid,
+					TargetUuid: commentUUID,
 					Content:    "回复了你的评论：" + truncateContent(content, 50),
 				}
 				if err := s.notificationDAO.CreateNotification(notification); err != nil {
@@ -571,7 +585,7 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 					UserId:     post.UserId,
 					ActorId:    userId,
 					Type:       NotificationTypeCommentPost,
-					TargetUuid: postUuid,
+					TargetUuid: commentUUID,
 					Content:    "评论了你的帖子：" + truncateContent(content, 50),
 				}
 				if err := s.notificationDAO.CreateNotification(notification); err != nil {
@@ -965,6 +979,10 @@ func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid,
 	if existing != nil {
 		return false, 0, fmt.Errorf("该帖子已在此收藏夹中")
 	}
+	previousCollection, err := s.discoverDAO.FindCollectionByUserAndTarget(userId, postUuid)
+	if err != nil {
+		return false, 0, fmt.Errorf("查询收藏状态失败: %w", err)
+	}
 
 	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
 
@@ -977,6 +995,15 @@ func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid,
 		}
 		if err := txDiscoverDAO.CreateCollection(col); err != nil {
 			return err
+		}
+		// 收藏多个文件夹时只在首次收藏发送通知，与收藏写入保持同一事务。
+		if previousCollection == nil && post.UserId != userId {
+			if err := userdao.NewNotificationDAO(tx).CreateNotification(&models.Notification{
+				UserId: post.UserId, ActorId: userId, Type: NotificationTypeCollectPost,
+				TargetUuid: postUuid, Content: "收藏了你的帖子：" + truncateContent(post.Title, 50),
+			}); err != nil {
+				return fmt.Errorf("创建收藏通知失败: %w", err)
+			}
 		}
 
 		txDiscoverDAO.IncrementFolderPostCount(folder.Id)

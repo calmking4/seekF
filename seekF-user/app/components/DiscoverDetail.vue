@@ -316,6 +316,11 @@ const fetchDetail = async () => {
         checkCollectedFolder()
       }
       fetchComments()
+      // 通知页携带准确的评论上下文，无需依赖评论列表第一页。
+      if (props.item.initialReply) {
+        const comment = props.item.initialReply
+        startReply(comment, comment.parent_id ? { uuid: comment.parent_id } : undefined)
+      }
     }
   } catch (e) {
     console.error('获取帖子详情失败:', e)

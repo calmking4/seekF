@@ -12,7 +12,7 @@ export default defineNuxtRouteMiddleware((to) => {
     }
 
     // 需要登录的页面列表
-    const protectedRoutes = ['/chat', '/aichat', '/contact', '/discover', '/knowledge', '/my']
+    const protectedRoutes = ['/chat', '/aichat', '/contact', '/discover', '/notification', '/knowledge', '/my']
 
     // 未登录用户访问受保护页面时，跳转到登录页
     if (!user && protectedRoutes.some(route => to.path.startsWith(route))) {

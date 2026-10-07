@@ -145,6 +145,7 @@ func SetupRouter(
 			protectedGroup.POST("/notification/list", notificationController.ListNotifications)
 			protectedGroup.POST("/notification/unread-count", notificationController.GetUnreadCount)
 			protectedGroup.POST("/notification/read", notificationController.MarkAsRead)
+			protectedGroup.POST("/notification/read-category", notificationController.MarkCategoryAsRead)
 			protectedGroup.POST("/notification/read-all", notificationController.MarkAllAsRead)
 		}
 

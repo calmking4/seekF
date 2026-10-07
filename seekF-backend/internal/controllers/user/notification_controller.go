@@ -41,7 +41,7 @@ func (c *NotificationController) ListNotifications(ctx *gin.Context) {
 		req.PageSize = 20
 	}
 
-	notifications, total, err := c.notificationService.ListNotifications(ctx.Request.Context(), userId, req.Page, req.PageSize)
+	notifications, total, err := c.notificationService.ListNotifications(ctx.Request.Context(), userId, req.Page, req.PageSize, req.Category, req.UnreadOnly)
 	if err != nil {
 		zlog.Error("获取通知列表失败: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusInternalServerError)
@@ -49,10 +49,10 @@ func (c *NotificationController) ListNotifications(ctx *gin.Context) {
 	}
 
 	resp.Success(ctx, "获取成功", gin.H{
-		"list":       notifications,
-		"total":      total,
-		"page":       req.Page,
-		"page_size":  req.PageSize,
+		"list":      notifications,
+		"total":     total,
+		"page":      req.Page,
+		"page_size": req.PageSize,
 	})
 }
 
@@ -71,7 +71,13 @@ func (c *NotificationController) GetUnreadCount(ctx *gin.Context) {
 		return
 	}
 
-	resp.Success(ctx, "获取成功", gin.H{"unread_count": count})
+	counts, err := c.notificationService.GetUnreadCounts(ctx.Request.Context(), userId)
+	if err != nil {
+		zlog.Error("获取分类未读数失败: " + err.Error())
+		resp.Error(ctx, "获取分类未读数失败", http.StatusInternalServerError)
+		return
+	}
+	resp.Success(ctx, "获取成功", gin.H{"unread_count": count, "categories": counts})
 }
 
 // MarkAsRead 标记通知已读
@@ -99,6 +105,27 @@ func (c *NotificationController) MarkAsRead(ctx *gin.Context) {
 	}
 
 	resp.Success(ctx, "标记成功", nil)
+}
+
+// MarkCategoryAsRead 标记指定分类的全部通知已读。
+func (c *NotificationController) MarkCategoryAsRead(ctx *gin.Context) {
+	userId := ctx.GetString("Uuid")
+	if userId == "" {
+		resp.Error(ctx, "获取用户信息失败", http.StatusBadRequest)
+		return
+	}
+	var req userreq.MarkNotificationCategoryReadRequest
+	if err := ctx.ShouldBind(&req); err != nil {
+		resp.Error(ctx, "通知分类无效", http.StatusBadRequest)
+		return
+	}
+	lastId, err := c.notificationService.MarkCategoryAsRead(ctx.Request.Context(), userId, req.Category)
+	if err != nil {
+		zlog.Error("标记分类通知已读失败，用户: " + userId + "，分类: " + req.Category + ": " + err.Error())
+		resp.Error(ctx, "标记分类通知已读失败", http.StatusInternalServerError)
+		return
+	}
+	resp.Success(ctx, "标记成功", gin.H{"read_before_id": lastId})
 }
 
 // MarkAllAsRead 标记所有通知已读

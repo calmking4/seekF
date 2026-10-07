@@ -10,6 +10,7 @@ import (
 type DiscoverDAO interface {
 	CreatePost(post *models.DiscoverPost) error
 	FindPostByUuid(uuid string) (*models.DiscoverPost, error)
+	FindPostById(id int64) (*models.DiscoverPost, error)
 	ListPosts(page, pageSize int) ([]models.DiscoverPost, error)
 	SearchPostsByKeyword(keyword string, limit int) ([]models.DiscoverPost, error)
 	ListLikedPosts(userId string, page, pageSize int) ([]models.DiscoverPost, error)
@@ -79,6 +80,15 @@ func (d *DiscoverDAOImpl) CreatePost(post *models.DiscoverPost) error {
 func (d *DiscoverDAOImpl) FindPostByUuid(uuid string) (*models.DiscoverPost, error) {
 	var post models.DiscoverPost
 	result := d.db.Where("uuid = ?", uuid).First(&post)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &post, result.Error
+}
+
+func (d *DiscoverDAOImpl) FindPostById(id int64) (*models.DiscoverPost, error) {
+	var post models.DiscoverPost
+	result := d.db.First(&post, id)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
