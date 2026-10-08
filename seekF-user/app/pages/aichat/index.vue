@@ -119,11 +119,29 @@
                         <div
                             v-for="(msg, idx) in messageList"
                             :key="msg.messageId || idx"
+                            :ref="el => setMessageElement(msg.messageId, el)"
                             class="w-full flex mb-[30px]"
-                            :class="msg.isSelf ? 'justify-end' : 'justify-start'"
+                            :class="[msg.isSelf ? 'justify-end' : 'justify-start', { 'located-message': highlightedMessageIds.has(msg.messageId) }]"
                         >
                             <!-- AI 消息 -->
                             <div v-if="!msg.isSelf" class="ai-message-wrapper">
+                                <button
+                                    v-if="msg.posts?.length"
+                                    class="post-sources-trigger"
+                                    :class="{ active: postSourcesMessageId === msg.messageId }"
+                                    :aria-expanded="postSourcesMessageId === msg.messageId"
+                                    aria-controls="ai-post-sources"
+                                    @click="openPostSources(msg, $event)"
+                                >
+                                    <Icon name="uil:compass" class="text-base" />
+                                    <span>找到 {{ msg.posts.length }} 篇帖子</span>
+                                    <span class="source-avatars" aria-hidden="true">
+                                        <img v-for="post in msg.posts.filter(post => post.avatar).slice(0, 3)" :key="post.id" :src="post.avatar" alt="" />
+                                    </span>
+                                    <Icon name="uil:angle-right" class="text-base" />
+                                </button>
+                                <!-- 搜索来源：在帖子入口下方展开 -->
+                                <SearchSources v-if="msg.sources?.length" :sources="msg.sources" />
                                 <!-- 思考中动画 -->
                                 <div v-if="msg.isStreaming && !msg.content" class="thinking-animation">
                                     <div class="thinking-dots">
@@ -138,14 +156,6 @@
                                     v-else-if="msg.content && msg.content !== '图片'"
                                     :content="msg.content"
                                     :is-streaming="msg.isStreaming"
-                                />
-                                <!-- 搜索来源 -->
-                                <SearchSources v-if="msg.sources && msg.sources.length > 0" :sources="msg.sources" />
-                                <!-- 帖子列表 -->
-                                <DiscoverPosts
-                                    v-if="msg.posts && msg.posts.length > 0"
-                                    :posts="msg.posts"
-                                    @post-click="openDiscoverDetail"
                                 />
                                 <!-- 操作按钮 -->
                                 <div v-if="!msg.isStreaming && msg.content" class="message-actions">
@@ -172,8 +182,8 @@
                                 <div v-if="msg.type === 2 && msg.url && isImageUrl(msg.url)">
                                     <img :src="msg.url" class="max-w-[200px] rounded-lg cursor-pointer" @click="previewImage(msg.url)" />
                                 </div>
-                                <!-- 文本消息 -->
-                                <p v-else-if="msg.content && msg.content !== '图片'" class="m-0 whitespace-pre-wrap">
+                                <!-- 图片和提问文字同时展示 -->
+                                <p v-if="msg.content && msg.content !== '图片'" class="m-0 whitespace-pre-wrap" :class="{ 'mt-3': msg.type === 2 && msg.url && isImageUrl(msg.url) }">
                                     {{ msg.content }}
                                 </p>
                             </div>
@@ -184,6 +194,17 @@
                         </div>
                     </div>
                 </div>
+
+                <AIQuestionOutline
+                    v-if="questionList.length || hasMore"
+                    id="ai-question-outline"
+                    :questions="questionList"
+                    :active-id="activeQuestionId"
+                    :has-more="hasMore"
+                    :loading="loadingMore"
+                    @select="locateQuestion"
+                    @load-more="loadMoreMessages"
+                />
 
                 <!-- 输入框 -->
                 <div class="input-wrapper">
@@ -301,6 +322,21 @@
             </template>
         </main>
 
+        <Transition name="sources-backdrop">
+            <div v-if="postSourcesMessageId" class="post-sources-backdrop" aria-hidden="true" @click="closePostSources" />
+        </Transition>
+        <Transition name="sources-panel">
+            <div v-if="postSourcesMessageId" class="post-sources-shell">
+                <AIPostSourcesPanel
+                    id="ai-post-sources"
+                    :key="postSourcesMessageId"
+                    :posts="selectedPostSources"
+                    @close="closePostSources"
+                    @post-click="openDiscoverDetail"
+                />
+            </div>
+        </Transition>
+
         <!-- 帖子详情弹窗 -->
         <DiscoverDetail
             v-if="showDiscoverDetail && selectedDiscoverItem"
@@ -320,7 +356,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import AIPostSourcesPanel from '~/components/AIPostSourcesPanel.vue'
 
 // 页面级 SEO
 useSeoMeta({
@@ -392,6 +429,26 @@ const useKnowledgeBase = ref(false)
 const useWebSearch = ref(false)
 const showDiscoverDetail = ref(false)
 const selectedDiscoverItem = ref(null)
+const postSourcesMessageId = ref('')
+const selectedPostSources = computed(() =>
+    messageList.value.find(msg => msg.messageId === postSourcesMessageId.value)?.posts || []
+)
+let postSourcesTrigger = null
+
+const openPostSources = (msg, event) => {
+    postSourcesTrigger = event?.currentTarget || null
+    postSourcesMessageId.value = msg.messageId
+}
+
+const closePostSources = () => {
+    postSourcesMessageId.value = ''
+    if (postSourcesTrigger?.isConnected) postSourcesTrigger.focus({ preventScroll: true })
+    postSourcesTrigger = null
+}
+
+const handleSourcesKeydown = (event) => {
+    if (event.key === 'Escape' && !showDiscoverDetail.value && !showImageViewer.value) closePostSources()
+}
 
 // 图片预览状态
 const showImageViewer = ref(false)
@@ -438,6 +495,40 @@ const goToKnowledge = () => {
 }
 
 const chatContainerRef = ref(null)
+const questionList = computed(() => messageList.value.filter(msg => msg.isSelf))
+const activeQuestionId = ref('')
+const highlightedMessageIds = ref(new Set())
+const messageElements = new Map()
+const followLatest = ref(true)
+let highlightTimer
+
+const setMessageElement = (id, el) => {
+    if (el) messageElements.set(id, el)
+    else messageElements.delete(id)
+}
+
+const locateQuestion = async (id) => {
+    followLatest.value = false
+    activeQuestionId.value = id
+    const index = messageList.value.findIndex(msg => msg.messageId === id)
+    const ids = new Set([id])
+    for (let i = index + 1; index !== -1 && i < messageList.value.length && !messageList.value[i].isSelf; i++) {
+        ids.add(messageList.value[i].messageId)
+    }
+    highlightedMessageIds.value = ids
+    clearTimeout(highlightTimer)
+    highlightTimer = setTimeout(() => { highlightedMessageIds.value = new Set() }, 1800)
+    await nextTick()
+    const container = chatContainerRef.value
+    const element = messageElements.get(id)
+    if (container && element) {
+        container.scrollTo({
+            top: container.scrollTop + element.getBoundingClientRect().top - container.getBoundingClientRect().top - 24,
+            behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+        })
+    }
+}
+
 const hasMore = ref(false) // 仅在历史消息接口确认还有未加载消息时开启
 const loadingMore = ref(false)
 const pageSize = 20
@@ -493,11 +584,11 @@ const mergeCacheTailIfNewer = (sessionId) => {
     }
 }
 
-const updateCachedMessage = (sessionId, aiMsgIndex, updater) => {
+const updateCachedMessage = (sessionId, aiMessageId, updater) => {
     const cache = sessionCaches.get(sessionId)
-    const cacheMsg = cache?.messages[aiMsgIndex]
+    const cacheMsg = cache?.messages.find(msg => msg.messageId === aiMessageId)
     const listMsg = currentSession.value?.sessionId === sessionId
-        ? messageList.value[aiMsgIndex]
+        ? messageList.value.find(msg => msg.messageId === aiMessageId)
         : null
 
     // 浅拷贝缓存时可能与 messageList 共享同一对象，避免对同一引用执行两次 updater
@@ -524,6 +615,15 @@ const currentSession = computed(() => {
     if (activeIndex.value === -1) return null
     return sessionList.value[activeIndex.value]
 })
+
+watch(() => currentSession.value?.sessionId, () => {
+    postSourcesMessageId.value = ''
+    postSourcesTrigger = null
+    followLatest.value = true
+    activeQuestionId.value = ''
+    highlightedMessageIds.value = new Set()
+    clearTimeout(highlightTimer)
+}, { flush: 'sync' })
 
 const selectedImagePreview = computed(() => {
     if (!selectedImage.value) return ''
@@ -582,6 +682,7 @@ const openDiscoverDetail = (post) => {
     selectedDiscoverItem.value = {
         id: post.id,
         src: post.src,
+        type: Number(post.media_type) === 1 || /\.(mp4|webm|mov|m4v|avi|mkv|m3u8)(?:$|[?#])/i.test(post.src || '') ? 'video' : 'image',
         title: post.title,
         avatar: post.avatar,
         nickname: post.nickname
@@ -592,7 +693,7 @@ const openDiscoverDetail = (post) => {
 // 滚动到底部
 const scrollToBottom = () => {
     nextTick(() => {
-        if (chatContainerRef.value) {
+        if (chatContainerRef.value && followLatest.value) {
             chatContainerRef.value.scrollTop = chatContainerRef.value.scrollHeight
         }
     })
@@ -600,7 +701,18 @@ const scrollToBottom = () => {
 
 // 滚动到顶部加载更多
 const handleScroll = () => {
-    if (chatContainerRef.value && chatContainerRef.value.scrollTop < 50) {
+    const container = chatContainerRef.value
+    if (!container) return
+    followLatest.value = container.scrollHeight - container.scrollTop - container.clientHeight < 80
+    const top = container.getBoundingClientRect().top + 80
+    let visibleId = questionList.value[0]?.messageId || ''
+    for (const question of questionList.value) {
+        const element = messageElements.get(question.messageId)
+        if (element && element.getBoundingClientRect().top <= top) visibleId = question.messageId
+        else break
+    }
+    activeQuestionId.value = visibleId
+    if (container.scrollTop < 50) {
         loadMoreMessages()
     }
 }
@@ -669,11 +781,12 @@ const loadMessageList = async (sessionId, cursor = '', direction = 'prev') => {
         if (!sessionId) return
 
         const data = await aiChat.getMessageHistory(sessionId, pageSize, cursor, direction)
+        if (currentSession.value?.sessionId !== sessionId) return
         const list = data.list || []
         totalMessages.value = data.total || 0
 
         const messages = list.map(msg => ({
-            messageId: msg.session_id + '_' + msg.created_at,
+            messageId: msg.session_id + '_' + msg.send_id + '_' + msg.created_at,
             content: msg.content,
             senderName: msg.send_name,
             sendTime: msg.created_at,
@@ -709,13 +822,15 @@ const loadMoreMessages = async () => {
     loadingMore.value = true
 
     const oldScrollHeight = chatContainerRef.value?.scrollHeight || 0
+    const oldScrollTop = chatContainerRef.value?.scrollTop || 0
+    const sessionId = currentSession.value.sessionId
 
-    await loadMessageList(currentSession.value.sessionId, oldestCursor.value, 'prev')
+    await loadMessageList(sessionId, oldestCursor.value, 'prev')
 
     nextTick(() => {
-        if (chatContainerRef.value) {
+        if (chatContainerRef.value && currentSession.value?.sessionId === sessionId) {
             const newScrollHeight = chatContainerRef.value.scrollHeight
-            chatContainerRef.value.scrollTop = newScrollHeight - oldScrollHeight
+            chatContainerRef.value.scrollTop = oldScrollTop + newScrollHeight - oldScrollHeight
         }
     })
 
@@ -757,9 +872,9 @@ const sendMessage = async () => {
     }
 
     // 添加 AI 流式消息占位
-    const aiMsgIndex = messageList.value.length
+    const aiMessageId = 'ai_' + Date.now()
     messageList.value.push({
-        messageId: 'ai_' + Date.now(),
+        messageId: aiMessageId,
         content: '',
         senderName: 'AI 助手',
         sendTime: '',
@@ -775,6 +890,7 @@ const sendMessage = async () => {
     saveCurrentSessionCache()
     activeStreamSessions.value.add(sessionId)
     activeStreamSessions.value = new Set(activeStreamSessions.value)
+    followLatest.value = true
     scrollToBottom()
 
     const streamHandle = aiChat.sendMessage(
@@ -786,7 +902,7 @@ const sendMessage = async () => {
         useWebSearch.value,
         // onChunk
         (chunk) => {
-            updateCachedMessage(sessionId, aiMsgIndex, (aiMsg) => {
+            updateCachedMessage(sessionId, aiMessageId, (aiMsg) => {
                 aiMsg.content += chunk
             })
             if (currentSession.value?.sessionId === sessionId) {
@@ -795,26 +911,26 @@ const sendMessage = async () => {
         },
         // onSources
         (sources) => {
-            updateCachedMessage(sessionId, aiMsgIndex, (aiMsg) => {
+            updateCachedMessage(sessionId, aiMessageId, (aiMsg) => {
                 aiMsg.sources = sources
             })
         },
         // onPosts
         (posts) => {
-            updateCachedMessage(sessionId, aiMsgIndex, (aiMsg) => {
+            updateCachedMessage(sessionId, aiMessageId, (aiMsg) => {
                 aiMsg.posts = posts
             })
         },
         // onComplete
         () => {
-            updateCachedMessage(sessionId, aiMsgIndex, (aiMsg) => {
+            updateCachedMessage(sessionId, aiMessageId, (aiMsg) => {
                 aiMsg.isStreaming = false
                 aiMsg.sendTime = timeStr()
             })
             activeStreams.delete(sessionId)
             activeStreamSessions.value.delete(sessionId)
             activeStreamSessions.value = new Set(activeStreamSessions.value)
-            const aiMsg = sessionCaches.get(sessionId)?.messages[aiMsgIndex]
+            const aiMsg = sessionCaches.get(sessionId)?.messages.find(msg => msg.messageId === aiMessageId)
             const s = sessionList.value.find(item => item.sessionId === sessionId)
             if (s && aiMsg) {
                 s.lastMessage = aiMsg.content
@@ -826,7 +942,7 @@ const sendMessage = async () => {
         },
         // onError
         (error) => {
-            updateCachedMessage(sessionId, aiMsgIndex, (aiMsg) => {
+            updateCachedMessage(sessionId, aiMessageId, (aiMsg) => {
                 aiMsg.isStreaming = false
                 if (!aiMsg.content) {
                     aiMsg.content = '抱歉，响应出现错误：' + error
@@ -909,12 +1025,15 @@ const handleDeleteSession = async (item, index) => {
 
 onMounted(async () => {
     document.addEventListener('click', closeMenus)
+    document.addEventListener('keydown', handleSourcesKeydown)
     await getCurrentUserInfo()
     await loadSessionList()
 })
 
 onUnmounted(() => {
+    clearTimeout(highlightTimer)
     document.removeEventListener('click', closeMenus)
+    document.removeEventListener('keydown', handleSourcesKeydown)
     for (const sessionId of activeStreams.keys()) {
         stopSessionStream(sessionId)
     }
@@ -1083,7 +1202,70 @@ onUnmounted(() => {
     padding: 40px 0 220px;
 }
 
+.located-message .user-message { background: #eaf2ff; }
+.located-message .ai-message-wrapper { border-radius: 12px; background: #eaf2ff; box-shadow: 0 0 0 10px #eaf2ff; }
+.user-message, .ai-message-wrapper { transition: background .3s ease; }
+
 /* AI 消息 */
+.post-sources-trigger,
+:deep(.search-sources-trigger) {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    max-width: 100%;
+    margin-bottom: 16px;
+    padding: 6px 8px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: #8a8a8a;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+.post-sources-trigger:hover,
+.post-sources-trigger.active,
+:deep(.search-sources-trigger:hover),
+:deep(.search-sources-trigger.active) { color: #374151; background: #eceff3; }
+.post-sources-trigger:focus-visible,
+:deep(.search-sources-trigger:focus-visible) { outline: 2px solid #0073ff; outline-offset: 2px; }
+.source-avatars { display: flex; flex-shrink: 0; padding-left: 4px; }
+.source-avatars img { width: 20px; height: 20px; margin-left: -4px; border: 2px solid #f7f7f7; border-radius: 50%; object-fit: cover; }
+.post-sources-backdrop { display: none; }
+.post-sources-shell {
+    --post-sources-width: clamp(320px, 30vw, 420px);
+    flex: 0 0 var(--post-sources-width);
+    width: var(--post-sources-width);
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
+    z-index: 30;
+}
+.sources-panel-enter-active {
+    transition: flex-basis .3s cubic-bezier(.22, 1, .36, 1), width .3s cubic-bezier(.22, 1, .36, 1), transform .3s cubic-bezier(.22, 1, .36, 1), opacity .3s ease;
+}
+.sources-panel-leave-active {
+    transition: flex-basis .22s ease, width .22s ease, transform .22s ease, opacity .22s ease;
+}
+.sources-panel-enter-from,
+.sources-panel-leave-to { flex-basis: 0; width: 0; opacity: 0; transform: translateX(24px); }
+.sources-backdrop-enter-active,
+.sources-backdrop-leave-active { transition: opacity .22s ease; }
+.sources-backdrop-enter-from,
+.sources-backdrop-leave-to { opacity: 0; }
+@media (max-width: 1100px) {
+    .post-sources-backdrop { display: block; position: fixed; inset: 0; z-index: 25; background: rgba(0, 0, 0, .16); }
+    .post-sources-shell { --post-sources-width: min(420px, 90vw); position: fixed; top: 0; right: 0; bottom: 0; box-shadow: -8px 0 32px rgba(0, 0, 0, .08); }
+    .sources-panel-enter-from,
+    .sources-panel-leave-to { width: var(--post-sources-width); transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .sources-panel-enter-active,
+    .sources-panel-leave-active,
+    .sources-backdrop-enter-active,
+    .sources-backdrop-leave-active { transition: none; }
+}
+
 .ai-message-wrapper {
     max-width: 80%;
     font-size: 16px;

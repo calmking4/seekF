@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"seekF-backend/internal/pkg/db"
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
+	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/zlog"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -18,6 +18,8 @@ import (
 type DiscoverPostItem struct {
 	ID           string   `json:"id"`
 	Src          string   `json:"src"`
+	MediaType    int8     `json:"media_type"`
+	CoverUrl     string   `json:"cover_url"`
 	Title        string   `json:"title"`
 	Avatar       string   `json:"avatar"`
 	Nickname     string   `json:"nickname"`
@@ -180,6 +182,8 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 		postItems = append(postItems, DiscoverPostItem{
 			ID:           post.Uuid,
 			Src:          src,
+			MediaType:    post.MediaType,
+			CoverUrl:     post.CoverUrl,
 			Title:        post.Title,
 			Avatar:       avatar,
 			Nickname:     nickname,
