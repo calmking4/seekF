@@ -301,13 +301,22 @@
                                 </div>
                             </div>
 
-                            <button
-                                class="send-btn"
-                                :disabled="isStreaming || (!inputMessage.trim() && !selectedImage)"
-                                @click="sendMessage"
-                            >
-                                <Icon name="uil:message" class="text-xl" />
-                            </button>
+                            <div class="flex items-center gap-3">
+                                <SpeechInput
+                                    ref="voiceInputRef"
+                                    :key="currentSession?.sessionId"
+                                    :disabled="isStreaming"
+                                    @transcript="appendVoiceText"
+                                    @busy-change="voiceBusy = $event"
+                                />
+                                <button
+                                    class="send-btn"
+                                    :disabled="isStreaming || voiceBusy || (!inputMessage.trim() && !selectedImage)"
+                                    @click="sendMessage"
+                                >
+                                    <Icon name="uil:message" class="text-xl" />
+                                </button>
+                            </div>
                         </div>
 
                         <input
@@ -419,6 +428,14 @@ const sessionList = ref([])
 const activeIndex = ref(-1)
 const messageList = ref([])
 const inputMessage = ref('')
+const voiceBusy = ref(false)
+const voiceInputRef = ref(null)
+const appendVoiceText = async (text) => {
+    inputMessage.value += (inputMessage.value && !/\s$/.test(inputMessage.value) ? '\n' : '') + text
+    await nextTick()
+    autoResize()
+    textareaRef.value?.focus()
+}
 const activeStreamSessions = ref(new Set())
 const isStreaming = computed(() => {
     const sid = currentSession.value?.sessionId
@@ -617,6 +634,7 @@ const currentSession = computed(() => {
 })
 
 watch(() => currentSession.value?.sessionId, () => {
+    voiceInputRef.value?.cancel()
     postSourcesMessageId.value = ''
     postSourcesTrigger = null
     followLatest.value = true
@@ -839,7 +857,7 @@ const loadMoreMessages = async () => {
 
 // 发送消息
 const sendMessage = async () => {
-    if (activeIndex.value === -1 || isStreaming.value) return
+    if (activeIndex.value === -1 || isStreaming.value || voiceBusy.value) return
 
     const session = currentSession.value
     if (!session) return
@@ -1393,6 +1411,7 @@ onUnmounted(() => {
 }
 
 .input-box {
+    position: relative;
     width: min(900px, calc(100% - 80px));
     pointer-events: auto;
     background: white;

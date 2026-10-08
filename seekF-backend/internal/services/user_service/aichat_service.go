@@ -15,6 +15,7 @@ import (
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
 	aipkg "seekF-backend/internal/pkg/ai"
+	"seekF-backend/internal/pkg/ai/asr"
 	mcppkg "seekF-backend/internal/pkg/ai/mcp"
 	toolpkg "seekF-backend/internal/pkg/ai/mcp/tool"
 	"seekF-backend/internal/pkg/ai/tts"
@@ -42,22 +43,29 @@ type AIChatService interface {
 	DeleteSession(sessionId string) error
 	// TextToSpeech 流式文本转语音，返回流式结果
 	TextToSpeech(ctx context.Context, content string, voice string) (*tts.StreamResult, error)
+	// SpeechToText 使用GLM-ASR-2512流式识别录音。
+	SpeechToText(ctx context.Context, audio []byte) (*asr.StreamResult, error)
+}
+
+// SpeechToText 将录音转换为流式识别结果。
+func (s *AIChatServiceImpl) SpeechToText(ctx context.Context, audio []byte) (*asr.StreamResult, error) {
+	return asr.Transcribe(ctx, audio)
 }
 
 // AIChatServiceImpl AI聊天服务实现
 type AIChatServiceImpl struct {
-	sessionDAO      userdao.SessionDAO
-	messageDAO      userdao.MessageDAO
-	userInfoDAO     userdao.UserInfoDAO
+	sessionDAO       userdao.SessionDAO
+	messageDAO       userdao.MessageDAO
+	userInfoDAO      userdao.UserInfoDAO
 	knowledgeService KnowledgeService
 }
 
 // NewAIChatService 创建AI聊天服务实例
 func NewAIChatService(sessionDAO userdao.SessionDAO, messageDAO userdao.MessageDAO, userInfoDAO userdao.UserInfoDAO, knowledgeService KnowledgeService) AIChatService {
 	return &AIChatServiceImpl{
-		sessionDAO:      sessionDAO,
-		messageDAO:      messageDAO,
-		userInfoDAO:     userInfoDAO,
+		sessionDAO:       sessionDAO,
+		messageDAO:       messageDAO,
+		userInfoDAO:      userInfoDAO,
 		knowledgeService: knowledgeService,
 	}
 }

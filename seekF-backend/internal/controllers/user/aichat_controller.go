@@ -10,6 +10,7 @@ import (
 	"time"
 
 	userreq "seekF-backend/internal/dto/user/user_req"
+	"seekF-backend/internal/pkg/ai/asr"
 	tool "seekF-backend/internal/pkg/ai/mcp/tool"
 	"seekF-backend/internal/pkg/resp"
 	"seekF-backend/internal/pkg/upload/oss"
@@ -19,11 +20,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// AIChatController 处理AI会话、消息和语音请求。
 type AIChatController struct {
 	aiChatService userservice.AIChatService
 	fileService   userservice.FileService
 }
 
+// NewAIChatController 创建AI聊天控制器。
 func NewAIChatController(aiChatService userservice.AIChatService, fileService userservice.FileService) *AIChatController {
 	return &AIChatController{
 		aiChatService: aiChatService,
@@ -31,6 +34,7 @@ func NewAIChatController(aiChatService userservice.AIChatService, fileService us
 	}
 }
 
+// CreateSession 创建用户的AI会话。
 func (c *AIChatController) CreateSession(ctx *gin.Context) {
 	var req userreq.CreateAISessionRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -50,6 +54,7 @@ func (c *AIChatController) CreateSession(ctx *gin.Context) {
 	resp.Success(ctx, "创建AI会话成功", result)
 }
 
+// GetSessionList 分页获取用户的AI会话列表。
 func (c *AIChatController) GetSessionList(ctx *gin.Context) {
 	var req userreq.GetAISessionListRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -69,6 +74,7 @@ func (c *AIChatController) GetSessionList(ctx *gin.Context) {
 	resp.Success(ctx, "获取AI会话列表成功", result)
 }
 
+// GetMessageHistory 按游标分页获取AI会话的消息历史。
 func (c *AIChatController) GetMessageHistory(ctx *gin.Context) {
 	var req userreq.GetAIMessageHistoryRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -90,6 +96,7 @@ func (c *AIChatController) GetMessageHistory(ctx *gin.Context) {
 	})
 }
 
+// SendMessage 发送文本或图片消息，通过SSE返回AI回答和参考来源。
 func (c *AIChatController) SendMessage(ctx *gin.Context) {
 	var req userreq.SendAIMessageRequest
 	if err := ctx.ShouldBind(&req); err != nil {
@@ -118,6 +125,7 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 
 	userId := ctx.GetString("Uuid")
 
+	// 推送AI回答的文本片段。
 	onChunk := func(chunk string) error {
 		// 对内容进行转义处理，防止换行符和引号破坏JSON格式
 		escaped := strings.ReplaceAll(chunk, "\n", "\\n")
@@ -132,6 +140,7 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 		return nil
 	}
 
+	// 推送网页搜索来源。
 	onSources := func(sources []tool.SearchSource) error {
 		sourcesJSON, _ := json.Marshal(sources)
 		_, err := fmt.Fprintf(ctx.Writer, "data: {\"sources\": %s}\n\n", sourcesJSON)
@@ -142,6 +151,7 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 		return nil
 	}
 
+	// 推送搜索到的相关帖子。
 	onPosts := func(posts []tool.DiscoverPostItem) error {
 		postsJSON, _ := json.Marshal(posts)
 		_, err := fmt.Fprintf(ctx.Writer, "data: {\"posts\": %s}\n\n", postsJSON)
@@ -152,6 +162,7 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 		return nil
 	}
 
+	// 通知前端回答生成完成。
 	onComplete := func(fullContent string) error {
 		_, err := fmt.Fprintf(ctx.Writer, "data: {\"done\": true}\n\n")
 		if err != nil {
@@ -173,6 +184,64 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 	}
 }
 
+// SpeechToText 校验上传录音并实时转发识别事件流。
+func (c *AIChatController) SpeechToText(ctx *gin.Context) {
+	// 在录音大小上限之外预留multipart表单开销。
+	ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, asr.MaxAudioBytes+64*1024)
+	if err := ctx.Request.ParseMultipartForm(asr.MaxAudioBytes + 64*1024); err != nil {
+		resp.Error(ctx, "录音上传失败，文件过大或格式无效", http.StatusBadRequest)
+		return
+	}
+	defer ctx.Request.MultipartForm.RemoveAll()
+	file, _, err := ctx.Request.FormFile("file")
+	if err != nil {
+		resp.Error(ctx, "请上传录音文件", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	audio, err := io.ReadAll(io.LimitReader(file, asr.MaxAudioBytes+1))
+	if err != nil {
+		resp.Error(ctx, "读取录音失败，请重新录音", http.StatusBadRequest)
+		return
+	}
+	if err := asr.ValidateRecording(audio); err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+	result, err := c.aiChatService.SpeechToText(ctx.Request.Context(), audio)
+	if err != nil {
+		zlog.Error("语音识别失败，用户ID=" + ctx.GetString("Uuid") + ": " + err.Error())
+		resp.Error(ctx, "语音识别失败，请稍后重试", http.StatusBadGateway)
+		return
+	}
+	defer result.Body.Close()
+	ctx.Header("Content-Type", "text/event-stream")
+	ctx.Header("Cache-Control", "no-cache")
+	ctx.Header("X-Accel-Buffering", "no")
+	ctx.Status(http.StatusOK)
+	ctx.Writer.Flush()
+	// 每次读取后立即刷新，取消请求时由上下文终止供应商连接。
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := result.Body.Read(buf)
+		if n > 0 {
+			if _, err := ctx.Writer.Write(buf[:n]); err != nil {
+				return
+			}
+			ctx.Writer.Flush()
+		}
+		if readErr != nil {
+			if readErr != io.EOF && ctx.Request.Context().Err() == nil {
+				zlog.Error("读取语音识别流失败，用户ID=" + ctx.GetString("Uuid") + ": " + readErr.Error())
+				fmt.Fprint(ctx.Writer, "data: {\"error\":{\"message\":\"语音识别连接中断，请重试\"}}\n\n")
+				ctx.Writer.Flush()
+			}
+			return
+		}
+	}
+}
+
+// TextToSpeech 将文字转换为语音，流式返回PCM音频。
 func (c *AIChatController) TextToSpeech(ctx *gin.Context) {
 	var req userreq.TTSRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -216,6 +285,7 @@ func (c *AIChatController) TextToSpeech(ctx *gin.Context) {
 	}
 }
 
+// DeleteSession 删除指定的AI会话。
 func (c *AIChatController) DeleteSession(ctx *gin.Context) {
 	var req userreq.DeleteAISessionRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {

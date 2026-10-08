@@ -92,6 +92,7 @@ type AIModelConfig struct {
 	GlmEmbeddingModel string `toml:"glmEmbeddingModel"`
 	TTSModel          string `toml:"ttsModel"`
 	TTSVoice          string `toml:"ttsVoice"`
+	ASRModel          string `toml:"asrModel"`
 	QwenLocalApiKey   string `toml:"qwenLocalApiKey"`
 	QwenLocalModel    string `toml:"qwenLocalModel"`
 	QwenLocalBaseUrl  string `toml:"qwenLocalBaseUrl"`
@@ -271,6 +272,9 @@ func loadEnvConfig(cfg *Config) {
 	}
 	if v := os.Getenv("TTS_VOICE"); v != "" {
 		cfg.AIModelConfig.TTSVoice = v
+	}
+	if v := os.Getenv("ASR_MODEL"); v != "" {
+		cfg.AIModelConfig.ASRModel = v
 	}
 	if v := os.Getenv("QWEN_LOCAL_API_KEY"); v != "" {
 		cfg.AIModelConfig.QwenLocalApiKey = v

@@ -93,6 +93,7 @@ qwenLocalMaxTokens = 4096
 glmEmbeddingModel = ""
 ttsModel = "glm-tts"
 ttsVoice = "chuichui"
+asrModel = "glm-asr-2512"
 
 # 多模态模型列表（支持图片输入的模型）
 multimodalModels = ["glm-4v", "qwen-local"]
