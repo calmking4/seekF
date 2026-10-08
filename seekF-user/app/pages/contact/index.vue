@@ -7,26 +7,8 @@
       <!-- 顶部搜索栏 - 参考样式 -->
       <SearchBar />
 
-      <!-- 通知入口 - 箭头替换为 Nuxt Icon -->
-      <div class="border-t">
-        <div
-          class="flex items-center justify-between px-3 py-2 hover:bg-gray-50 cursor-pointer"
-          @click="currentView = 'friendNotification'"
-        >
-          <span>好友通知</span>
-          <Icon name="uil:angle-right" class="text-gray-400" />
-        </div>
-        <div
-          class="flex items-center justify-between px-3 py-2 hover:bg-gray-50 cursor-pointer"
-          @click="currentView = 'groupNotification'"
-        >
-          <span>群通知</span>
-          <Icon name="uil:angle-right" class="text-gray-400" />
-        </div>
-      </div>
-
       <!-- 好友/群聊切换 -->
-      <el-tabs v-model="activeTab" class="flex-1 overflow-y-auto" @tab-click="handleTabClick">
+      <el-tabs v-model="activeTab" class="flex-1 overflow-y-auto [&_.el-tabs\_\_nav-scroll]:flex [&_.el-tabs\_\_nav-scroll]:justify-center [&_.el-tabs\_\_nav]:!float-none [&_.el-tabs\_\_nav]:gap-10 [&_.el-tabs\_\_item]:!px-2" @tab-click="handleTabClick">
         <!-- 好友列表 -->
         <el-tab-pane label="好友" name="friend">
           <div class="py-1">
@@ -52,27 +34,37 @@
         <el-tab-pane label="群聊" name="group">
           <div class="py-1">
             <div
-              v-for="group in groupCategories"
+              v-for="(group, index) in groupCategories"
               :key="group.name"
               class="border-b last:border-b-0"
             >
-              <div
-                class="flex items-center justify-between px-3 py-1.5 hover:bg-gray-50 cursor-pointer"
+              <button
+                type="button"
+                :aria-expanded="!!group.expanded"
+                :aria-controls="`contact-group-${index}`"
+                class="flex w-full items-center justify-between px-3 py-2 text-left transition-colors hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
                 @click="group.expanded = !group.expanded"
               >
                 <div class="flex items-center gap-2">
                   <!-- 箭头替换为 Nuxt Icon 并添加旋转效果 -->
                   <Icon 
                     name="uil:angle-right" 
-                    class="text-gray-400 transition-transform duration-200"
+                    class="text-gray-400 transition-transform duration-[360ms] ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none"
                     :class="{ 'rotate-90': group.expanded }"
                   />
                   <span>{{ group.name }}</span>
                 </div>
                 <span class="text-xs text-gray-400">{{ group.count }}</span>
-              </div>
-              <transition name="el-collapse-transition">
-                <div v-if="group.expanded" class="bg-gray-50">
+              </button>
+              <!-- 保留列表节点，通过网格行高和透明度实现可中断的展开与收起。 -->
+              <div
+                :id="`contact-group-${index}`"
+                :aria-hidden="!group.expanded"
+                :inert="!group.expanded"
+                class="grid transition-[grid-template-rows,opacity] duration-[360ms] ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none"
+                :class="group.expanded ? 'grid-rows-[1fr] opacity-100' : 'pointer-events-none grid-rows-[0fr] opacity-0'"
+              >
+                <div class="min-h-0 overflow-hidden bg-gray-50">
                   <div
                     v-for="item in group.list"
                     :key="item.group_id || item.id"
@@ -83,7 +75,7 @@
                     <span class="text-sm">{{ item.group_name || item.name }}</span>
                   </div>
                 </div>
-              </transition>
+              </div>
             </div>
           </div>
         </el-tab-pane>
@@ -107,167 +99,6 @@
 
       <!-- 内容区 -->
       <div class="flex-1 min-h-0 overflow-y-auto">
-        <!-- 好友通知视图 -->
-        <div v-if="currentView === 'friendNotification'" class="p-4">
-          
-          <!-- 别人申请加我好友 -->
-          <div v-if="friendRequests.length > 0" class="mb-4">
-            <h3 class="text-sm font-medium mb-2">收到的请求</h3>
-            <div class="space-y-2">
-              <div v-for="req in friendRequests" :key="req.contact_id" class="flex items-start gap-3 px-4 py-3 bg-white rounded-lg hover:bg-gray-50">
-                <el-avatar :size="44" :src="req.contact_avatar" class="flex-shrink-0" />
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                      <div class="flex items-center min-w-0 gap-2">
-                        <div class="text-sm font-medium text-gray-900 truncate min-w-0">
-                          {{ req.status === 1 ? (req.is_received ? '已同意加好友：' + req.contact_name : '对方已同意加好友：' + req.contact_name) : (req.is_received ? req.contact_name + ' 请求加为好友' : '请求加为好友：' + req.contact_name) }}
-                        </div>
-                        <span class="text-sm text-gray-500 font-normal whitespace-nowrap">
-                          {{ formatApplyTime(req.apply_time) }}
-                        </span>
-                      </div>
-                    </div>
-                    <div v-if="req.status !== 0" class="text-xs text-gray-500 font-medium whitespace-nowrap">
-                      {{ getApplyStatusText(req.status) }}
-                    </div>
-                  </div>
-                  <div class="text-xs text-gray-500 mt-1 whitespace-nowrap">
-                    {{ req.message }}
-                  </div>
-                </div>
-                <div v-if="req.status === 0" class="flex gap-2 justify-center items-center">
-                  <el-button type="primary" size="small" @click="passFriendRequest(req.contact_id)">同意</el-button>
-                  <el-button size="small" @click="refuseFriendRequest(req.contact_id)">拒绝</el-button>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <!-- 我申请别人的状态 -->
-          <div v-if="myFriendApplies.length > 0" class="mb-4">
-            <h3 class="text-sm font-medium mb-2">发出的请求</h3>
-            <div class="space-y-3">
-              <div
-                v-for="apply in myFriendApplies"
-                :key="apply.contact_id"
-                class="flex items-start gap-3 px-4 py-3 bg-white rounded-lg hover:bg-gray-50"
-              >
-                <el-avatar :size="44" :src="apply.contact_avatar" class="flex-shrink-0" />
-
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                      <div class="flex items-center min-w-0 gap-2">
-                        <div class="text-sm font-medium text-gray-900 truncate min-w-0">
-                          {{ getApplyMainText(apply) }}
-                        </div>
-                        <span class="text-sm text-gray-500 font-normal whitespace-nowrap">
-                          {{ formatApplyTime(apply.apply_time) }}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div class="text-xs text-gray-500 font-medium whitespace-nowrap">
-                      {{ getApplyStatusText(apply.status) }}
-                    </div>
-                  </div>
-
-                  <div v-if="apply.status === 0" class="text-xs text-gray-500 mt-1 whitespace-nowrap">
-                    申请理由：{{ getApplyRemark(apply.message) }}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <div v-if="friendRequests.length === 0 && myFriendApplies.length === 0" class="p-8 text-center text-gray-500">
-            暂无好友通知
-          </div>
-        </div>
-        
-        <!-- 群通知视图 -->
-        <div v-if="currentView === 'groupNotification'" class="p-4">
-          
-          <!-- 别人申请加入我的群 -->
-          <div v-if="groupRequests.length > 0" class="mb-4">
-            <h3 class="text-sm font-medium mb-2">收到的请求</h3>
-            <div class="space-y-2">
-              <div v-for="req in groupRequests" :key="req.user_id + req.group_id" class="flex items-start gap-3 px-4 py-3 bg-white rounded-lg hover:bg-gray-50">
-                <el-avatar :size="44" :src="req.contact_avatar" class="flex-shrink-0" />
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                      <div class="flex items-center min-w-0 gap-2">
-                        <div class="text-sm font-medium text-gray-900 truncate min-w-0">
-                          {{ req.status === 1 ? (req.is_received ? '已同意加入群聊：' + req.contact_name : '对方已同意加入群聊：' + req.contact_name) : (req.is_received ? req.contact_name + ' 请求加入群聊' : '请求加入群聊：' + req.contact_name) }}
-                        </div>
-                        <span class="text-sm text-gray-500 font-normal whitespace-nowrap">
-                          {{ formatApplyTime(req.apply_time) }}
-                        </span>
-                      </div>
-                    </div>
-                    <div v-if="req.status !== 0" class="text-xs text-gray-500 font-medium whitespace-nowrap">
-                      {{ getApplyStatusText(req.status) }}
-                    </div>
-                  </div>
-                  <div class="text-xs text-gray-500 mt-1 whitespace-nowrap">
-                    群聊名称：{{ req.group_name }}
-                  </div>
-                  <div class="text-xs text-gray-500 mt-1 whitespace-nowrap">
-                    {{ req.message }}
-                  </div>
-                </div>
-                <div v-if="req.status === 0" class="flex gap-2 justify-center items-center">
-                  <el-button type="primary" size="small" @click="passGroupRequest(req.user_id, req.group_id)">同意</el-button>
-                  <el-button size="small" @click="refuseGroupRequest(req.user_id, req.group_id)">拒绝</el-button>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <!-- 我申请加入别人的群的状态 -->
-          <div v-if="myGroupApplies.length > 0" class="mb-4">
-            <h3 class="text-sm font-medium mb-2">发出的请求</h3>
-            <div class="space-y-3">
-              <div
-                v-for="apply in myGroupApplies"
-                :key="apply.contact_id"
-                class="flex items-start gap-3 px-4 py-3 bg-white rounded-lg hover:bg-gray-50"
-              >
-                <el-avatar :size="44" :src="apply.contact_avatar" class="flex-shrink-0" />
-
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                      <div class="flex items-center min-w-0 gap-2">
-                        <div class="text-sm font-medium text-gray-900 truncate min-w-0">
-                          {{ getApplyMainText(apply) }}
-                        </div>
-                        <span class="text-sm text-gray-500 font-normal whitespace-nowrap">
-                          {{ formatApplyTime(apply.apply_time) }}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div class="text-xs text-gray-500 font-medium whitespace-nowrap">
-                      {{ getApplyStatusText(apply.status) }}
-                    </div>
-                  </div>
-
-                  <div v-if="apply.status === 0" class="text-xs text-gray-500 mt-1 whitespace-nowrap">
-                    申请理由：{{ getApplyRemark(apply.message) }}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <div v-if="groupRequests.length === 0 && myGroupApplies.length === 0" class="p-8 text-center text-gray-500">
-            暂无群通知
-          </div>
-        </div>
-        
         <!-- 聊天视图 -->
         <div v-if="currentView === 'chat'" class="flex-1 flex flex-col items-center justify-center text-gray-400">
           <Icon name="uil:comment-alt" class="text-6xl mb-3" />
@@ -368,7 +199,7 @@ import { ElMessage } from 'element-plus'
 // 页面级 SEO
 useSeoMeta({
   title: '联系人',
-  description: '管理您的好友和群组，查看好友通知和群通知。',
+  description: '管理好友和群组，查看用户主页和群组信息。',
 })
 
 const activeTab = ref('friend')
@@ -414,97 +245,9 @@ const friends = ref([])
 // 群聊分类数据
 const groupCategories = ref([])
 
-// 好友请求数据
-const friendRequests = ref([])
-
-// 我申请的好友状态
-const myFriendApplies = ref([])
-
-// 群聊请求数据
-const groupRequests = ref([])
-
-// 我申请的群聊状态
-const myGroupApplies = ref([])
-
-// 好友分组
-const friendGroup = ref('my_friends')
-
-// 获取申请状态文本
-const getApplyStatusText = (status) => {
-  switch (status) {
-    case 0:
-      return '等待验证认证'
-    case 1:
-      return '已同意'
-    case 2:
-      return '已拒绝'
-    case 3:
-      return '已拉黑'
-    default:
-      return '未知状态'
-  }
-}
-
-// 格式化申请时间：后端返回 `YYYY-MM-DD HH:mm:ss`，前端展示 `YYYY/MM/DD`
-const formatApplyTime = (applyTime) => {
-  if (!applyTime) return ''
-  const datePart = String(applyTime).split(' ')[0]
-  return datePart ? datePart.replace(/-/g, '/') : ''
-}
-
-// 主文案：匹配截图样式（pending 显示“正在验证你的邀请”，其他显示“请求加好友/加入群聊”）
-const getApplyMainText = (apply) => {
-  const name = apply?.contact_name || ''
-  const type = apply?.contact_type
-  const isGroup = type === 'group'
-  const isReceived = apply?.is_received || false
-
-  if (apply?.status === 0) {
-    if (isReceived) {
-      return isGroup ? `${name} 正在验证加入群聊` : `${name} 正在验证你的邀请`
-    } else {
-      return isGroup ? `正在验证加入群聊：${name}` : `正在验证你的邀请：${name}`
-    }
-  } else if (apply?.status === 1) {
-    if (isReceived) {
-      return isGroup ? `已同意加入群聊：${name}` : `已同意加好友：${name}`
-    } else {
-      return isGroup ? `对方已同意加入群聊：${name}` : `对方已同意加好友：${name}`
-    }
-  } else if (apply?.status === 2) {
-    if (isReceived) {
-      return isGroup ? `已拒绝加入群聊：${name}` : `已拒绝加好友：${name}`
-    } else {
-      return isGroup ? `对方已拒绝加入群聊：${name}` : `对方已拒绝加好友：${name}`
-    }
-  } else if (apply?.status === 3) {
-    if (isReceived) {
-      return isGroup ? `已拉黑加入群聊：${name}` : `已拉黑加好友：${name}`
-    } else {
-      return isGroup ? `对方已拉黑加入群聊：${name}` : `对方已拉黑加好友：${name}`
-    }
-  }
-
-  if (isReceived) {
-    return isGroup ? `${name} 请求加入群聊` : `${name} 请求加好友`
-  } else {
-    return isGroup ? `请求加入群聊：${name}` : `请求加好友：${name}`
-  }
-}
-
-// 留言：后端 message 可能是 `申请理由：xxx`，这里去掉前缀
-const getApplyRemark = (message) => {
-  const msg = message ? String(message) : ''
-  return msg.replace(/^申请理由：/, '') || '无'
-}
-
 // 获取当前视图标题
 const getCurrentViewTitle = () => {
   switch (currentView.value) {
-    case 'friendNotification':
-      return '好友通知'
-    case 'groupNotification':
-      return '群通知'
     case 'chat':
       return selectedContact.value ? selectedContact.value.name : '聊天'
     case 'userProfile':
@@ -596,96 +339,6 @@ const handleTabClick = (tab) => {
   if (tab?.props?.name === 'group') {
     loadMyGroup()
     loadMyJoinedGroup()
-  }
-}
-
-// 同意好友申请
-const passFriendRequest = async (contactId) => {
-  try {
-    const data = await useApi$('/user/contact/passContactApply', {
-      method: 'POST',
-      body: {
-        contact_id: contactId
-      }
-    })
-    
-    if (data && data.code === 200) {
-      ElMessage.success('同意好友申请成功')
-      // 重新加载通知数据
-      await loadAllNotifications()
-    } else {
-      ElMessage.error(data?.message || '同意好友申请失败')
-    }
-  } catch (error) {
-    console.error('同意好友申请失败:', error)
-  }
-}
-
-// 拒绝好友申请
-const refuseFriendRequest = async (contactId) => {
-  try {
-    const data = await useApi$('/user/contact/refuseContactApply', {
-      method: 'POST',
-      body: {
-        contact_id: contactId
-      }
-    })
-    
-    if (data && data.code === 200) {
-      ElMessage.success('拒绝好友申请成功')
-      // 重新加载通知数据
-      await loadAllNotifications()
-    } else {
-      ElMessage.error(data?.message || '拒绝好友申请失败')
-    }
-  } catch (error) {
-    console.error('拒绝好友申请失败:', error)
-  }
-}
-
-// 同意群聊申请
-const passGroupRequest = async (contactId, groupId) => {
-  try {
-    const data = await useApi$('/user/contact/passContactApply', {
-      method: 'POST',
-      body: {
-        group_id: groupId,
-        contact_id: contactId
-      }
-    })
-    
-    if (data && data.code === 200) {
-      ElMessage.success('同意群聊申请成功')
-      // 重新加载通知数据
-      await loadAllNotifications()
-    } else {
-      ElMessage.error(data?.message || '同意群聊申请失败')
-    }
-  } catch (error) {
-    console.error('同意群聊申请失败:', error)
-  }
-}
-
-// 拒绝群聊申请
-const refuseGroupRequest = async (contactId, groupId) => {
-  try {
-    const data = await useApi$('/user/contact/refuseContactApply', {
-      method: 'POST',
-      body: {
-        group_id: groupId,
-        contact_id: contactId
-      }
-    })
-    
-    if (data && data.code === 200) {
-      ElMessage.success('拒绝群聊申请成功')
-      // 重新加载通知数据
-      await loadAllNotifications()
-    } else {
-      ElMessage.error(data?.message || '拒绝群聊申请失败')
-    }
-  } catch (error) {
-    console.error('拒绝群聊申请失败:', error)
   }
 }
 
@@ -826,75 +479,14 @@ const loadMyJoinedGroup = async () => {
   }
 }
 
-// 获取所有通知数据
-const loadAllNotifications = async () => {
-  try {
-    const data = await useApi$('/user/contact/getMyApplyList', {
-      method: 'POST'
-    })
-    
-    if (data && data.code === 200) {
-      const allNotifications = data.data || []
-      
-      // 分离不同类型的通知
-      friendRequests.value = allNotifications.filter(item => item.contact_type === 'user' && item.is_received)
-      myFriendApplies.value = allNotifications.filter(item => item.contact_type === 'user' && !item.is_received)
-      
-      // 分离群聊申请
-      const receivedGroupApplies = allNotifications.filter(item => item.contact_type === 'group' && item.is_received)
-      const myGroupAppliesList = allNotifications.filter(item => item.contact_type === 'group' && !item.is_received)
-      
-      // 设置收到的群聊申请（别人申请加入我创建的群聊）
-      // 现在后端返回的群聊申请数据中，申请人信息在 user_name/user_avatar，群聊信息在 contact_name/contact_avatar
-      groupRequests.value = receivedGroupApplies.map(apply => ({
-        ...apply,
-        group_id: apply.contact_id, // 群聊ID
-        group_name: apply.contact_name, // 群聊名称
-        contact_name: apply.user_name, // 申请人名称
-        contact_avatar: apply.user_avatar // 申请人头像
-      }))
-      
-      // 为我发出的群聊申请添加群聊信息
-      myGroupApplies.value = myGroupAppliesList.map(apply => ({
-        ...apply,
-        group_id: apply.contact_id,
-        group_name: apply.contact_name
-      }))
-    } else {
-      ElMessage.error(data?.message || '获取通知数据失败')
-    }
-  } catch (error) {
-    console.error('获取通知数据失败:', error)
-  }
-}
-
 onMounted(() => {
   loadFriends()
   loadMyGroup()
   loadMyJoinedGroup()
-  loadAllNotifications()
 })
 </script>
 
 <style scoped>
-/* 旋转样式 */
-.rotate-90 {
-  transform: rotate(90deg);
-}
-
-/* 过渡效果 */
-.transition-transform {
-  transition-property: transform;
-}
-
-.duration-200 {
-  transition-duration: 200ms;
-}
-
-:deep(.el-tabs__nav-scroll) {
-  padding-left: 0.75rem !important;
-}
-
 /* 侧边栏拖动条 */
 .sidebar-resize-handle {
   position: absolute;

@@ -6,19 +6,22 @@
           <h1>消息通知<span v-if="unreadCount" class="heading-count">{{ badge(unreadCount) }} 条未读</span></h1>
         </div>
       </header>
-      <div class="category-grid" role="tablist" aria-label="通知分类" :style="{ '--active-index': activeIndex }">
+      <div class="overflow-x-auto px-1 pt-1">
+      <div class="category-grid min-w-[520px] lg:min-w-0" role="tablist" aria-label="通知分类" :style="{ '--active-index': activeIndex, '--category-count': categories.length }">
         <span class="category-indicator" aria-hidden="true" />
         <button v-for="category in categories" :id="`tab-${category.key}`" :key="category.key"
           role="tab" :aria-selected="activeCategory === category.key" aria-controls="notification-list"
-          class="category-card" :class="[{ active: activeCategory === category.key }, category.key]"
+          class="category-card !flex-col !gap-3 !p-4 !text-center" :class="[{ active: activeCategory === category.key }, category.key]"
           @click="selectCategory(category.key)" @keydown="handleTabKey($event, category.key)">
-          <span class="category-icon"><Icon :name="category.icon" /><Transition name="notification-badge"><span v-if="unreadCategories[category.key]" class="badge">{{ badge(unreadCategories[category.key]) }}</span></Transition></span>
+          <span class="category-icon"><Icon :name="category.icon" :class="category.iconClass" /><Transition name="notification-badge"><span v-if="unreadCategories[category.key]" class="badge">{{ badge(unreadCategories[category.key]) }}</span></Transition></span>
           <span class="category-copy"><strong>{{ category.label }}</strong></span>
-          <Icon name="uil:angle-right" class="category-arrow" />
         </button>
       </div>
+      </div>
       <Transition name="notification-panel" mode="out-in">
-      <section :key="activeCategory" id="notification-list" class="list-panel" role="tabpanel" :aria-labelledby="`tab-${activeCategory}`" :aria-busy="loading">
+      <section :key="activeCategory" id="notification-list" class="list-panel" role="tabpanel" :aria-labelledby="`tab-${activeCategory}`" :aria-busy="!isContactCategory && loading">
+        <ContactNotifications v-if="isContactCategory" />
+        <template v-else>
         <div class="list-toolbar">
           <h2>{{ currentCategory.label }}<span v-if="total > 0">{{ total }}</span></h2>
           <div class="toolbar-actions">
@@ -72,6 +75,7 @@
         </div>
         </div>
         </Transition>
+        </template>
       </section>
       </Transition>
       <div ref="loadTrigger" class="load-trigger" aria-hidden="true" />
@@ -87,9 +91,11 @@ useSeoMeta({ title: '消息通知', description: '查看评论、赞和收藏以
 const categories = [
   { key: 'comments', label: '评论', icon: 'uil:comment-dots' },
   { key: 'likes', label: '赞和收藏', icon: 'uil:heart' },
-  { key: 'follows', label: '新增关注', icon: 'uil:user-plus' },
+  { key: 'follows', label: '新增关注', icon: 'uil:user-check', iconClass: 'text-emerald-400' },
+  { key: 'contacts', label: '好友和群', icon: 'uil:users-alt', iconClass: 'text-amber-400' },
 ]
 const activeCategory = ref('comments')
+const isContactCategory = computed(() => activeCategory.value === 'contacts')
 const activeIndex = computed(() => categories.findIndex(item => item.key === activeCategory.value))
 const switchDirection = ref(1)
 const currentCategory = computed(() => categories.find(item => item.key === activeCategory.value))
@@ -133,6 +139,7 @@ const formatTime = value => {
 }
 
 async function loadList(reset = false) {
+  if (isContactCategory.value) return
   if (!reset && (loading.value || !hasMore.value)) return
   const version = ++requestVersion
   const nextPage = reset ? 1 : page.value + 1
@@ -167,6 +174,7 @@ async function selectCategory(category) {
   total.value = 0
   loading.value = true
   error.value = ''
+  if (isContactCategory.value) { loading.value = false; return }
   try {
     // 后端标记整个分类，包含尚未加载的分页记录。
     await markCategoryAsRead(category)
@@ -179,7 +187,8 @@ function handleTabKey(event, key) {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
   event.preventDefault()
   const index = categories.findIndex(category => category.key === key)
-  const next = event.key === 'Home' ? 0 : event.key === 'End' ? 2 : (index + (event.key === 'ArrowRight' ? 1 : 2)) % 3
+  const count = categories.length
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? count - 1 : (index + (event.key === 'ArrowRight' ? 1 : count - 1)) % count
   selectCategory(categories[next].key)
   document.getElementById(`tab-${categories[next].key}`)?.focus()
 }
@@ -248,14 +257,13 @@ h1 { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; font-size: 
 button { transition: background .18s, border-color .18s, color .18s; }
 button:focus-visible, a:focus-visible { outline: 3px solid #a8d1ff; outline-offset: 4px; }
 button:disabled { cursor: default; opacity: .5; }
-.category-grid { --category-gap: 16px; position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--category-gap); margin-bottom: 28px; }
-.category-indicator { position: absolute; z-index: 1; pointer-events: none; bottom: -1px; left: 0; width: calc((100% - var(--category-gap) * 2) / 3); height: 3px; transform: translateX(calc(var(--active-index) * (100% + var(--category-gap)))); transition: transform .36s cubic-bezier(.22, 1, .36, 1); }
+.category-grid { --category-gap: 16px; position: relative; display: grid; grid-template-columns: repeat(var(--category-count), minmax(0, 1fr)); gap: var(--category-gap); margin-bottom: 28px; }
+.category-indicator { position: absolute; z-index: 1; pointer-events: none; bottom: -1px; left: 0; width: calc((100% - var(--category-gap) * (var(--category-count) - 1)) / var(--category-count)); height: 3px; transform: translateX(calc(var(--active-index) * (100% + var(--category-gap)))); transition: transform .36s cubic-bezier(.22, 1, .36, 1); }
 .category-indicator::after { content: ''; display: block; width: 28px; height: 3px; margin: 0 auto; background: #60a5fa; border-radius: 3px; }
 .category-card { --accent: #5798e8; display: flex; align-items: center; gap: 14px; text-align: left; padding: 22px 20px; border: 1px solid #e9edf2; border-radius: 18px; background: white; position: relative; }
 .category-card { transition: background .24s ease, border-color .24s ease, box-shadow .24s ease, transform .24s cubic-bezier(.22, 1, .36, 1); }
 .category-card:active { transform: scale(.98); }
 .category-card.likes { --accent: #e57989; }
-.category-card.follows { --accent: #9b86d5; }
 .category-card:hover { border-color: #c9d9ed; background: #fcfdff; }
 .category-card.active { border-color: #9dc4f5; box-shadow: 0 4px 18px #609ae90a; background: #f7faff; }
 .category-icon { position: relative; flex-shrink: 0; width: 48px; height: 48px; display: grid; place-items: center; color: var(--accent); font-size: 40px; }

@@ -1,7 +1,7 @@
 <template>
   <div class="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
     <article v-for="post in posts" :key="post.uuid" role="button" tabindex="0" :aria-label="`查看帖子：${post.title || '未命名帖子'}`"
-      class="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm cursor-pointer transition-shadow hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+      class="profile-card overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm cursor-pointer transition-shadow hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
       @click="$emit('open', post)" @keydown.enter.self.prevent="$emit('open', post)" @keydown.space.self.prevent="$emit('open', post)">
       <div class="relative aspect-[4/3] bg-gray-100">
         <img v-if="post.cover_url || (post.media_type !== 1 && post.first_url)" :src="post.cover_url || post.first_url" :alt="post.title" class="h-full w-full object-cover" loading="lazy" />

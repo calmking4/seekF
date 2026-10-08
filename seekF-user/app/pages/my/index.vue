@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-white">
+  <div ref="myPageRef" class="min-h-screen bg-white">
     <!-- 顶部用户信息区 -->
     <div class="max-w-5xl mx-auto pt-8 pb-6 px-6">
       <div class="flex items-center justify-between">
@@ -24,8 +24,8 @@
         </div>
 
         <!-- 编辑信息按钮 -->
-        <button class="px-5 py-2 border border-red-500 text-red-500 rounded-md text-sm font-medium hover:bg-red-50 hover:text-red-600 transition-colors" @click="editInfo">
-          编辑信息
+        <button type="button" class="inline-flex shrink-0 items-center gap-2 rounded-full border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400" @click="editInfo">
+          <Icon name="uil:edit-alt" class="text-base" />编辑信息
         </button>
       </div>
     </div>
@@ -34,10 +34,32 @@
     <div class="max-w-5xl mx-auto">
       <ProfileTabs
         v-model="activeTab"
-        :tabs="[{ name: 'collections', label: '收藏' }, { name: 'likes', label: '点赞' }]"
+        :tabs="[{ name: 'posts', label: '帖子' }, { name: 'collections', label: '收藏' }, { name: 'likes', label: '点赞' }]"
         @tab-change="handleTabChange"
         @after-enter="observeNewItems"
       >
+        <!-- 自己发布的帖子 -->
+        <template #posts>
+          <div class="p-4">
+            <div v-if="ownPosts.length === 0 && !ownPostsLoading" class="py-20 flex flex-col items-center justify-center text-gray-400">
+              <div class="w-20 h-20 rounded-full border border-gray-200 flex items-center justify-center mb-4 bg-gray-50">
+                <Icon name="uil:image" class="text-2xl" />
+              </div>
+              <p class="text-sm text-gray-500">{{ ownPostsError || '你还没有发布帖子' }}</p>
+              <el-button v-if="ownPostsError" class="mt-4" @click="loadOwnPosts">重试加载</el-button>
+            </div>
+            <ProfilePostGrid v-else-if="ownPosts.length" :posts="ownPosts" @open="handleOwnPostClick" @like="toggleOwnPostLike" />
+            <div v-if="ownPostsLoading" class="py-8 flex justify-center items-center text-gray-500">
+              <Icon name="uil:spinner" class="animate-spin text-xl mr-2" /><span>加载中...</span>
+            </div>
+            <div v-else-if="ownPosts.length" class="py-8 text-center">
+              <p v-if="ownPostsError" class="mb-3 text-sm text-gray-500">{{ ownPostsError }}</p>
+              <el-button v-if="!ownPostsNoMore || ownPostsError" @click="loadOwnPosts">{{ ownPostsError ? '重试加载' : '加载更多帖子' }}</el-button>
+              <p v-else class="text-sm text-gray-400">没有更多内容了</p>
+            </div>
+          </div>
+        </template>
+
         <!-- 收藏标签 -->
         <template #collections>
           <!-- 收藏夹列表视图 -->
@@ -159,7 +181,10 @@
 
         <!-- 点赞标签 -->
         <template #likes>
-          <div v-if="likedPosts.length === 0" class="py-20 flex flex-col items-center justify-center text-gray-400">
+          <div v-if="likedPosts.length === 0 && likedLoading" class="py-20 flex items-center justify-center gap-2 text-gray-500">
+            <Icon name="uil:spinner" class="animate-spin text-xl" /><span>加载中...</span>
+          </div>
+          <div v-else-if="likedPosts.length === 0" class="py-20 flex flex-col items-center justify-center text-gray-400">
             <div class="w-20 h-20 rounded-full border border-gray-200 flex items-center justify-center mb-4 bg-gray-50">
               <Icon name="uil:heart" class="text-2xl" />
             </div>
@@ -226,55 +251,79 @@
     </div>
 
     <!-- 编辑用户信息弹窗 -->
-    <el-dialog v-model="editDialogVisible" title="编辑个人信息" width="400px" center>
-      <el-form :model="editForm" label-width="80px" @submit.prevent>
-        <el-form-item label="昵称">
-          <el-input v-model="editForm.nickname" placeholder="请输入昵称"></el-input>
-        </el-form-item>
-        <el-form-item label="头像">
-          <el-upload
-            class="avatar-uploader"
-            :action="useRuntimeConfig().public.apiBase+'user/file/upload'"
-            :data="{ fileType: 'user_avatar' }"
-            :show-file-list="false"
-            :on-success="handleAvatarSuccess"
-            :before-upload="beforeAvatarUpload"
-            :with-credentials="true"
-          >
-            <img v-if="editForm.avatar" :src="editForm.avatar" class="avatar" />
-            <el-icon v-else class="avatar-uploader-icon"><Plus /></el-icon>
-          </el-upload>
-        </el-form-item>
-        <el-form-item label="邮箱">
-          <el-input v-model="editForm.email" placeholder="请输入邮箱"></el-input>
-        </el-form-item>
-        <el-form-item label="生日">
-          <el-date-picker
-            v-model="editForm.birthday"
-            type="date"
-            placeholder="选择日期"
-            format="YYYY-MM-DD"
-            value-format="YYYY-MM-DD">
-          </el-date-picker>
-        </el-form-item>
-        <el-form-item label="个性签名">
-          <el-input 
-            v-model="editForm.signature" 
-            type="textarea" 
-            :rows="3"
-            placeholder="请输入个性签名"
-            maxlength="100"
-            show-word-limit
-          ></el-input>
+    <el-dialog
+      v-model="editDialogVisible"
+      title="编辑个人信息"
+      align-center
+      :show-close="false"
+      class="!w-[calc(100vw_-_2rem)] !max-w-[520px] !rounded-3xl !p-0 [&_.el-dialog\_\_header]:!m-0 [&_.el-dialog\_\_header]:!px-6 [&_.el-dialog\_\_header]:!pb-5 [&_.el-dialog\_\_header]:!pt-6 [&_.el-dialog\_\_body]:max-h-[65vh] [&_.el-dialog\_\_body]:overflow-y-auto [&_.el-dialog\_\_body]:!px-6 [&_.el-dialog\_\_body]:!pb-6 [&_.el-dialog\_\_footer]:!border-t [&_.el-dialog\_\_footer]:!border-gray-100 [&_.el-dialog\_\_footer]:!px-6 [&_.el-dialog\_\_footer]:!py-5 sm:[&_.el-dialog\_\_header]:!px-8 sm:[&_.el-dialog\_\_body]:!px-8 sm:[&_.el-dialog\_\_footer]:!px-8"
+    >
+      <template #header="{ close, titleId }">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h2 :id="titleId" class="text-xl font-semibold tracking-tight text-gray-900">编辑个人信息</h2>
+            <p class="mt-1.5 text-sm text-gray-400">完善资料，让大家更了解你</p>
+          </div>
+          <button type="button" aria-label="关闭编辑个人信息" class="grid h-8 w-8 shrink-0 place-items-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400" @click="close">
+            <Icon name="uil:times" class="text-xl" />
+          </button>
+        </div>
+      </template>
+      <el-upload
+        class="mb-6 block [&_.el-upload]:!flex [&_.el-upload]:!w-full [&_.el-upload]:rounded-2xl [&_.el-upload:focus-visible]:outline [&_.el-upload:focus-visible]:outline-2 [&_.el-upload:focus-visible]:outline-blue-400"
+        :action="useRuntimeConfig().public.apiBase+'user/file/upload'"
+        :data="{ fileType: 'user_avatar' }"
+        accept="image/jpeg,image/png,image/gif"
+        :show-file-list="false"
+        :on-success="handleAvatarSuccess"
+        :before-upload="beforeAvatarUpload"
+        :with-credentials="true"
+      >
+        <div class="group flex w-full items-center gap-4 rounded-2xl border border-gray-100 bg-gray-50/70 p-4 text-left transition-colors hover:border-blue-200 hover:bg-blue-50/50">
+          <div class="relative shrink-0">
+            <div class="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-4 border-white bg-blue-50 shadow-sm">
+              <img v-if="editForm.avatar" :src="editForm.avatar" alt="当前头像，点击更换" class="h-full w-full object-cover" />
+              <Icon v-else name="uil:user" class="text-3xl text-blue-300" />
+            </div>
+            <span class="absolute -bottom-0.5 -right-0.5 grid h-7 w-7 place-items-center rounded-full border-2 border-white bg-blue-400 text-white"><Icon name="uil:camera" class="text-sm" /></span>
+          </div>
+          <div class="min-w-0">
+            <p class="text-sm font-medium text-gray-700 transition-colors group-hover:text-blue-500">更换头像</p>
+            <p class="mt-1.5 text-xs leading-5 text-gray-400">支持 JPG、PNG、GIF，大小不超过 2MB</p>
+          </div>
+          <Icon name="uil:angle-right" class="ml-auto shrink-0 text-xl text-gray-300 group-hover:text-blue-400" />
+        </div>
+      </el-upload>
+      <el-form :model="editForm" label-position="top" class="[&_.el-form-item]:!mb-5 [&_.el-form-item\_\_label]:!pb-2 [&_.el-form-item\_\_label]:!text-xs [&_.el-form-item\_\_label]:!font-medium [&_.el-form-item\_\_label]:!text-gray-600 [&_.el-input\_\_wrapper]:!min-h-11 [&_.el-input\_\_wrapper]:!rounded-xl [&_.el-input\_\_wrapper]:!bg-gray-50/60 [&_.el-textarea\_\_inner]:!rounded-xl [&_.el-textarea\_\_inner]:!bg-gray-50/60 [&_.el-textarea\_\_inner]:!p-3 [&_.el-input\_\_count]:!bg-transparent" @submit.prevent>
+        <div class="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+          <el-form-item label="昵称"><el-input v-model="editForm.nickname" placeholder="请输入昵称" /></el-form-item>
+          <el-form-item label="生日">
+            <el-date-picker v-model="editForm.birthday" type="date" placeholder="选择生日" format="YYYY-MM-DD" value-format="YYYY-MM-DD" class="!w-full" />
+          </el-form-item>
+        </div>
+        <el-form-item label="邮箱"><el-input v-model="editForm.email" placeholder="请输入邮箱地址" /></el-form-item>
+        <el-form-item label="个性签名" class="!mb-0">
+          <el-input v-model="editForm.signature" type="textarea" :rows="3" placeholder="分享你的兴趣，或写一句喜欢的话…" maxlength="100" show-word-limit />
         </el-form-item>
       </el-form>
       <template #footer>
-        <div class="dialog-footer">
-          <el-button @click="cancelEdit">取消</el-button>
-          <el-button type="primary" @click="confirmEdit" :loading="updating">确认</el-button>
+        <div class="flex justify-end gap-3">
+          <el-button round class="!m-0 !h-11 !border-gray-200 !px-6 !text-gray-500 hover:!border-gray-300 hover:!bg-gray-50" @click="cancelEdit">取消</el-button>
+          <el-button type="primary" round class="!m-0 !h-11 !border-blue-400 !bg-blue-400 !px-6 hover:!border-blue-500 hover:!bg-blue-500" @click="confirmEdit" :loading="updating">保存修改</el-button>
         </div>
       </template>
     </el-dialog>
+
+    <!-- 帖子详情弹窗（自己的帖子） -->
+    <DiscoverDetail
+      v-if="selectedOwnPost"
+      :key="selectedOwnPost.id"
+      :item="selectedOwnPost"
+      @close="selectedOwnPost = null"
+      @like-updated="handleOwnPostLikeUpdated"
+      @collect-updated="handleOwnPostCollectUpdated"
+      @follow-updated="loadFollowCounts"
+    />
 
     <!-- 帖子详情弹窗（点赞） -->
     <DiscoverDetail
@@ -308,7 +357,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <div class="dialog-footer">
+        <div class="flex justify-end gap-2.5">
           <el-button @click="showCreateFolder = false">取消</el-button>
           <el-button type="primary" @click="handleSaveFolder" :loading="folderSaving">确认</el-button>
         </div>
@@ -328,16 +377,27 @@ useSeoMeta({
   description: '查看和编辑个人信息，管理关注和粉丝。',
 })
 import { useAuthState } from '~/composables/useAuthState'
-import { Plus } from '@element-plus/icons-vue'
 
-const activeTab = ref('likes')
+const activeTab = ref('posts')
 const editDialogVisible = ref(false)
 const updating = ref(false)
 
 // 网格容器 ref（用于动画）
+const myPageRef = ref(null)
 const likedGridRef = ref(null)
 const folderGridRef = ref(null)
 const folderPostsGridRef = ref(null)
+
+// 自己发布的帖子，独立保存分页和加载状态。
+const ownPosts = ref([])
+const ownPostsLoading = ref(false)
+const ownPostsError = ref('')
+const ownPostsLoaded = ref(false)
+const ownPostsNoMore = ref(false)
+const ownPostsPage = ref(1)
+const selectedOwnPost = ref(null)
+const pendingOwnPostLikes = new Set()
+let ownPostsRequestId = 0
 
 // 点赞帖子相关
 const likedPosts = ref([])
@@ -345,6 +405,8 @@ const likedLoading = ref(false)
 const likedNoMore = ref(false)
 const likedPage = ref(1)
 const likedPageSize = 12
+const likedNeedsRefresh = ref(false)
+let likedRequestId = 0
 const selectedLikedItem = ref(null)
 
 // 收藏夹相关
@@ -386,7 +448,7 @@ const observeNewItems = () => {
         })
       }, { threshold: 0.1 })
     }
-    document.querySelectorAll('.fade-in:not(.visible)').forEach((el) => {
+    myPageRef.value?.querySelectorAll('.fade-in:not(.visible), .profile-card:not(.visible)').forEach((el) => {
       cardObserver.observe(el)
     })
   })
@@ -473,28 +535,117 @@ const loadFollowCounts = async () => {
   }
 }
 
+// 省略用户ID，由后端按登录身份查询自己的帖子。
+const loadOwnPosts = async () => {
+  if (ownPostsLoading.value || ownPostsNoMore.value) return
+  const requestId = ++ownPostsRequestId
+  const page = ownPostsPage.value
+  ownPostsLoading.value = true
+  ownPostsError.value = ''
+  try {
+    const res = await useApi$('/user/discover/profile', {
+      method: 'POST', body: { page, page_size: 12 },
+    })
+    if (requestId !== ownPostsRequestId) return
+    if (res.code !== 200 || !res.data) throw new Error(res.message || '加载自己的帖子失败')
+    const list = res.data.posts || []
+    const existing = new Set(ownPosts.value.map(post => post.uuid))
+    ownPosts.value.push(...list.filter(post => !existing.has(post.uuid)))
+    ownPostsNoMore.value = list.length < 12 || ownPosts.value.length >= (res.data.total ?? res.data.post_count ?? 0)
+    ownPostsPage.value = page + 1
+    ownPostsLoaded.value = true
+    observeNewItems()
+  } catch (error) {
+    if (requestId !== ownPostsRequestId) return
+    console.error('加载自己的帖子失败:', error)
+    ownPostsError.value = '加载帖子失败，请稍后重试'
+  } finally {
+    if (requestId === ownPostsRequestId) ownPostsLoading.value = false
+  }
+}
+
+const handleOwnPostClick = (post) => {
+  selectedOwnPost.value = { ...post, id: post.uuid, src: post.first_url, type: post.media_type === 1 ? 'video' : 'image' }
+}
+
+// 同步同一帖子在各标签中的点赞状态，自己的帖子不会因取消点赞而消失。
+const handleOwnPostLikeUpdated = ({ postId, likeCount, isLiked }) => {
+  const alreadyInLikes = likedPosts.value.some(post => post.uuid === postId)
+  for (const list of [ownPosts.value, likedPosts.value, folderPosts.value]) {
+    const post = list.find(item => item.uuid === postId)
+    if (post) Object.assign(post, { like_count: likeCount, is_liked: isLiked })
+  }
+  if (!isLiked) likedPosts.value = likedPosts.value.filter(post => post.uuid !== postId)
+  // 成员变化会改变服务端分页位置，重新加载以免漏帖或沿用过期分页。
+  if (!isLiked || !alreadyInLikes) invalidateLikedPosts()
+}
+
+const invalidateLikedPosts = () => {
+  likedRequestId++
+  likedLoading.value = false
+  likedNeedsRefresh.value = true
+  if (activeTab.value === 'likes') void loadLikedPosts(true)
+}
+
+const handleOwnPostCollectUpdated = ({ postId, collectCount, isCollected }) => {
+  for (const list of [ownPosts.value, likedPosts.value, folderPosts.value]) {
+    const post = list.find(item => item.uuid === postId)
+    if (post) Object.assign(post, { collect_count: collectCount, is_collected: isCollected })
+  }
+  if (!isCollected) {
+    const removed = folderPosts.value.some(post => post.uuid === postId)
+    folderPosts.value = folderPosts.value.filter(post => post.uuid !== postId)
+    if (removed && currentFolder.value) currentFolder.value.post_count = Math.max(0, (currentFolder.value.post_count || 1) - 1)
+  }
+}
+
+const toggleOwnPostLike = async (post) => {
+  if (pendingOwnPostLikes.has(post.uuid)) return
+  pendingOwnPostLikes.add(post.uuid)
+  try {
+    const res = await useApi$('/user/discover/like', { method: 'POST', body: { target_uuid: post.uuid } })
+    if (res.code !== 200 || !res.data) throw new Error(res.message || '点赞失败')
+    handleOwnPostLikeUpdated({ postId: post.uuid, likeCount: res.data.like_count, isLiked: res.data.is_liked })
+  } catch (error) {
+    console.error('点赞失败:', error)
+    ElMessage.error('点赞失败，请稍后重试')
+  } finally {
+    pendingOwnPostLikes.delete(post.uuid)
+  }
+}
+
 // 加载点赞帖子列表
-const loadLikedPosts = async () => {
-  if (likedLoading.value || likedNoMore.value) return
+const loadLikedPosts = async (reset = false) => {
+  if (likedLoading.value || (!reset && likedNoMore.value)) return
+  if (reset) {
+    likedPosts.value = []
+    likedPage.value = 1
+    likedNoMore.value = false
+  }
+  const requestId = ++likedRequestId
+  const page = likedPage.value
   likedLoading.value = true
   try {
     const res = await useApi$('/user/discover/liked-list', {
       method: 'POST',
-      body: { page: likedPage.value, page_size: likedPageSize }
+      body: { page, page_size: likedPageSize }
     })
+    if (requestId !== likedRequestId) return
     if (res.code === 200 && res.data) {
       const list = res.data.list || []
       if (list.length < likedPageSize) {
         likedNoMore.value = true
       }
-      likedPosts.value = [...likedPosts.value, ...list]
-      likedPage.value++
+      const existing = new Set(likedPosts.value.map(post => post.uuid))
+      likedPosts.value.push(...list.filter(post => !existing.has(post.uuid)))
+      likedPage.value = page + 1
+      likedNeedsRefresh.value = false
       observeNewItems()
     }
   } catch (e) {
-    console.error('加载点赞列表失败:', e)
+    if (requestId === likedRequestId) console.error('加载点赞列表失败:', e)
   } finally {
-    likedLoading.value = false
+    if (requestId === likedRequestId) likedLoading.value = false
   }
 }
 
@@ -509,7 +660,8 @@ const handleLikedItemClick = (item) => {
 }
 
 // 处理点赞状态更新（从详情弹窗返回）
-const handleLikedItemLikeUpdated = ({ isLiked, likeCount }) => {
+const handleLikedItemLikeUpdated = ({ postId, isLiked, likeCount }) => {
+  handleOwnPostLikeUpdated({ postId, isLiked, likeCount })
   if (!isLiked) {
     // 取消点赞，从列表中移除
     likedPosts.value = likedPosts.value.filter(p => p.uuid !== selectedLikedItem.value?.uuid)
@@ -525,8 +677,9 @@ const handleLikedItemLikeUpdated = ({ isLiked, likeCount }) => {
 
 // 标签切换处理
 const handleTabChange = (tab) => {
-  if (tab === 'likes' && likedPosts.value.length === 0) {
-    loadLikedPosts()
+  if (tab === 'posts' && !ownPostsLoaded.value) loadOwnPosts()
+  if (tab === 'likes' && (likedNeedsRefresh.value || likedPosts.value.length === 0)) {
+    loadLikedPosts(likedNeedsRefresh.value)
   }
   if (tab === 'collections') {
     currentFolder.value = null
@@ -601,7 +754,9 @@ const handleCollectedItemClick = (item) => {
   }
 }
 
-const handleCollectedItemUpdated = ({ isCollected, collectCount }) => {
+const handleCollectedItemUpdated = ({ postId, isCollected, collectCount }) => {
+  const ownPost = ownPosts.value.find(post => post.uuid === postId)
+  if (ownPost) Object.assign(ownPost, { is_collected: isCollected, collect_count: collectCount })
   if (!isCollected) {
     // 取消收藏，从列表中移除
     folderPosts.value = folderPosts.value.filter(p => p.uuid !== selectedCollectedItem.value?.uuid)
@@ -787,58 +942,29 @@ const confirmEdit = async () => {
 onMounted(() => {
   loadUserInfo()
   loadFollowCounts()
-  loadLikedPosts()
+  loadOwnPosts()
 })
 
 onUnmounted(() => {
+  likedRequestId++
+  ownPostsRequestId++
   followCountsRequestId++
   cardObserver?.disconnect()
 })
 </script>
 
 <style scoped>
-.fade-in {
+.fade-in,
+:deep(.profile-card) {
   opacity: 0;
   transform: translateY(20px);
   transition: opacity 0.6s ease, transform 0.6s ease;
 }
 
-.fade-in.visible {
+.fade-in.visible,
+:deep(.profile-card.visible) {
   opacity: 1;
   transform: translateY(0);
 }
 
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-/* 头像上传样式 */
-.avatar-uploader .avatar {
-  width: 100px;
-  height: 100px;
-  border-radius: 50%;
-  object-fit: cover;
-}
-
-.avatar-uploader-icon {
-  width: 100px;
-  height: 100px;
-  line-height: 100px;
-  border: 1px dashed #d9d9d9;
-  border-radius: 50%;
-  font-size: 24px;
-  color: #999;
-  background-color: #fafafa;
-  transition: all 0.3s;
-}
-
-.avatar-uploader:hover .avatar-uploader-icon {
-  border-color: #409eff;
-}
-
-.el-upload {
-  display: block;
-}
 </style>

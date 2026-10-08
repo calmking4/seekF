@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white" :class="embedded ? 'min-h-full' : 'min-h-screen'">
+  <div ref="profileRoot" class="bg-white" :class="embedded ? 'min-h-full' : 'min-h-screen'">
     <div class="mx-auto max-w-5xl px-6 pt-6 pb-10">
       <button v-if="!embedded" type="button" class="mb-6 flex items-center gap-2 text-sm text-gray-500 hover:text-blue-500" @click="navigateTo('/discover')"><Icon name="mdi:arrow-left" class="text-lg" />返回发现</button>
       <div v-if="loading && !profile" class="py-12" aria-label="用户主页加载中"><el-skeleton :rows="4" animated /></div>
@@ -32,7 +32,7 @@
           </div>
           <el-button v-else round @click="navigateTo('/my')">我的主页</el-button>
         </div>
-        <ProfileTabs v-model="activeTab" :tabs="[{ name: 'posts', label: `帖子 ${profile.post_count || 0}` }, { name: 'folders', label: '公开收藏夹' }]">
+        <ProfileTabs v-model="activeTab" :tabs="[{ name: 'posts', label: `帖子 ${profile.post_count || 0}` }, { name: 'folders', label: '公开收藏夹' }]" @after-enter="observeNewItems">
           <template #posts>
             <div class="py-4">
               <div v-if="posts.length === 0 && !loading" class="empty-state"><Icon name="uil:image" class="mb-4 text-4xl text-gray-300" /><p>{{ postsError || '暂无帖子' }}</p><el-button v-if="postsError" class="mt-4" @click="fetchProfile">重试</el-button></div>
@@ -47,7 +47,7 @@
                 <div v-if="foldersLoading" class="empty-state"><Icon name="uil:spinner" class="mb-3 animate-spin text-2xl" />加载中...</div>
                 <div v-else-if="folders.length === 0" class="empty-state"><Icon name="uil:folder" class="mb-4 text-4xl text-gray-300" /><p>{{ foldersError || '暂无公开收藏夹' }}</p><el-button v-if="foldersError" class="mt-4" @click="fetchFolders">重试</el-button></div>
                 <div v-else class="grid grid-cols-2 gap-4 md:grid-cols-3">
-                  <button v-for="folder in folders" :key="folder.uuid" type="button" class="overflow-hidden rounded-xl border border-gray-100 bg-white text-left shadow-sm transition-shadow hover:shadow-md" @click="enterFolder(folder)">
+                  <button v-for="folder in folders" :key="folder.uuid" type="button" class="profile-card overflow-hidden rounded-xl border border-gray-100 bg-white text-left shadow-sm transition-shadow hover:shadow-md" @click="enterFolder(folder)">
                     <div class="h-40 bg-gray-100"><img v-if="folder.cover_url" :src="folder.cover_url" :alt="folder.name" class="h-full w-full object-cover" /><div v-else class="flex h-full items-center justify-center text-gray-300"><Icon name="uil:folder" class="text-4xl" /></div></div>
                     <div class="p-3"><h3 class="truncate text-sm font-medium text-gray-800">{{ folder.name }}</h3><p v-if="folder.description" class="mt-1 truncate text-xs text-gray-500">{{ folder.description }}</p><div class="mt-2 flex justify-between text-xs"><span class="text-gray-400">{{ folder.post_count || 0 }} 篇</span><span class="text-blue-400">公开</span></div></div>
                   </button>
@@ -70,13 +70,14 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUpdated, onUnmounted } from 'vue'
 
 const props = defineProps({
   userId: { type: String, required: true },
   embedded: { type: Boolean, default: false },
 })
 const auth = useAuthState()
+const profileRoot = ref(null)
 const userId = computed(() => props.userId)
 const profile = ref(null)
 const isSelf = computed(() => userId.value === auth.getUser()?.uuid)
@@ -102,6 +103,29 @@ const pendingLikes = new Set()
 const pageSize = 12
 let userVersion = 0
 let folderVersion = 0
+let cardObserver = null
+
+// 仅观察当前主页的卡片，沿用“我的页面”的上移淡入效果。
+const observeNewItems = () => {
+  const cards = profileRoot.value?.querySelectorAll('.profile-card:not(.visible)') || []
+  cardObserver?.disconnect()
+  if (!cards.length) return
+  if (!window.IntersectionObserver) {
+    cards.forEach(card => card.classList.add('visible'))
+    return
+  }
+  if (!cardObserver) {
+    cardObserver = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible')
+          cardObserver.unobserve(entry.target)
+        }
+      })
+    }, { threshold: 0.1 })
+  }
+  cards.forEach(card => cardObserver.observe(card))
+}
 
 if (!props.embedded) useSeoMeta({
   title: () => profile.value?.nickname ? `${profile.value.nickname} 的主页` : '用户主页',
@@ -282,10 +306,27 @@ const toggleLike = async (post) => {
 
 watch(userId, loadUser)
 onMounted(loadUser)
-onUnmounted(() => { userVersion++; folderVersion++ })
+onUpdated(observeNewItems)
+onUnmounted(() => { userVersion++; folderVersion++; cardObserver?.disconnect() })
 </script>
 
 <style scoped>
+:deep(.profile-card) {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+:deep(.profile-card.visible) {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  :deep(.profile-card) {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
 .empty-state {
   display: flex;
   min-height: 260px;
