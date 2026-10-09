@@ -1,6 +1,7 @@
 package router
 
 import (
+	"seekF-backend/internal/controllers/admin"
 	"seekF-backend/internal/controllers/user"
 	"seekF-backend/internal/middlewares"
 
@@ -22,6 +23,7 @@ func SetupRouter(
 	discoverController *user.DiscoverController,
 	followController *user.FollowController,
 	notificationController *user.NotificationController,
+	adminController *admin.AdminController,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -30,6 +32,15 @@ func SetupRouter(
 
 	// 添加CORS中间件
 	r.Use(middlewares.CORSMiddleware())
+
+	// 管理端使用独立会话，所有数据接口均校验实时管理员权限。
+	adminGroup := r.Group("/admin")
+	adminGroup.POST("/login", adminController.Login)
+	adminGroup.POST("/logout", adminController.Logout)
+	adminGroup.Use(adminController.RequireAdmin())
+	adminGroup.GET("/me", adminController.Me)
+	adminGroup.GET("/overview", adminController.Overview)
+	adminGroup.GET("/system", adminController.System)
 
 	// 用户端接口
 	userGroup := r.Group("/user")

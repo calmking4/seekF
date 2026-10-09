@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+@layer base {
+  body {
+    @apply m-0 bg-[#f6f8f7] text-slate-800 antialiased;
+  }
+  button,
+  a,
+  input {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2;
+  }
+  button {
+    @apply cursor-pointer disabled:cursor-not-allowed;
+  }
+  ::selection {
+    @apply bg-emerald-200 text-emerald-950;
+  }
+}

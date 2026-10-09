@@ -31,6 +31,13 @@ import (
 // ChatServer 是全局的WebSocket服务器实例
 var ChatServer *Server
 
+// OnlineCount 在锁保护下返回当前在线用户数。
+func (s *Server) OnlineCount() int {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return len(s.Clients)
+}
+
 // Server 管理所有WebSocket客户端
 type Server struct {
 	Clients        map[string]*Client
