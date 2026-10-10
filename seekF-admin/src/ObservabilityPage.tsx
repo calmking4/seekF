@@ -105,7 +105,7 @@ export default function ObservabilityPage({
                 icon: ChartNoAxesCombined,
                 title: "再定位异常时段",
                 detail:
-                  "在 Grafana 中查看错误率和耗时趋势；需要后端先接入 /metrics。",
+                  "在 Grafana 的 seekF 后端看板中查看请求量、错误率和耗时趋势。",
               },
               {
                 icon: FileSearch,

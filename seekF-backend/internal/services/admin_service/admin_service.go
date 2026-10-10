@@ -77,7 +77,7 @@ func (s *AdminService) System(ctx context.Context) *adminresp.System {
 				response.Body.Close()
 				if response.StatusCode == http.StatusOK {
 					prom.Status = "up"
-					prom.Detail = "采集服务就绪；业务指标请在 Grafana 查看"
+					prom.Detail = "采集服务已就绪；请在 Prometheus Targets 确认后端采集状态"
 				}
 			}
 		}

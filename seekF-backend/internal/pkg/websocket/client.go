@@ -8,6 +8,7 @@ import (
 
 	"seekF-backend/internal/configs"
 	userreq "seekF-backend/internal/dto/user/user_req"
+	"seekF-backend/internal/middlewares"
 	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/zlog"
 
@@ -128,6 +129,7 @@ func NewClientInit(c *gin.Context, clientId string) error {
 		zlog.Error(err.Error())
 		return err
 	}
+	middlewares.MarkWebSocketUpgrade(c)
 	client := &Client{
 		Conn:         conn,
 		Uuid:         clientId,

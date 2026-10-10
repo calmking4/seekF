@@ -4,11 +4,14 @@ import (
 	"seekF-backend/internal/controllers/admin"
 	"seekF-backend/internal/controllers/user"
 	"seekF-backend/internal/middlewares"
+	"seekF-backend/internal/pkg/observability"
+	businessmetrics "seekF-backend/internal/pkg/observability/metrics"
 
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 )
 
+// SetupRouter 注册业务、管理及指标路由，并安装统一请求中间件。
 func SetupRouter(
 	authController *user.AuthController,
 	userInfoController *user.UserInfoController,
@@ -25,7 +28,16 @@ func SetupRouter(
 	notificationController *user.NotificationController,
 	adminController *admin.AdminController,
 ) *gin.Engine {
-	r := gin.Default()
+	httpMetrics := businessmetrics.NewHTTPMetrics()
+	metrics := observability.NewMetrics(
+		httpMetrics.RequestsCollector(),
+		httpMetrics.DurationCollector(),
+		businessmetrics.NewOnlineUsersCollector(),
+	)
+	r := gin.New()
+	// 指标包围Recovery，确保异常恢复后的500响应也被记录。
+	r.Use(gin.Logger(), middlewares.HTTPMetricsMiddleware(httpMetrics), gin.Recovery())
+	r.GET("/metrics", gin.WrapH(metrics.Handler()))
 
 	// 访问路径http://localhost:8080/debug/pprof/
 	pprof.Register(r)
