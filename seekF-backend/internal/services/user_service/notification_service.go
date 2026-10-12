@@ -17,6 +17,7 @@ const (
 	NotificationTypeReply       int8 = 3 // 回复评论
 	NotificationTypeFollow      int8 = 4 // 关注
 	NotificationTypeCollectPost int8 = 5 // 收藏帖子
+	NotificationTypeLikeComment int8 = 6 // 点赞评论
 )
 
 type NotificationService interface {
@@ -68,6 +69,7 @@ func NewNotificationService(notificationDAO userdao.NotificationDAO, userInfoDAO
 	}
 }
 
+// ListNotifications 分页查询分类通知并装配触发者、评论和所属帖子信息。
 func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId string, page, pageSize int, category string, unreadOnly bool) ([]NotificationInfo, int64, error) {
 	types := NotificationCategoryTypes(category)
 	notifications, err := s.notificationDAO.ListByUserId(userId, page, pageSize, types, unreadOnly)
@@ -86,10 +88,10 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 	actors := make(map[string]*models.UserInfo)
 	following := make(map[string]bool)
 	for _, n := range notifications {
-		// 新评论通知记录评论 UUID；旧通知仍可通过帖子 UUID 打开。
+		// 评论互动通知记录评论 UUID，解析所属帖子供通知页面打开；旧通知仍可使用帖子 UUID。
 		targetUuid := n.TargetUuid
 		var notificationComment *models.DiscoverComment
-		if (n.Type == NotificationTypeCommentPost || n.Type == NotificationTypeReply) && strings.HasPrefix(targetUuid, "C") {
+		if (n.Type == NotificationTypeCommentPost || n.Type == NotificationTypeReply || n.Type == NotificationTypeLikeComment) && strings.HasPrefix(targetUuid, "C") {
 			notificationComment, err = s.discoverDAO.FindCommentByUuid(targetUuid)
 			if err != nil {
 				return nil, 0, fmt.Errorf("查询通知评论失败: %w", err)
@@ -187,7 +189,7 @@ func NotificationCategoryTypes(category string) []int8 {
 	case "comments":
 		return []int8{NotificationTypeCommentPost, NotificationTypeReply}
 	case "likes":
-		return []int8{NotificationTypeLikePost, NotificationTypeCollectPost}
+		return []int8{NotificationTypeLikePost, NotificationTypeCollectPost, NotificationTypeLikeComment}
 	case "follows":
 		return []int8{NotificationTypeFollow}
 	default:
@@ -195,6 +197,7 @@ func NotificationCategoryTypes(category string) []int8 {
 	}
 }
 
+// GetUnreadCounts 统计评论、赞和收藏、关注各分类的未读数量。
 func (s *NotificationServiceImpl) GetUnreadCounts(ctx context.Context, userId string) (map[string]int64, error) {
 	counts, err := s.notificationDAO.CountUnreadByType(userId)
 	if err != nil {
@@ -202,7 +205,7 @@ func (s *NotificationServiceImpl) GetUnreadCounts(ctx context.Context, userId st
 	}
 	return map[string]int64{
 		"comments": counts[NotificationTypeCommentPost] + counts[NotificationTypeReply],
-		"likes":    counts[NotificationTypeLikePost] + counts[NotificationTypeCollectPost],
+		"likes":    counts[NotificationTypeLikePost] + counts[NotificationTypeCollectPost] + counts[NotificationTypeLikeComment],
 		"follows":  counts[NotificationTypeFollow],
 	}, nil
 }

@@ -64,6 +64,8 @@ export function buildDiscoverDraft({
         previewUrl: media.posterUrl || (media.uploadStatus === 'done'
           ? (media.uploadedUrl || media.url)
           : (media.url?.startsWith('blob:') ? '' : media.url)),
+        width: media.width || 0,
+        height: media.height || 0,
         fileName: media.file?.name || media.fileName || '',
         fileSize: media.file?.size || media.fileSize || 0,
         lastModified: media.file?.lastModified || media.lastModified || 0,
@@ -77,6 +79,8 @@ export function buildDiscoverDraft({
     draft.images = mediaList
       .filter(m => m.type === 'image')
       .map(m => ({
+        width: m.width || 0,
+        height: m.height || 0,
         previewUrl: m.url?.startsWith('blob:') ? '' : m.url,
         uploadedUrl: m.uploadedUrl || '',
         fileName: m.file?.name || '',
@@ -114,6 +118,8 @@ export function applyDiscoverDraft(draft) {
     const needsReselect = v.needsReselect
     result.mediaList = [{
       type: 'video',
+      width: v.width || 0,
+      height: v.height || 0,
       url: preview,
       file: null,
       fileName: v.fileName,
@@ -132,6 +138,8 @@ export function applyDiscoverDraft(draft) {
   } else if (draft.images?.length) {
     result.mediaList = draft.images.map(img => ({
       type: 'image',
+      width: img.width || 0,
+      height: img.height || 0,
       url: img.previewUrl || img.uploadedUrl,
       uploadedUrl: img.uploadedUrl || '',
       file: null,

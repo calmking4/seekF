@@ -16,6 +16,6 @@ export default defineNuxtRouteMiddleware((to) => {
 
     // 未登录用户访问受保护页面时，跳转到登录页
     if (!user && protectedRoutes.some(route => to.path.startsWith(route))) {
-        return navigateTo('/login')
+        return navigateTo(to.path.startsWith('/discover/post/') ? { path: '/login', query: { redirect: to.path } } : '/login')
     }
 })

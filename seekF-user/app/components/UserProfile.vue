@@ -99,7 +99,7 @@ const folderPostsPage = ref(1)
 const folderPostsNoMore = ref(false)
 const followLoading = ref(false)
 const selectedPost = ref(null)
-const pendingLikes = new Set()
+const { setLike: setProfilePostLike } = useDiscoverLike()
 const pageSize = 12
 let userVersion = 0
 let folderVersion = 0
@@ -287,21 +287,10 @@ const handleCollectUpdated = ({ postId, collectCount, isCollected }) => {
 }
 
 const toggleLike = async (post) => {
-  if (pendingLikes.has(post.uuid)) return
   const version = userVersion
-  pendingLikes.add(post.uuid)
-  try {
-    const res = await useApi$('/user/discover/like', { body: { target_uuid: post.uuid } })
-    if (version !== userVersion) return
-    if (res.code !== 200) throw new Error(res.message || '点赞失败')
-    handleLikeUpdated({ postId: post.uuid, likeCount: res.data.like_count, isLiked: res.data.is_liked })
-  } catch (error) {
-    if (version !== userVersion) return
-    console.error('点赞失败:', error)
-    ElMessage.error('点赞失败，请稍后重试')
-  } finally {
-    pendingLikes.delete(post.uuid)
-  }
+  const result = await setProfilePostLike(post.uuid, post.is_liked)
+  if (!result || version !== userVersion) return
+  handleLikeUpdated({ postId: post.uuid, likeCount: result.like_count, isLiked: result.is_liked })
 }
 
 watch(userId, loadUser)

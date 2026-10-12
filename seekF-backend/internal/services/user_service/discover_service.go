@@ -15,15 +15,16 @@ import (
 	"gorm.io/gorm"
 )
 
+// DiscoverService 发现页内容与互动业务接口。
 type DiscoverService interface {
-	CreatePost(ctx context.Context, userId, title, content string, mediaType int8, tags []string, urls []string, coverUrl string) (*PostInfo, error)
+	SetLike(ctx context.Context, userId, targetUuid string, liked bool, isComment bool) (bool, int, error)
+	ListCommentThread(ctx context.Context, userId, postUuid, parentUuid string, page, pageSize int) ([]CommentInfo, bool, error)
+	CreatePost(ctx context.Context, userId, title, content string, mediaType int8, tags []string, urls []string, coverUrl string, mediaSizes []MediaSize, coverSize MediaSize) (*PostInfo, error)
 	ListPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error)
 	ListLikedPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error)
 	GetPostDetail(ctx context.Context, userId, uuid string) (*PostDetailInfo, error)
-	ToggleLike(ctx context.Context, userId, targetUuid string) (bool, int, error)
 	AddComment(ctx context.Context, userId, postUuid string, parentUuid, replyToUserId, content string) (*CommentInfo, error)
 	ListComments(ctx context.Context, userId, postUuid string, page, pageSize int) ([]CommentInfo, error)
-	ToggleCommentLike(ctx context.Context, userId, commentUuid string) (bool, int, error)
 	AddAIComment(ctx context.Context, userId, postUuid, content, aiQuestion, parentUuid, replyToUserId, replyToContent string) (*CommentInfo, error)
 	// SearchPosts 搜索帖子（ES全文搜索）
 	SearchPosts(ctx context.Context, userId string, keyword string, page, pageSize int) ([]PostInfo, int64, error)
@@ -52,7 +53,16 @@ type DiscoverServiceImpl struct {
 	notificationDAO userdao.NotificationDAO
 }
 
+// MediaSize 媒体宽高，单位像素，零表示未知。
+type MediaSize struct {
+	Width  int
+	Height int
+}
+
+// PostInfo 帖子列表展示信息。
 type PostInfo struct {
+	Width        int
+	Height       int
 	Uuid         string
 	UserId       string
 	Nickname     string
@@ -91,7 +101,9 @@ type PostDetailInfo struct {
 	CreatedAt    string
 }
 
+// CommentInfo 评论展示及回复数量信息。
 type CommentInfo struct {
+	ReplyCount      int64
 	Uuid            string
 	UserId          string
 	Nickname        string
@@ -134,7 +146,8 @@ func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.Use
 	}
 }
 
-func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId, title, content string, mediaType int8, tags []string, urls []string, coverUrl string) (*PostInfo, error) {
+// CreatePost 保存帖子与媒体尺寸，并异步建立搜索索引。
+func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId, title, content string, mediaType int8, tags []string, urls []string, coverUrl string, mediaSizes []MediaSize, coverSize MediaSize) (*PostInfo, error) {
 	postUUID := "D" + util.GetNowAndLenRandomString(11)
 
 	tagsJSON, err := json.Marshal(tags)
@@ -143,17 +156,18 @@ func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId, title, con
 	}
 
 	post := &models.DiscoverPost{
-		Uuid:      postUUID,
-		UserId:    userId,
-		Title:     title,
-		Content:   content,
-		MediaType: mediaType,
-		CoverUrl:  coverUrl,
-		Tags:      tagsJSON,
-		Status:    0,
+		Uuid:       postUUID,
+		UserId:     userId,
+		Title:      title,
+		Content:    content,
+		MediaType:  mediaType,
+		CoverUrl:   coverUrl,
+		CoverWidth: coverSize.Width, CoverHeight: coverSize.Height,
+		Tags:   tagsJSON,
+		Status: 0,
 	}
 
-	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
+	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
 		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
 
@@ -162,8 +176,14 @@ func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId, title, con
 		}
 
 		for i, url := range urls {
+			var size MediaSize
+			if i < len(mediaSizes) {
+				size = mediaSizes[i]
+			}
 			media := &models.DiscoverMedia{
 				PostId:    post.Id,
+				Width:     size.Width,
+				Height:    size.Height,
 				Type:      mediaType,
 				Url:       url,
 				SortOrder: i,
@@ -190,17 +210,30 @@ func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId, title, con
 	}()
 
 	user, _ := s.userInfoDAO.FindUserByUuid(userId)
+	nickname, avatar := "", ""
+	if user != nil {
+		nickname, avatar = user.Nickname, user.Avatar
+	}
 
 	firstUrl := ""
 	if len(urls) > 0 {
 		firstUrl = urls[0]
 	}
 
+	var firstSize MediaSize
+	if len(mediaSizes) > 0 {
+		firstSize = mediaSizes[0]
+	}
+	if mediaType == 1 && coverUrl != "" && coverSize.Width > 0 && coverSize.Height > 0 {
+		firstSize = coverSize
+	}
 	return &PostInfo{
+		Width:     firstSize.Width,
+		Height:    firstSize.Height,
 		Uuid:      postUUID,
 		UserId:    userId,
-		Nickname:  user.Nickname,
-		Avatar:    user.Avatar,
+		Nickname:  nickname,
+		Avatar:    avatar,
 		Title:     title,
 		Content:   content,
 		MediaType: mediaType,
@@ -211,104 +244,20 @@ func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId, title, con
 	}, nil
 }
 
+// ListPosts 查询公共帖子并批量装配媒体与互动信息。
 func (s *DiscoverServiceImpl) ListPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error) {
 	posts, err := s.discoverDAO.ListPosts(page, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
-
 	total, err := s.discoverDAO.CountPosts()
 	if err != nil {
 		return nil, 0, err
 	}
-
-	if len(posts) == 0 {
-		return []PostInfo{}, total, nil
-	}
-
-	// 收集所有帖子ID和用户ID，用于批量查询
-	postIds := make([]int64, 0, len(posts))
-	userIds := make([]string, 0, len(posts))
-	postUuids := make([]string, 0, len(posts))
-	for _, post := range posts {
-		postIds = append(postIds, post.Id)
-		userIds = append(userIds, post.UserId)
-		postUuids = append(postUuids, post.Uuid)
-	}
-
-	// 批量查询媒体，构建 postId -> firstUrl 映射
-	mediaList, _ := s.discoverDAO.FindMediaByPostIds(postIds)
-	mediaMap := make(map[int64]string)
-	for _, media := range mediaList {
-		if _, exists := mediaMap[media.PostId]; !exists {
-			mediaMap[media.PostId] = media.Url
-		}
-	}
-
-	// 批量查询用户信息，构建 userId -> 用户信息映射
-	users, _ := s.userInfoDAO.FindUsersByUuids(userIds)
-	userMap := make(map[string]*models.UserInfo)
-	for i := range users {
-		userMap[users[i].Uuid] = &users[i]
-	}
-
-	// 批量查询点赞状态，构建 targetUuid -> 是否点赞映射
-	likedMap := make(map[string]bool)
-	if userId != "" {
-		likes, _ := s.discoverDAO.FindLikesByUserIdAndTargetUuids(userId, postUuids)
-		for _, like := range likes {
-			likedMap[like.TargetUuid] = true
-		}
-	}
-
-	// 批量查询收藏状态，构建 targetUuid -> 是否收藏映射
-	collectedMap := make(map[string]bool)
-	if userId != "" {
-		collections, _ := s.discoverDAO.FindCollectionsByUserIdAndTargetUuids(userId, postUuids)
-		for _, col := range collections {
-			collectedMap[col.TargetUuid] = true
-		}
-	}
-
-	var result []PostInfo
-	for _, post := range posts {
-		firstUrl := mediaMap[post.Id]
-
-		var tags []string
-		if len(post.Tags) > 0 {
-			json.Unmarshal(post.Tags, &tags)
-		}
-
-		nickname := ""
-		avatar := ""
-		if user, exists := userMap[post.UserId]; exists {
-			nickname = user.Nickname
-			avatar = user.Avatar
-		}
-
-		result = append(result, PostInfo{
-			Uuid:         post.Uuid,
-			UserId:       post.UserId,
-			Nickname:     nickname,
-			Avatar:       avatar,
-			Title:        post.Title,
-			Content:      post.Content,
-			MediaType:    post.MediaType,
-			CoverUrl:     post.CoverUrl,
-			Tags:         tags,
-			FirstUrl:     firstUrl,
-			LikeCount:    post.LikeCount,
-			CommentCount: post.CommentCount,
-			CollectCount: post.CollectCount,
-			IsLiked:      likedMap[post.Uuid],
-			IsCollected:  collectedMap[post.Uuid],
-			CreatedAt:    post.CreatedAt.Format("2006-01-02 15:04:05"),
-		})
-	}
-
-	return result, total, nil
+	return s.buildPostInfoList(ctx, userId, posts, total)
 }
 
+// ListLikedPosts 查询用户点赞的帖子及媒体信息。
 func (s *DiscoverServiceImpl) ListLikedPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error) {
 	posts, err := s.discoverDAO.ListLikedPosts(userId, page, pageSize)
 	if err != nil {
@@ -324,9 +273,12 @@ func (s *DiscoverServiceImpl) ListLikedPosts(ctx context.Context, userId string,
 	for _, post := range posts {
 		mediaList, _ := s.discoverDAO.FindMediaByPostId(post.Id)
 		firstUrl := ""
+		var firstMedia models.DiscoverMedia
 		if len(mediaList) > 0 {
-			firstUrl = mediaList[0].Url
+			firstMedia = mediaList[0]
+			firstUrl = firstMedia.Url
 		}
+		cardSize := discoverCardSize(post, firstMedia)
 
 		var tags []string
 		if len(post.Tags) > 0 {
@@ -352,6 +304,8 @@ func (s *DiscoverServiceImpl) ListLikedPosts(ctx context.Context, userId string,
 			CoverUrl:     post.CoverUrl,
 			Tags:         tags,
 			FirstUrl:     firstUrl,
+			Width:        cardSize.Width,
+			Height:       cardSize.Height,
 			LikeCount:    post.LikeCount,
 			CommentCount: post.CommentCount,
 			CollectCount: post.CollectCount,
@@ -363,12 +317,13 @@ func (s *DiscoverServiceImpl) ListLikedPosts(ctx context.Context, userId string,
 	return result, total, nil
 }
 
+// GetPostDetail 查询可用帖子详情及当前用户互动状态。
 func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid string) (*PostDetailInfo, error) {
 	post, err := s.discoverDAO.FindPostByUuid(uuid)
 	if err != nil {
 		return nil, err
 	}
-	if post == nil {
+	if post == nil || post.Status != 0 {
 		return nil, fmt.Errorf("帖子不存在")
 	}
 
@@ -431,87 +386,94 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 	}, nil
 }
 
-func (s *DiscoverServiceImpl) ToggleLike(ctx context.Context, userId, targetUuid string) (bool, int, error) {
-	existing, _ := s.discoverDAO.FindLike(userId, targetUuid)
-	if existing != nil {
-
-		err := db.GormDB.Transaction(func(tx *gorm.DB) error {
-
-			txDiscoverDAO := userdao.NewDiscoverDAO(tx)
-
-			if err := txDiscoverDAO.DeleteLike(userId, targetUuid); err != nil {
-				return err
-			}
-			post, _ := txDiscoverDAO.FindPostByUuid(targetUuid)
-			if post != nil {
-				txDiscoverDAO.DecrementLikeCount(post.Id)
-			}
-			return nil
-		})
-		if err != nil {
-			return false, 0, err
-		}
-		// 重新获取帖子以获取更新后的点赞数
-		updatedPost, _ := s.discoverDAO.FindPostByUuid(targetUuid)
-		if updatedPost != nil {
-			return false, updatedPost.LikeCount, nil
-		}
-		return false, 0, nil
-	}
-
-	err := db.GormDB.Transaction(func(tx *gorm.DB) error {
-
+// SetLike 在同一事务中设置点赞状态、校准计数并写入通知，重复请求保持幂等。
+func (s *DiscoverServiceImpl) SetLike(ctx context.Context, userId, targetUuid string, liked bool, isComment bool) (bool, int, error) {
+	var count int
+	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
-
-		like := &models.DiscoverLike{
-			UserId:     userId,
-			TargetUuid: targetUuid,
+		var targetId int64
+		var owner string
+		if isComment {
+			comment, err := txDiscoverDAO.FindCommentByUuidForUpdate(targetUuid)
+			if err != nil {
+				return fmt.Errorf("查询评论失败: %w", err)
+			}
+			if comment == nil {
+				return fmt.Errorf("评论不存在")
+			}
+			post, err := txDiscoverDAO.FindPostById(comment.PostId)
+			if err != nil {
+				return fmt.Errorf("查询评论所属帖子失败: %w", err)
+			}
+			if post == nil || post.Status != 0 {
+				return fmt.Errorf("评论所属帖子不可用")
+			}
+			targetId, owner = comment.Id, comment.UserId
+		} else {
+			post, err := txDiscoverDAO.FindPostByUuidForUpdate(targetUuid)
+			if err != nil {
+				return fmt.Errorf("查询帖子失败: %w", err)
+			}
+			if post == nil || post.Status != 0 {
+				return fmt.Errorf("帖子不存在或已下架")
+			}
+			targetId, owner = post.Id, post.UserId
 		}
-		if err := txDiscoverDAO.CreateLike(like); err != nil {
-			return err
+		// 先锁定目标再读取当前状态，避免同一目标并发请求重复增删和通知。
+		existing, err := txDiscoverDAO.FindLike(userId, targetUuid)
+		if err != nil {
+			return fmt.Errorf("查询点赞状态失败: %w", err)
 		}
-
-		post, _ := txDiscoverDAO.FindPostByUuid(targetUuid)
-		if post != nil {
-			txDiscoverDAO.IncrementLikeCount(post.Id)
+		changed := liked != (existing != nil)
+		if changed {
+			if liked {
+				if err := txDiscoverDAO.CreateLike(&models.DiscoverLike{UserId: userId, TargetUuid: targetUuid}); err != nil {
+					return fmt.Errorf("保存点赞失败: %w", err)
+				}
+			} else {
+				if err := txDiscoverDAO.DeleteLike(userId, targetUuid); err != nil {
+					return fmt.Errorf("取消点赞失败: %w", err)
+				}
+			}
+		}
+		// 保留按真实唯一用户数校准计数的行为，兼容遗留重复记录。
+		count, err = txDiscoverDAO.CountLikesByTargetUuid(targetUuid)
+		if err != nil {
+			return fmt.Errorf("查询点赞数量失败: %w", err)
+		}
+		if isComment {
+			err = txDiscoverDAO.UpdateCommentLikeCount(targetId, count)
+		} else {
+			err = txDiscoverDAO.UpdatePostLikeCount(targetId, count)
+		}
+		if err != nil {
+			return fmt.Errorf("更新点赞数量失败: %w", err)
+		}
+		if changed && liked && owner != userId {
+			notificationType, content := NotificationTypeLikePost, "赞了你的帖子"
+			if isComment {
+				notificationType, content = NotificationTypeLikeComment, "赞了你的评论"
+			}
+			// 通知写入失败时一起回滚点赞与计数，避免业务成功但通知丢失。
+			if err := userdao.NewNotificationDAO(tx).CreateNotification(&models.Notification{UserId: owner, ActorId: userId, Type: notificationType, TargetUuid: targetUuid, Content: content}); err != nil {
+				return fmt.Errorf("创建点赞通知失败: %w", err)
+			}
 		}
 		return nil
 	})
 	if err != nil {
 		return false, 0, err
 	}
-
-	// 异步创建点赞通知
-	go func() {
-		post, _ := s.discoverDAO.FindPostByUuid(targetUuid)
-		if post != nil && post.UserId != userId {
-			notification := &models.Notification{
-				UserId:     post.UserId,
-				ActorId:    userId,
-				Type:       NotificationTypeLikePost,
-				TargetUuid: targetUuid,
-				Content:    "赞了你的帖子",
-			}
-			if err := s.notificationDAO.CreateNotification(notification); err != nil {
-				zlog.Error("创建点赞通知失败: " + err.Error())
-			}
-		}
-	}()
-
-	// 重新获取帖子以获取更新后的点赞数
-	updatedPost, _ := s.discoverDAO.FindPostByUuid(targetUuid)
-	if updatedPost != nil {
-		return true, updatedPost.LikeCount, nil
-	}
-	return true, 0, nil
+	return liked, count, nil
 }
 
+// AddComment 保存评论并通知作者或被回复者。
 func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid string, parentUuid, replyToUserId, content string) (*CommentInfo, error) {
 	post, err := s.discoverDAO.FindPostByUuid(postUuid)
 	if err != nil {
 		return nil, err
 	}
-	if post == nil {
+	if post == nil || post.Status != 0 {
 		return nil, fmt.Errorf("帖子不存在")
 	}
 	// 回复顶级评论时客户端不传回复用户，从父评论确定通知接收者。
@@ -539,7 +501,7 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 		Content:       content,
 	}
 
-	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
+	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
 		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
 
@@ -547,8 +509,7 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 			return fmt.Errorf("评论失败: %v", err)
 		}
 
-		txDiscoverDAO.IncrementCommentCount(post.Id)
-		return nil
+		return txDiscoverDAO.IncrementCommentCount(post.Id)
 	})
 	if err != nil {
 		return nil, err
@@ -616,123 +577,90 @@ func truncateContent(content string, maxLen int) string {
 	return string(runes[:maxLen]) + "..."
 }
 
+// ListComments 兼容旧客户端的全部评论分页。
 func (s *DiscoverServiceImpl) ListComments(ctx context.Context, userId, postUuid string, page, pageSize int) ([]CommentInfo, error) {
 	post, err := s.discoverDAO.FindPostByUuid(postUuid)
 	if err != nil {
 		return nil, err
 	}
-	if post == nil {
-		return nil, fmt.Errorf("帖子不存在")
+	if post == nil || post.Status != 0 {
+		return nil, fmt.Errorf("帖子不存在或已下架")
 	}
-
 	comments, err := s.discoverDAO.FindCommentsByPostId(post.Id, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
+	return s.buildCommentInfoList(userId, comments)
+}
 
-	var result []CommentInfo
-	for _, c := range comments {
-		user, _ := s.userInfoDAO.FindUserByUuid(c.UserId)
-		nickname := ""
-		avatar := ""
-		if user != nil {
-			nickname = user.Nickname
-			avatar = user.Avatar
-		}
-
-		replyToNickname := ""
-		if c.ReplyToUserId != "" {
-			replyToUser, _ := s.userInfoDAO.FindUserByUuid(c.ReplyToUserId)
-			if replyToUser != nil {
-				replyToNickname = replyToUser.Nickname
-			}
-		}
-
-		// 查询当前用户是否点赞了该评论
-		isLiked := false
-		if userId != "" {
-			like, _ := s.discoverDAO.FindLike(userId, c.Uuid)
-			if like != nil {
-				isLiked = true
-			}
-		}
-
-		result = append(result, CommentInfo{
-			Uuid:            c.Uuid,
-			UserId:          c.UserId,
-			Nickname:        nickname,
-			Avatar:          avatar,
-			ParentId:        c.ParentId,
-			ReplyToUserId:   c.ReplyToUserId,
-			ReplyToNickname: replyToNickname,
-			Content:         c.Content,
-			LikeCount:       c.LikeCount,
-			IsLiked:         isLiked,
-			CreatedAt:       c.CreatedAt.Format("2006-01-02 15:04:05"),
-		})
+// ListCommentThread 分页查询顶级评论或指定评论的回复，校验父评论归属。
+func (s *DiscoverServiceImpl) ListCommentThread(ctx context.Context, userId, postUuid, parentUuid string, page, pageSize int) ([]CommentInfo, bool, error) {
+	post, err := s.discoverDAO.FindPostByUuid(postUuid)
+	if err != nil {
+		return nil, false, err
 	}
+	if post == nil || post.Status != 0 {
+		return nil, false, fmt.Errorf("帖子不存在或已下架")
+	}
+	if parentUuid != "" {
+		parent, err := s.discoverDAO.FindCommentByUuid(parentUuid)
+		if err != nil {
+			return nil, false, err
+		}
+		if parent == nil || parent.PostId != post.Id || parent.ParentId != "" {
+			return nil, false, fmt.Errorf("父评论不存在或不属于当前帖子")
+		}
+	}
+	comments, hasMore, err := s.discoverDAO.FindCommentThread(post.Id, parentUuid, page, pageSize)
+	if err != nil {
+		return nil, false, err
+	}
+	infos, err := s.buildCommentInfoList(userId, comments)
+	return infos, hasMore, err
+}
 
+// buildCommentInfoList 批量装配评论作者、回复数量与当前用户点赞状态。
+func (s *DiscoverServiceImpl) buildCommentInfoList(userId string, comments []models.DiscoverComment) ([]CommentInfo, error) {
+	result := make([]CommentInfo, 0, len(comments))
+	if len(comments) == 0 {
+		return result, nil
+	}
+	userIds, uuids := make([]string, 0), make([]string, 0, len(comments))
+	for _, c := range comments {
+		userIds = append(userIds, c.UserId)
+		if c.ReplyToUserId != "" {
+			userIds = append(userIds, c.ReplyToUserId)
+		}
+		uuids = append(uuids, c.Uuid)
+	}
+	users, err := s.userInfoDAO.FindUsersByUuids(userIds)
+	if err != nil {
+		return nil, fmt.Errorf("查询评论用户失败: %w", err)
+	}
+	userMap := make(map[string]models.UserInfo)
+	for _, u := range users {
+		userMap[u.Uuid] = u
+	}
+	likes, err := s.discoverDAO.FindLikesByUserIdAndTargetUuids(userId, uuids)
+	if err != nil {
+		return nil, fmt.Errorf("查询评论点赞失败: %w", err)
+	}
+	liked := make(map[string]bool)
+	for _, like := range likes {
+		liked[like.TargetUuid] = true
+	}
+	replies, err := s.discoverDAO.CountReplies(uuids)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range comments {
+		user, replyUser := userMap[c.UserId], userMap[c.ReplyToUserId]
+		result = append(result, CommentInfo{Uuid: c.Uuid, UserId: c.UserId, Nickname: user.Nickname, Avatar: user.Avatar, ParentId: c.ParentId, ReplyToUserId: c.ReplyToUserId, ReplyToNickname: replyUser.Nickname, Content: c.Content, LikeCount: c.LikeCount, IsLiked: liked[c.Uuid], ReplyCount: replies[c.Uuid], CreatedAt: c.CreatedAt.Format("2006-01-02 15:04:05")})
+	}
 	return result, nil
 }
 
-func (s *DiscoverServiceImpl) ToggleCommentLike(ctx context.Context, userId, commentUuid string) (bool, int, error) {
-	existing, _ := s.discoverDAO.FindLike(userId, commentUuid)
-	if existing != nil {
-
-		err := db.GormDB.Transaction(func(tx *gorm.DB) error {
-
-			txDiscoverDAO := userdao.NewDiscoverDAO(tx)
-
-			if err := txDiscoverDAO.DeleteLike(userId, commentUuid); err != nil {
-				return err
-			}
-			// 通过 UUID 查询评论
-			comment, _ := txDiscoverDAO.FindCommentByUuid(commentUuid)
-			if comment != nil {
-				txDiscoverDAO.DecrementCommentLikeCount(comment.Id)
-			}
-			return nil
-		})
-		if err != nil {
-			return false, 0, err
-		}
-		// 重新查询获取更新后的点赞数
-		updatedComment, _ := s.discoverDAO.FindCommentByUuid(commentUuid)
-		if updatedComment != nil {
-			return false, updatedComment.LikeCount, nil
-		}
-		return false, 0, nil
-	}
-
-	err := db.GormDB.Transaction(func(tx *gorm.DB) error {
-
-		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
-
-		like := &models.DiscoverLike{
-			UserId:     userId,
-			TargetUuid: commentUuid,
-		}
-		if err := txDiscoverDAO.CreateLike(like); err != nil {
-			return err
-		}
-		// 通过 UUID 查询评论
-		comment, _ := txDiscoverDAO.FindCommentByUuid(commentUuid)
-		if comment != nil {
-			txDiscoverDAO.IncrementCommentLikeCount(comment.Id)
-		}
-		return nil
-	})
-	if err != nil {
-		return false, 0, err
-	}
-	// 重新查询获取更新后的点赞数
-	updatedComment, _ := s.discoverDAO.FindCommentByUuid(commentUuid)
-	if updatedComment != nil {
-		return true, updatedComment.LikeCount, nil
-	}
-	return true, 0, nil
-}
-
+// AddAIComment 保存用户评论并触发 AI 回复任务。
 func (s *DiscoverServiceImpl) AddAIComment(ctx context.Context, userId, postUuid, content, aiQuestion, parentUuid, replyToUserId, replyToContent string) (*CommentInfo, error) {
 	// 1. 保存用户评论（完整内容含@AI助手前缀）
 	userComment, err := s.AddComment(ctx, userId, postUuid, parentUuid, replyToUserId, content)
@@ -868,6 +796,7 @@ func (s *DiscoverServiceImpl) GetFolderDetail(ctx context.Context, userId, folde
 	}, nil
 }
 
+// ListCollectedPosts 查询收藏夹内的帖子及互动状态。
 func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, folderUuid string, page, pageSize int) ([]PostInfo, int64, error) {
 	folder, err := s.discoverDAO.FindFolderByUuid(folderUuid)
 	if err != nil {
@@ -916,9 +845,12 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 	for _, post := range posts {
 		mediaList, _ := s.discoverDAO.FindMediaByPostId(post.Id)
 		firstUrl := ""
+		var firstMedia models.DiscoverMedia
 		if len(mediaList) > 0 {
-			firstUrl = mediaList[0].Url
+			firstMedia = mediaList[0]
+			firstUrl = firstMedia.Url
 		}
+		cardSize := discoverCardSize(post, firstMedia)
 		var tags []string
 		if len(post.Tags) > 0 {
 			json.Unmarshal(post.Tags, &tags)
@@ -941,6 +873,8 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 			CoverUrl:     post.CoverUrl,
 			Tags:         tags,
 			FirstUrl:     firstUrl,
+			Width:        cardSize.Width,
+			Height:       cardSize.Height,
 			LikeCount:    post.LikeCount,
 			CommentCount: post.CommentCount,
 			CollectCount: post.CollectCount,
@@ -954,12 +888,13 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 
 // ========== 收藏/取消收藏 ==========
 
+// CollectPost 保存收藏及通知，并在事务内维护收藏夹和帖子计数。
 func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid, folderUuid string) (bool, int, error) {
 	post, err := s.discoverDAO.FindPostByUuid(postUuid)
 	if err != nil {
 		return false, 0, err
 	}
-	if post == nil {
+	if post == nil || post.Status != 0 {
 		return false, 0, fmt.Errorf("帖子不存在")
 	}
 
@@ -984,7 +919,7 @@ func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid,
 		return false, 0, fmt.Errorf("查询收藏状态失败: %w", err)
 	}
 
-	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
+	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
 		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
 
@@ -1006,8 +941,12 @@ func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid,
 			}
 		}
 
-		txDiscoverDAO.IncrementFolderPostCount(folder.Id)
-		txDiscoverDAO.IncrementCollectCount(post.Id)
+		if err := txDiscoverDAO.IncrementFolderPostCount(folder.Id); err != nil {
+			return fmt.Errorf("更新收藏夹帖子数失败: %w", err)
+		}
+		if err := txDiscoverDAO.IncrementCollectCount(post.Id); err != nil {
+			return fmt.Errorf("更新帖子收藏数失败: %w", err)
+		}
 		return nil
 	})
 	if err != nil {
@@ -1022,6 +961,7 @@ func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid,
 	return true, collectCount, nil
 }
 
+// UncollectPost 删除收藏并在事务内维护收藏夹和帖子计数。
 func (s *DiscoverServiceImpl) UncollectPost(ctx context.Context, userId, postUuid, folderUuid string) (bool, int, error) {
 	folder, err := s.discoverDAO.FindFolderByUuid(folderUuid)
 	if err != nil {
@@ -1036,7 +976,7 @@ func (s *DiscoverServiceImpl) UncollectPost(ctx context.Context, userId, postUui
 		return false, 0, fmt.Errorf("未收藏该帖子")
 	}
 
-	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
+	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
 		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
 
@@ -1044,11 +984,18 @@ func (s *DiscoverServiceImpl) UncollectPost(ctx context.Context, userId, postUui
 			return err
 		}
 
-		txDiscoverDAO.DecrementFolderPostCount(folder.Id)
+		if err := txDiscoverDAO.DecrementFolderPostCount(folder.Id); err != nil {
+			return fmt.Errorf("更新收藏夹帖子数失败: %w", err)
+		}
 
-		post, _ := txDiscoverDAO.FindPostByUuid(postUuid)
+		post, err := txDiscoverDAO.FindPostByUuid(postUuid)
+		if err != nil {
+			return fmt.Errorf("查询收藏帖子失败: %w", err)
+		}
 		if post != nil {
-			txDiscoverDAO.DecrementCollectCount(post.Id)
+			if err := txDiscoverDAO.DecrementCollectCount(post.Id); err != nil {
+				return fmt.Errorf("更新帖子收藏数失败: %w", err)
+			}
 		}
 		return nil
 	})
@@ -1078,6 +1025,7 @@ func (s *DiscoverServiceImpl) CheckCollected(ctx context.Context, userId, postUu
 }
 
 // SearchPosts 搜索帖子（ES全文搜索，ES不可用时降级到MySQL）
+// SearchPosts 优先全文检索，降级时保留数据库分页与真实总数。
 func (s *DiscoverServiceImpl) SearchPosts(ctx context.Context, userId string, keyword string, page, pageSize int) ([]PostInfo, int64, error) {
 	if page < 1 {
 		page = 1
@@ -1097,13 +1045,11 @@ func (s *DiscoverServiceImpl) SearchPosts(ctx context.Context, userId string, ke
 	}
 
 	// 降级到MySQL LIKE搜索
-	posts, err := s.discoverDAO.SearchPostsByKeyword(keyword, pageSize)
+	posts, total, err := s.discoverDAO.SearchPostsPage(keyword, page, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	// MySQL LIKE搜索没有精确的total，用返回数量近似
-	total := int64(len(posts))
 	return s.buildPostInfoList(ctx, userId, posts, total)
 }
 
@@ -1123,16 +1069,22 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 	}
 
 	// 批量查询媒体
-	mediaList, _ := s.discoverDAO.FindMediaByPostIds(postIds)
-	mediaMap := make(map[int64]string)
+	mediaList, err := s.discoverDAO.FindMediaByPostIds(postIds)
+	if err != nil {
+		return nil, 0, fmt.Errorf("查询帖子媒体失败: %w", err)
+	}
+	mediaMap := make(map[int64]models.DiscoverMedia)
 	for _, media := range mediaList {
 		if _, exists := mediaMap[media.PostId]; !exists {
-			mediaMap[media.PostId] = media.Url
+			mediaMap[media.PostId] = media
 		}
 	}
 
 	// 批量查询用户信息
-	users, _ := s.userInfoDAO.FindUsersByUuids(userIds)
+	users, err := s.userInfoDAO.FindUsersByUuids(userIds)
+	if err != nil {
+		return nil, 0, fmt.Errorf("查询帖子作者失败: %w", err)
+	}
 	userMap := make(map[string]*models.UserInfo)
 	for i := range users {
 		userMap[users[i].Uuid] = &users[i]
@@ -1141,7 +1093,10 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 	// 批量查询点赞状态
 	likedMap := make(map[string]bool)
 	if userId != "" {
-		likes, _ := s.discoverDAO.FindLikesByUserIdAndTargetUuids(userId, postUuids)
+		likes, err := s.discoverDAO.FindLikesByUserIdAndTargetUuids(userId, postUuids)
+		if err != nil {
+			return nil, 0, fmt.Errorf("查询帖子点赞状态失败: %w", err)
+		}
 		for _, like := range likes {
 			likedMap[like.TargetUuid] = true
 		}
@@ -1150,7 +1105,10 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 	// 批量查询收藏状态
 	collectedMap := make(map[string]bool)
 	if userId != "" {
-		collections, _ := s.discoverDAO.FindCollectionsByUserIdAndTargetUuids(userId, postUuids)
+		collections, err := s.discoverDAO.FindCollectionsByUserIdAndTargetUuids(userId, postUuids)
+		if err != nil {
+			return nil, 0, fmt.Errorf("查询帖子收藏状态失败: %w", err)
+		}
 		for _, col := range collections {
 			collectedMap[col.TargetUuid] = true
 		}
@@ -1158,7 +1116,9 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 
 	var result []PostInfo
 	for _, post := range posts {
-		firstUrl := mediaMap[post.Id]
+		firstMedia := mediaMap[post.Id]
+		firstUrl := firstMedia.Url
+		cardSize := discoverCardSize(post, firstMedia)
 
 		var tags []string
 		if len(post.Tags) > 0 {
@@ -1183,6 +1143,8 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 			CoverUrl:     post.CoverUrl,
 			Tags:         tags,
 			FirstUrl:     firstUrl,
+			Width:        cardSize.Width,
+			Height:       cardSize.Height,
 			LikeCount:    post.LikeCount,
 			CommentCount: post.CommentCount,
 			CollectCount: post.CollectCount,
@@ -1212,6 +1174,7 @@ type UserProfileInfo struct {
 	Total          int64
 }
 
+// GetUserProfile 查询用户主页及帖子列表。
 func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId, currentUserId string, page, pageSize int) (*UserProfileInfo, error) {
 	// 查询用户信息
 	user, err := s.userInfoDAO.FindUserByUuid(profileUserId)
@@ -1258,10 +1221,10 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 		}
 
 		mediaList, _ := s.discoverDAO.FindMediaByPostIds(postIds)
-		mediaMap := make(map[int64]string)
+		mediaMap := make(map[int64]models.DiscoverMedia)
 		for _, media := range mediaList {
 			if _, exists := mediaMap[media.PostId]; !exists {
-				mediaMap[media.PostId] = media.Url
+				mediaMap[media.PostId] = media
 			}
 		}
 
@@ -1279,7 +1242,9 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 		}
 
 		for _, post := range posts {
-			firstUrl := mediaMap[post.Id]
+			firstMedia := mediaMap[post.Id]
+			firstUrl := firstMedia.Url
+			cardSize := discoverCardSize(post, firstMedia)
 			var tags []string
 			if len(post.Tags) > 0 {
 				json.Unmarshal(post.Tags, &tags)
@@ -1295,6 +1260,8 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 				CoverUrl:     post.CoverUrl,
 				Tags:         tags,
 				FirstUrl:     firstUrl,
+				Width:        cardSize.Width,
+				Height:       cardSize.Height,
 				LikeCount:    post.LikeCount,
 				CommentCount: post.CommentCount,
 				CollectCount: post.CollectCount,
@@ -1332,4 +1299,12 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 		Posts:          postInfos,
 		Total:          total,
 	}, nil
+}
+
+// discoverCardSize 返回卡片展示尺寸，视频自定义封面优先，媒体原尺寸仍独立保存。
+func discoverCardSize(post models.DiscoverPost, media models.DiscoverMedia) MediaSize {
+	if post.MediaType == 1 && post.CoverUrl != "" && post.CoverWidth > 0 && post.CoverHeight > 0 {
+		return MediaSize{Width: post.CoverWidth, Height: post.CoverHeight}
+	}
+	return MediaSize{Width: media.Width, Height: media.Height}
 }

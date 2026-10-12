@@ -1,82 +1,157 @@
 package userdao
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"seekF-backend/internal/models"
+	"strings"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
+// DiscoverDAO 发现页帖子、媒体和互动数据访问接口。
 type DiscoverDAO interface {
+	// ========== 帖子 ==========
+	// CreatePost 保存帖子。
 	CreatePost(post *models.DiscoverPost) error
+	// FindPostByUuid 按 UUID 查询帖子，不存在时返回空。
 	FindPostByUuid(uuid string) (*models.DiscoverPost, error)
+	// FindPostByUuidForUpdate 查询并锁定帖子，须使用事务连接调用。
+	FindPostByUuidForUpdate(uuid string) (*models.DiscoverPost, error)
+	// FindPostById 按主键查询帖子，不存在时返回空。
 	FindPostById(id int64) (*models.DiscoverPost, error)
+	// ListPosts 分页查询正常状态的帖子。
 	ListPosts(page, pageSize int) ([]models.DiscoverPost, error)
-	SearchPostsByKeyword(keyword string, limit int) ([]models.DiscoverPost, error)
-	ListLikedPosts(userId string, page, pageSize int) ([]models.DiscoverPost, error)
+	// CountPosts 统计正常状态的帖子数量。
 	CountPosts() (int64, error)
-	CountLikedPosts(userId string) (int64, error)
-	IncrementLikeCount(postId int64) error
-	DecrementLikeCount(postId int64) error
+	// IncrementCommentCount 增加帖子的评论数。
 	IncrementCommentCount(postId int64) error
+	// IncrementViewCount 增加帖子的浏览数。
 	IncrementViewCount(postId int64) error
+	// ListPostsByUserId 分页查询指定用户的正常帖子。
 	ListPostsByUserId(userId string, page, pageSize int) ([]models.DiscoverPost, error)
+	// CountPostsByUserId 统计指定用户的正常帖子数量。
 	CountPostsByUserId(userId string) (int64, error)
+	// GetUserTotalLikes 统计指定用户正常帖子的总获赞数。
 	GetUserTotalLikes(userId string) (int, error)
 
+	// ========== 搜索 ==========
+	// SearchPostsByKeyword 兼容工具调用，返回关键词搜索的第一页。
+	SearchPostsByKeyword(keyword string, limit int) ([]models.DiscoverPost, error)
+	// SearchPostsPage 在全文检索不可用时按关键词分页查询并返回真实总数。
+	SearchPostsPage(keyword string, page, pageSize int) ([]models.DiscoverPost, int64, error)
+
+	// ========== 媒体 ==========
+	// CreateMedia 保存帖子媒体信息。
 	CreateMedia(media *models.DiscoverMedia) error
+	// FindMediaByPostId 按展示顺序查询帖子的媒体。
 	FindMediaByPostId(postId int64) ([]models.DiscoverMedia, error)
-	// FindMediaByPostIds 批量查询多个帖子的媒体，按 post_id、sort_order 排序，便于取每帖首张图
+	// FindMediaByPostIds 批量查询帖子媒体并按帖子及展示顺序排序。
 	FindMediaByPostIds(postIds []int64) ([]models.DiscoverMedia, error)
 
+	// ========== 点赞 ==========
+	// CountLikesByTargetUuid 统计指定目标的去重点赞用户数。
+	CountLikesByTargetUuid(targetUuid string) (int, error)
+	// UpdatePostLikeCount 更新帖子的实际点赞数。
+	UpdatePostLikeCount(postId int64, count int) error
+	// UpdateCommentLikeCount 更新评论的实际点赞数。
+	UpdateCommentLikeCount(commentId int64, count int) error
+	// CreateLike 保存点赞记录。
 	CreateLike(like *models.DiscoverLike) error
+	// DeleteLike 删除用户对指定目标的点赞记录。
 	DeleteLike(userId, targetUuid string) error
+	// FindLike 查询用户对指定目标的点赞记录。
 	FindLike(userId, targetUuid string) (*models.DiscoverLike, error)
 	// FindLikesByUserIdAndTargetUuids 批量查询用户对多个目标的点赞状态
 	FindLikesByUserIdAndTargetUuids(userId string, targetUuids []string) ([]models.DiscoverLike, error)
+	// ListLikedPosts 分页查询用户点赞的正常帖子。
+	ListLikedPosts(userId string, page, pageSize int) ([]models.DiscoverPost, error)
+	// CountLikedPosts 统计用户点赞的正常帖子数量。
+	CountLikedPosts(userId string) (int64, error)
+	// IncrementLikeCount 增加帖子的点赞数。
+	IncrementLikeCount(postId int64) error
+	// DecrementLikeCount 减少帖子的点赞数。
+	DecrementLikeCount(postId int64) error
 
+	// ========== 评论 ==========
+	// CreateComment 保存评论。
 	CreateComment(comment *models.DiscoverComment) error
+	// FindCommentById 按主键查询评论，不存在时返回空。
 	FindCommentById(commentId int64) (*models.DiscoverComment, error)
+	// FindCommentByUuid 按 UUID 查询评论，不存在时返回空。
 	FindCommentByUuid(uuid string) (*models.DiscoverComment, error)
+	// FindCommentByUuidForUpdate 查询并锁定评论，须使用事务连接调用。
+	FindCommentByUuidForUpdate(uuid string) (*models.DiscoverComment, error)
+	// FindCommentsByPostId 按时间及 ID 稳定分页读取全部评论。
 	FindCommentsByPostId(postId int64, page, pageSize int) ([]models.DiscoverComment, error)
+	// FindCommentThread 按稳定顺序分页读取顶级评论或同一父评论的回复。
+	FindCommentThread(postId int64, parentUuid string, page, pageSize int) ([]models.DiscoverComment, bool, error)
+	// CountReplies 批量统计顶级评论的回复数量。
+	CountReplies(parentUuids []string) (map[string]int64, error)
+	// IncrementCommentLikeCount 增加评论的点赞数。
 	IncrementCommentLikeCount(commentId int64) error
+	// DecrementCommentLikeCount 减少评论的点赞数。
 	DecrementCommentLikeCount(commentId int64) error
 
-	// 收藏夹
+	// ========== 收藏夹 ==========
+	// CreateFolder 创建收藏夹。
 	CreateFolder(folder *models.DiscoverCollectionFolder) error
+	// UpdateFolder 更新收藏夹名称、描述和公开状态。
 	UpdateFolder(uuid string, name, description string, isPublic int8) error
+	// DeleteFolder 删除指定收藏夹。
 	DeleteFolder(uuid string) error
+	// FindFolderByUuid 按 UUID 查询收藏夹，不存在时返回空。
 	FindFolderByUuid(uuid string) (*models.DiscoverCollectionFolder, error)
+	// ListFoldersByUserId 查询用户的收藏夹列表。
 	ListFoldersByUserId(userId string) ([]models.DiscoverCollectionFolder, error)
+	// FindDefaultFolder 查询用户的默认收藏夹。
 	FindDefaultFolder(userId string) (*models.DiscoverCollectionFolder, error)
 
-	// 收藏记录
+	// ========== 收藏记录 ==========
+	// CreateCollection 保存收藏记录。
 	CreateCollection(col *models.DiscoverCollection) error
+	// DeleteCollection 删除用户在指定收藏夹中的目标收藏记录。
 	DeleteCollection(userId string, folderId int64, targetUuid string) error
+	// FindCollectionInFolder 查询用户在指定收藏夹中的目标收藏记录。
 	FindCollectionInFolder(userId string, folderId int64, targetUuid string) (*models.DiscoverCollection, error)
+	// FindCollectionByUserAndTarget 查询用户对指定目标的收藏记录。
 	FindCollectionByUserAndTarget(userId, targetUuid string) (*models.DiscoverCollection, error)
 	// FindCollectionsByUserIdAndTargetUuids 批量查询用户对多个目标的收藏状态
 	FindCollectionsByUserIdAndTargetUuids(userId string, targetUuids []string) ([]models.DiscoverCollection, error)
+	// IncrementFolderPostCount 增加收藏夹的帖子数。
 	IncrementFolderPostCount(folderId int64) error
+	// DecrementFolderPostCount 减少收藏夹的帖子数。
 	DecrementFolderPostCount(folderId int64) error
+	// IncrementCollectCount 增加帖子的收藏数。
 	IncrementCollectCount(postId int64) error
+	// DecrementCollectCount 减少帖子的收藏数。
 	DecrementCollectCount(postId int64) error
+	// ListCollectedPostsByFolder 分页查询收藏夹中的正常帖子。
 	ListCollectedPostsByFolder(folderId int64, page, pageSize int) ([]models.DiscoverPost, error)
+	// CountCollectedPostsByFolder 统计收藏夹中的正常帖子数量。
 	CountCollectedPostsByFolder(folderId int64) (int64, error)
 }
 
+// DiscoverDAOImpl 发现页数据访问实现。
 type DiscoverDAOImpl struct {
 	db *gorm.DB
 }
 
+// NewDiscoverDAO 创建发现页数据访问实例。
 func NewDiscoverDAO(db *gorm.DB) DiscoverDAO {
 	return &DiscoverDAOImpl{db: db}
 }
 
+// ========== 帖子 ==========
+
+// CreatePost 保存帖子。
 func (d *DiscoverDAOImpl) CreatePost(post *models.DiscoverPost) error {
 	return d.db.Create(post).Error
 }
 
+// FindPostByUuid 按 UUID 查询帖子，不存在时返回空。
 func (d *DiscoverDAOImpl) FindPostByUuid(uuid string) (*models.DiscoverPost, error) {
 	var post models.DiscoverPost
 	result := d.db.Where("uuid = ?", uuid).First(&post)
@@ -86,6 +161,17 @@ func (d *DiscoverDAOImpl) FindPostByUuid(uuid string) (*models.DiscoverPost, err
 	return &post, result.Error
 }
 
+// FindPostByUuidForUpdate 查询并锁定帖子，须使用事务连接调用。
+func (d *DiscoverDAOImpl) FindPostByUuidForUpdate(uuid string) (*models.DiscoverPost, error) {
+	var post models.DiscoverPost
+	result := d.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", uuid).First(&post)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &post, result.Error
+}
+
+// FindPostById 按主键查询帖子，不存在时返回空。
 func (d *DiscoverDAOImpl) FindPostById(id int64) (*models.DiscoverPost, error) {
 	var post models.DiscoverPost
 	result := d.db.First(&post, id)
@@ -95,6 +181,7 @@ func (d *DiscoverDAOImpl) FindPostById(id int64) (*models.DiscoverPost, error) {
 	return &post, result.Error
 }
 
+// ListPosts 分页查询正常状态的帖子。
 func (d *DiscoverDAOImpl) ListPosts(page, pageSize int) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
@@ -102,69 +189,24 @@ func (d *DiscoverDAOImpl) ListPosts(page, pageSize int) ([]models.DiscoverPost, 
 	return posts, result.Error
 }
 
-func (d *DiscoverDAOImpl) SearchPostsByKeyword(keyword string, limit int) ([]models.DiscoverPost, error) {
-	if keyword == "" {
-		return d.ListPosts(1, limit)
-	}
-	var posts []models.DiscoverPost
-	likePattern := "%" + keyword + "%"
-	tagMatch := `"` + keyword + `"`
-	result := d.db.Where(
-		"status = 0 AND (title LIKE ? OR content LIKE ? OR JSON_CONTAINS(tags, ?))",
-		likePattern, likePattern, tagMatch,
-	).Order("created_at DESC").Limit(limit).Find(&posts)
-	return posts, result.Error
-}
-
-func (d *DiscoverDAOImpl) ListLikedPosts(userId string, page, pageSize int) ([]models.DiscoverPost, error) {
-	var posts []models.DiscoverPost
-	offset := (page - 1) * pageSize
-	// 子查询：获取用户点赞的帖子 UUID
-	likedUuids := d.db.Model(&models.DiscoverLike{}).
-		Where("user_id = ?", userId).
-		Select("target_uuid")
-	// 查询帖子
-	result := d.db.Where("status = ? AND uuid IN (?)", 0, likedUuids).
-		Order("created_at DESC").
-		Offset(offset).Limit(pageSize).
-		Find(&posts)
-	return posts, result.Error
-}
-
+// CountPosts 统计正常状态的帖子数量。
 func (d *DiscoverDAOImpl) CountPosts() (int64, error) {
 	var count int64
 	result := d.db.Model(&models.DiscoverPost{}).Where("status = ?", 0).Count(&count)
 	return count, result.Error
 }
 
-func (d *DiscoverDAOImpl) CountLikedPosts(userId string) (int64, error) {
-	var count int64
-	// 子查询：获取用户点赞的帖子 UUID
-	likedUuids := d.db.Model(&models.DiscoverLike{}).
-		Where("user_id = ?", userId).
-		Select("target_uuid")
-	result := d.db.Model(&models.DiscoverPost{}).
-		Where("status = ? AND uuid IN (?)", 0, likedUuids).
-		Count(&count)
-	return count, result.Error
-}
-
-func (d *DiscoverDAOImpl) IncrementLikeCount(postId int64) error {
-	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", gorm.Expr("like_count + 1")).Error
-}
-
-func (d *DiscoverDAOImpl) DecrementLikeCount(postId int64) error {
-	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", gorm.Expr("like_count - 1")).Error
-}
-
+// IncrementCommentCount 增加帖子的评论数。
 func (d *DiscoverDAOImpl) IncrementCommentCount(postId int64) error {
 	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("comment_count", gorm.Expr("comment_count + 1")).Error
 }
 
+// IncrementViewCount 增加帖子的浏览数。
 func (d *DiscoverDAOImpl) IncrementViewCount(postId int64) error {
 	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("view_count", gorm.Expr("view_count + 1")).Error
 }
 
+// ListPostsByUserId 分页查询指定用户的正常帖子。
 func (d *DiscoverDAOImpl) ListPostsByUserId(userId string, page, pageSize int) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
@@ -172,28 +214,65 @@ func (d *DiscoverDAOImpl) ListPostsByUserId(userId string, page, pageSize int) (
 	return posts, result.Error
 }
 
+// CountPostsByUserId 统计指定用户的正常帖子数量。
 func (d *DiscoverDAOImpl) CountPostsByUserId(userId string) (int64, error) {
 	var count int64
 	result := d.db.Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ?", userId, 0).Count(&count)
 	return count, result.Error
 }
 
+// GetUserTotalLikes 统计指定用户正常帖子的总获赞数。
 func (d *DiscoverDAOImpl) GetUserTotalLikes(userId string) (int, error) {
 	var total int
 	result := d.db.Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ?", userId, 0).Select("COALESCE(SUM(like_count), 0)").Scan(&total)
 	return total, result.Error
 }
 
+// ========== 搜索 ==========
+
+// SearchPostsByKeyword 兼容工具调用，返回关键词搜索的第一页。
+func (d *DiscoverDAOImpl) SearchPostsByKeyword(keyword string, limit int) ([]models.DiscoverPost, error) {
+	posts, _, err := d.SearchPostsPage(keyword, 1, limit)
+	return posts, err
+}
+
+// SearchPostsPage 在全文检索不可用时按关键词分页查询并返回真实总数。
+func (d *DiscoverDAOImpl) SearchPostsPage(keyword string, page, pageSize int) ([]models.DiscoverPost, int64, error) {
+	query := d.db.Model(&models.DiscoverPost{}).Where("status = 0")
+	keyword = strings.TrimSpace(keyword)
+	if keyword != "" {
+		tag, err := json.Marshal(keyword)
+		if err != nil {
+			return nil, 0, fmt.Errorf("处理搜索关键词失败: %w", err)
+		}
+		query = query.Where("title LIKE ? OR content LIKE ? OR JSON_CONTAINS(tags, ?)", "%"+keyword+"%", "%"+keyword+"%", string(tag))
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("统计搜索结果失败: %w", err)
+	}
+	posts := make([]models.DiscoverPost, 0)
+	if err := query.Order("created_at DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&posts).Error; err != nil {
+		return nil, 0, fmt.Errorf("查询搜索结果失败: %w", err)
+	}
+	return posts, total, nil
+}
+
+// ========== 媒体 ==========
+
+// CreateMedia 保存帖子媒体信息。
 func (d *DiscoverDAOImpl) CreateMedia(media *models.DiscoverMedia) error {
 	return d.db.Create(media).Error
 }
 
+// FindMediaByPostId 按展示顺序查询帖子的媒体。
 func (d *DiscoverDAOImpl) FindMediaByPostId(postId int64) ([]models.DiscoverMedia, error) {
 	var mediaList []models.DiscoverMedia
 	result := d.db.Where("post_id = ?", postId).Order("sort_order ASC").Find(&mediaList)
 	return mediaList, result.Error
 }
 
+// FindMediaByPostIds 批量查询帖子媒体并按帖子及展示顺序排序。
 func (d *DiscoverDAOImpl) FindMediaByPostIds(postIds []int64) ([]models.DiscoverMedia, error) {
 	if len(postIds) == 0 {
 		return nil, nil
@@ -203,14 +282,36 @@ func (d *DiscoverDAOImpl) FindMediaByPostIds(postIds []int64) ([]models.Discover
 	return mediaList, result.Error
 }
 
+// ========== 点赞 ==========
+
+// CountLikesByTargetUuid 统计指定目标的去重点赞用户数。
+func (d *DiscoverDAOImpl) CountLikesByTargetUuid(targetUuid string) (int, error) {
+	var total int64
+	err := d.db.Model(&models.DiscoverLike{}).Where("target_uuid = ?", targetUuid).Distinct("user_id").Count(&total).Error
+	return int(total), err
+}
+
+// UpdatePostLikeCount 更新帖子的实际点赞数。
+func (d *DiscoverDAOImpl) UpdatePostLikeCount(postId int64, count int) error {
+	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", count).Error
+}
+
+// UpdateCommentLikeCount 更新评论的实际点赞数。
+func (d *DiscoverDAOImpl) UpdateCommentLikeCount(commentId int64, count int) error {
+	return d.db.Model(&models.DiscoverComment{}).Where("id = ?", commentId).UpdateColumn("like_count", count).Error
+}
+
+// CreateLike 保存点赞记录。
 func (d *DiscoverDAOImpl) CreateLike(like *models.DiscoverLike) error {
 	return d.db.Create(like).Error
 }
 
+// DeleteLike 删除用户对指定目标的点赞记录。
 func (d *DiscoverDAOImpl) DeleteLike(userId, targetUuid string) error {
 	return d.db.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Delete(&models.DiscoverLike{}).Error
 }
 
+// FindLike 查询用户对指定目标的点赞记录。
 func (d *DiscoverDAOImpl) FindLike(userId, targetUuid string) (*models.DiscoverLike, error) {
 	var like models.DiscoverLike
 	result := d.db.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Find(&like)
@@ -233,6 +334,53 @@ func (d *DiscoverDAOImpl) FindLikesByUserIdAndTargetUuids(userId string, targetU
 	return likes, result.Error
 }
 
+// ListLikedPosts 分页查询用户点赞的正常帖子。
+func (d *DiscoverDAOImpl) ListLikedPosts(userId string, page, pageSize int) ([]models.DiscoverPost, error) {
+	var posts []models.DiscoverPost
+	offset := (page - 1) * pageSize
+	// 子查询：获取用户点赞的帖子 UUID
+	likedUuids := d.db.Model(&models.DiscoverLike{}).
+		Where("user_id = ?", userId).
+		Select("target_uuid")
+	// 查询帖子
+	result := d.db.Where("status = ? AND uuid IN (?)", 0, likedUuids).
+		Order("created_at DESC").
+		Offset(offset).Limit(pageSize).
+		Find(&posts)
+	return posts, result.Error
+}
+
+// CountLikedPosts 统计用户点赞的正常帖子数量。
+func (d *DiscoverDAOImpl) CountLikedPosts(userId string) (int64, error) {
+	var count int64
+	// 子查询：获取用户点赞的帖子 UUID
+	likedUuids := d.db.Model(&models.DiscoverLike{}).
+		Where("user_id = ?", userId).
+		Select("target_uuid")
+	result := d.db.Model(&models.DiscoverPost{}).
+		Where("status = ? AND uuid IN (?)", 0, likedUuids).
+		Count(&count)
+	return count, result.Error
+}
+
+// IncrementLikeCount 增加帖子的点赞数。
+func (d *DiscoverDAOImpl) IncrementLikeCount(postId int64) error {
+	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", gorm.Expr("like_count + 1")).Error
+}
+
+// DecrementLikeCount 减少帖子的点赞数。
+func (d *DiscoverDAOImpl) DecrementLikeCount(postId int64) error {
+	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", gorm.Expr("like_count - 1")).Error
+}
+
+// ========== 评论 ==========
+
+// CreateComment 保存评论。
+func (d *DiscoverDAOImpl) CreateComment(comment *models.DiscoverComment) error {
+	return d.db.Create(comment).Error
+}
+
+// FindCommentById 按主键查询评论，不存在时返回空。
 func (d *DiscoverDAOImpl) FindCommentById(commentId int64) (*models.DiscoverComment, error) {
 	var comment models.DiscoverComment
 	result := d.db.Where("id = ?", commentId).First(&comment)
@@ -242,6 +390,7 @@ func (d *DiscoverDAOImpl) FindCommentById(commentId int64) (*models.DiscoverComm
 	return &comment, result.Error
 }
 
+// FindCommentByUuid 按 UUID 查询评论，不存在时返回空。
 func (d *DiscoverDAOImpl) FindCommentByUuid(uuid string) (*models.DiscoverComment, error) {
 	var comment models.DiscoverComment
 	result := d.db.Where("uuid = ?", uuid).First(&comment)
@@ -251,31 +400,82 @@ func (d *DiscoverDAOImpl) FindCommentByUuid(uuid string) (*models.DiscoverCommen
 	return &comment, result.Error
 }
 
-func (d *DiscoverDAOImpl) CreateComment(comment *models.DiscoverComment) error {
-	return d.db.Create(comment).Error
+// FindCommentByUuidForUpdate 查询并锁定评论，须使用事务连接调用。
+func (d *DiscoverDAOImpl) FindCommentByUuidForUpdate(uuid string) (*models.DiscoverComment, error) {
+	var comment models.DiscoverComment
+	result := d.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", uuid).First(&comment)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &comment, result.Error
 }
 
+// FindCommentsByPostId 按时间及 ID 稳定分页读取全部评论。
 func (d *DiscoverDAOImpl) FindCommentsByPostId(postId int64, page, pageSize int) ([]models.DiscoverComment, error) {
 	var comments []models.DiscoverComment
 	offset := (page - 1) * pageSize
-	result := d.db.Where("post_id = ?", postId).Order("created_at ASC").Offset(offset).Limit(pageSize).Find(&comments)
+	result := d.db.Where("post_id = ?", postId).Order("created_at ASC, id ASC").Offset(offset).Limit(pageSize).Find(&comments)
 	return comments, result.Error
 }
 
+// FindCommentThread 按稳定顺序分页读取顶级评论或同一父评论的回复。
+func (d *DiscoverDAOImpl) FindCommentThread(postId int64, parentUuid string, page, pageSize int) ([]models.DiscoverComment, bool, error) {
+	query := d.db.Where("post_id = ?", postId)
+	if parentUuid == "" {
+		query = query.Where("parent_id = '' OR parent_id IS NULL")
+	} else {
+		query = query.Where("parent_id = ?", parentUuid)
+	}
+	comments := make([]models.DiscoverComment, 0)
+	err := query.Order("created_at ASC, id ASC").Offset((page - 1) * pageSize).Limit(pageSize + 1).Find(&comments).Error
+	if err != nil {
+		return nil, false, fmt.Errorf("查询评论分页失败: %w", err)
+	}
+	hasMore := len(comments) > pageSize
+	if hasMore {
+		comments = comments[:pageSize]
+	}
+	return comments, hasMore, nil
+}
+
+// CountReplies 批量统计顶级评论的回复数量。
+func (d *DiscoverDAOImpl) CountReplies(parentUuids []string) (map[string]int64, error) {
+	counts := make(map[string]int64)
+	if len(parentUuids) == 0 {
+		return counts, nil
+	}
+	var rows []struct {
+		ParentId string
+		Total    int64
+	}
+	err := d.db.Model(&models.DiscoverComment{}).Select("parent_id, COUNT(*) AS total").Where("parent_id IN ?", parentUuids).Group("parent_id").Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("统计回复数量失败: %w", err)
+	}
+	for _, row := range rows {
+		counts[row.ParentId] = row.Total
+	}
+	return counts, nil
+}
+
+// IncrementCommentLikeCount 增加评论的点赞数。
 func (d *DiscoverDAOImpl) IncrementCommentLikeCount(commentId int64) error {
 	return d.db.Model(&models.DiscoverComment{}).Where("id = ?", commentId).UpdateColumn("like_count", gorm.Expr("like_count + 1")).Error
 }
 
+// DecrementCommentLikeCount 减少评论的点赞数。
 func (d *DiscoverDAOImpl) DecrementCommentLikeCount(commentId int64) error {
 	return d.db.Model(&models.DiscoverComment{}).Where("id = ?", commentId).UpdateColumn("like_count", gorm.Expr("like_count - 1")).Error
 }
 
 // ========== 收藏夹 ==========
 
+// CreateFolder 创建收藏夹。
 func (d *DiscoverDAOImpl) CreateFolder(folder *models.DiscoverCollectionFolder) error {
 	return d.db.Create(folder).Error
 }
 
+// UpdateFolder 更新收藏夹名称、描述和公开状态。
 func (d *DiscoverDAOImpl) UpdateFolder(uuid string, name, description string, isPublic int8) error {
 	return d.db.Model(&models.DiscoverCollectionFolder{}).
 		Where("uuid = ?", uuid).
@@ -286,10 +486,12 @@ func (d *DiscoverDAOImpl) UpdateFolder(uuid string, name, description string, is
 		}).Error
 }
 
+// DeleteFolder 删除指定收藏夹。
 func (d *DiscoverDAOImpl) DeleteFolder(uuid string) error {
 	return d.db.Where("uuid = ?", uuid).Delete(&models.DiscoverCollectionFolder{}).Error
 }
 
+// FindFolderByUuid 按 UUID 查询收藏夹，不存在时返回空。
 func (d *DiscoverDAOImpl) FindFolderByUuid(uuid string) (*models.DiscoverCollectionFolder, error) {
 	var folder models.DiscoverCollectionFolder
 	result := d.db.Where("uuid = ?", uuid).First(&folder)
@@ -299,12 +501,14 @@ func (d *DiscoverDAOImpl) FindFolderByUuid(uuid string) (*models.DiscoverCollect
 	return &folder, result.Error
 }
 
+// ListFoldersByUserId 查询用户的收藏夹列表。
 func (d *DiscoverDAOImpl) ListFoldersByUserId(userId string) ([]models.DiscoverCollectionFolder, error) {
 	var folders []models.DiscoverCollectionFolder
 	result := d.db.Where("user_id = ?", userId).Order("created_at DESC").Find(&folders)
 	return folders, result.Error
 }
 
+// FindDefaultFolder 查询用户的默认收藏夹。
 func (d *DiscoverDAOImpl) FindDefaultFolder(userId string) (*models.DiscoverCollectionFolder, error) {
 	var folder models.DiscoverCollectionFolder
 	result := d.db.Where("user_id = ? AND name = ?", userId, "默认收藏夹").First(&folder)
@@ -316,15 +520,18 @@ func (d *DiscoverDAOImpl) FindDefaultFolder(userId string) (*models.DiscoverColl
 
 // ========== 收藏记录 ==========
 
+// CreateCollection 保存收藏记录。
 func (d *DiscoverDAOImpl) CreateCollection(col *models.DiscoverCollection) error {
 	return d.db.Create(col).Error
 }
 
+// DeleteCollection 删除用户在指定收藏夹中的目标收藏记录。
 func (d *DiscoverDAOImpl) DeleteCollection(userId string, folderId int64, targetUuid string) error {
 	return d.db.Where("user_id = ? AND folder_id = ? AND target_uuid = ?", userId, folderId, targetUuid).
 		Delete(&models.DiscoverCollection{}).Error
 }
 
+// FindCollectionInFolder 查询用户在指定收藏夹中的目标收藏记录。
 func (d *DiscoverDAOImpl) FindCollectionInFolder(userId string, folderId int64, targetUuid string) (*models.DiscoverCollection, error) {
 	var col models.DiscoverCollection
 	result := d.db.Where("user_id = ? AND folder_id = ? AND target_uuid = ?", userId, folderId, targetUuid).Find(&col)
@@ -334,6 +541,7 @@ func (d *DiscoverDAOImpl) FindCollectionInFolder(userId string, folderId int64, 
 	return &col, result.Error
 }
 
+// FindCollectionByUserAndTarget 查询用户对指定目标的收藏记录。
 func (d *DiscoverDAOImpl) FindCollectionByUserAndTarget(userId, targetUuid string) (*models.DiscoverCollection, error) {
 	var col models.DiscoverCollection
 	result := d.db.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Find(&col)
@@ -353,22 +561,27 @@ func (d *DiscoverDAOImpl) FindCollectionsByUserIdAndTargetUuids(userId string, t
 	return collections, result.Error
 }
 
+// IncrementFolderPostCount 增加收藏夹的帖子数。
 func (d *DiscoverDAOImpl) IncrementFolderPostCount(folderId int64) error {
 	return d.db.Model(&models.DiscoverCollectionFolder{}).Where("id = ?", folderId).UpdateColumn("post_count", gorm.Expr("post_count + 1")).Error
 }
 
+// DecrementFolderPostCount 减少收藏夹的帖子数。
 func (d *DiscoverDAOImpl) DecrementFolderPostCount(folderId int64) error {
 	return d.db.Model(&models.DiscoverCollectionFolder{}).Where("id = ?", folderId).UpdateColumn("post_count", gorm.Expr("post_count - 1")).Error
 }
 
+// IncrementCollectCount 增加帖子的收藏数。
 func (d *DiscoverDAOImpl) IncrementCollectCount(postId int64) error {
 	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("collect_count", gorm.Expr("collect_count + 1")).Error
 }
 
+// DecrementCollectCount 减少帖子的收藏数。
 func (d *DiscoverDAOImpl) DecrementCollectCount(postId int64) error {
 	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("collect_count", gorm.Expr("collect_count - 1")).Error
 }
 
+// ListCollectedPostsByFolder 分页查询收藏夹中的正常帖子。
 func (d *DiscoverDAOImpl) ListCollectedPostsByFolder(folderId int64, page, pageSize int) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
@@ -383,6 +596,7 @@ func (d *DiscoverDAOImpl) ListCollectedPostsByFolder(folderId int64, page, pageS
 	return posts, result.Error
 }
 
+// CountCollectedPostsByFolder 统计收藏夹中的正常帖子数量。
 func (d *DiscoverDAOImpl) CountCollectedPostsByFolder(folderId int64) (int64, error) {
 	var count int64
 	collectedUuids := d.db.Model(&models.DiscoverCollection{}).

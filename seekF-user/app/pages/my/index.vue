@@ -396,7 +396,7 @@ const ownPostsLoaded = ref(false)
 const ownPostsNoMore = ref(false)
 const ownPostsPage = ref(1)
 const selectedOwnPost = ref(null)
-const pendingOwnPostLikes = new Set()
+const { setLike: setOwnPostLike } = useDiscoverLike()
 let ownPostsRequestId = 0
 
 // 点赞帖子相关
@@ -600,18 +600,9 @@ const handleOwnPostCollectUpdated = ({ postId, collectCount, isCollected }) => {
 }
 
 const toggleOwnPostLike = async (post) => {
-  if (pendingOwnPostLikes.has(post.uuid)) return
-  pendingOwnPostLikes.add(post.uuid)
-  try {
-    const res = await useApi$('/user/discover/like', { method: 'POST', body: { target_uuid: post.uuid } })
-    if (res.code !== 200 || !res.data) throw new Error(res.message || '点赞失败')
-    handleOwnPostLikeUpdated({ postId: post.uuid, likeCount: res.data.like_count, isLiked: res.data.is_liked })
-  } catch (error) {
-    console.error('点赞失败:', error)
-    ElMessage.error('点赞失败，请稍后重试')
-  } finally {
-    pendingOwnPostLikes.delete(post.uuid)
-  }
+  const result = await setOwnPostLike(post.uuid, post.is_liked)
+  if (!result) return
+  handleOwnPostLikeUpdated({ postId: post.uuid, likeCount: result.like_count, isLiked: result.is_liked })
 }
 
 // 加载点赞帖子列表

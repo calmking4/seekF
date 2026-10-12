@@ -51,7 +51,7 @@
               <button class="actor-name" :disabled="!item.actor_id" @click="openActor(item)">{{ item.actor_name || '未知用户' }}</button>
               <div class="event-meta"><span>{{ actionText(item.type) }}</span><time :datetime="item.created_at" :title="fullTime(item.created_at)">{{ formatTime(item.created_at) }}</time></div>
               <button v-if="item.type !== 4" class="post-message" @click="openPost(item)">
-                <span v-if="isComment(item)" class="comment-text">{{ commentContent(item) }}</span>
+                <span v-if="isComment(item) || item.type === 6" class="comment-text">{{ commentContent(item) }}</span>
                 <span class="post-reference"><Icon name="uil:file-alt" />{{ item.target_available ? (item.post_title || '查看原帖') : '原帖已删除或不可见' }}</span>
               </button>
             </div>
@@ -122,7 +122,7 @@ const pageSize = 20
 const badge = count => count > 99 ? '99+' : count
 const isComment = item => [2, 3].includes(item.type)
 const categoryOf = item => isComment(item) ? 'comments' : item.type === 4 ? 'follows' : 'likes'
-const actionText = type => ({ 1: '赞了你的帖子', 2: '评论了你的帖子', 3: '回复了你的评论', 4: '成为了你的新关注者', 5: '收藏了你的帖子' }[type] || '与你有了新互动')
+const actionText = type => ({ 1: '赞了你的帖子', 2: '评论了你的帖子', 3: '回复了你的评论', 4: '成为了你的新关注者', 5: '收藏了你的帖子', 6: '赞了你的评论' }[type] || '与你有了新互动')
 const commentContent = item => (item.content || '').replace(/^(评论了你的帖子|回复了你的评论)[：:]/, '') || '查看评论内容'
 const avatarColor = id => ['#7ca5cf', '#b39ac8', '#d6a18f', '#83b6a4'][Array.from(String(id || '')).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 4]
 const parseTime = value => new Date(String(value || '').replace(/^(\d{4}-\d{2}-\d{2}) /, '$1T'))

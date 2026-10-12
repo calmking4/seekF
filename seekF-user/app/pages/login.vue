@@ -161,6 +161,9 @@
 
 <script setup>
 import loginBg from '~/assets/images/background.png'
+import { discoverReturnPath } from '~/utils/discover'
+const route = useRoute()
+const loginDestination = () => discoverReturnPath(route.query.redirect)
 
 // 页面级 SEO
 useSeoMeta({
@@ -265,7 +268,7 @@ const handleLogin = async () => {
         ElMessage.success('登录成功');
 
         // 跳转到首页或其他页面
-        navigateTo('/');
+        navigateTo(loginDestination());
       } else {
         ElMessage.error(res?.message || '登录失败');
       }
@@ -308,7 +311,7 @@ const handleLogin = async () => {
         ElMessage.success('登录成功');
 
         // 跳转到首页或其他页面
-        navigateTo('/');
+        navigateTo(loginDestination());
       } else {
         ElMessage.error(res?.message || '登录失败');
       }
@@ -324,11 +327,13 @@ const handleLogin = async () => {
 const goBack = () => window.history.back();
 
 const loginWithGithub = () => {
+  sessionStorage.setItem('discover_login_redirect', loginDestination())
   const config = useRuntimeConfig()
   window.location.href = `${config.public.apiBase}user/github/login`
 };
 
 const loginWithGitee = () => {
+  sessionStorage.setItem('discover_login_redirect', loginDestination())
   const config = useRuntimeConfig()
   window.location.href = `${config.public.apiBase}user/gitee/login`
 };

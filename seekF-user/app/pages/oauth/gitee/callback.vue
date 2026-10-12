@@ -59,6 +59,7 @@
 </template>
 
 <script setup>
+import { discoverReturnPath } from '~/utils/discover'
 // 页面级 SEO
 useSeoMeta({
   title: 'Gitee 登录',
@@ -87,7 +88,9 @@ onMounted(() => {
       title.value = '登录成功'
       message.value = `欢迎回来，${user.nickname || '用户'}`
 
-      setTimeout(() => navigateTo('/'), 1500)
+      const destination = discoverReturnPath(sessionStorage.getItem('discover_login_redirect'))
+      sessionStorage.removeItem('discover_login_redirect')
+      setTimeout(() => navigateTo(destination), 1500)
     } else {
       status.value = 'error'
       title.value = '登录失败'

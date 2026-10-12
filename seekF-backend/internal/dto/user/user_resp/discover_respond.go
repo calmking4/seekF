@@ -1,5 +1,6 @@
 package userresp
 
+// PostItem 帖子列表信息及首个媒体的像素尺寸。
 type PostItem struct {
 	Uuid         string   `json:"uuid"`
 	UserId       string   `json:"user_id"`
@@ -11,6 +12,8 @@ type PostItem struct {
 	CoverUrl     string   `json:"cover_url"`
 	Tags         []string `json:"tags"`
 	FirstUrl     string   `json:"first_url"`
+	Width        int      `json:"width"`
+	Height       int      `json:"height"`
 	LikeCount    int      `json:"like_count"`
 	CommentCount int      `json:"comment_count"`
 	CollectCount int      `json:"collect_count"`
@@ -44,6 +47,7 @@ type PostDetailRespond struct {
 	CreatedAt    string   `json:"created_at"`
 }
 
+// CommentItem 评论信息及其回复数量。
 type CommentItem struct {
 	Uuid            string `json:"uuid"`
 	UserId          string `json:"user_id"`
@@ -56,6 +60,7 @@ type CommentItem struct {
 	LikeCount       int    `json:"like_count"`
 	IsLiked         bool   `json:"is_liked"`
 	CreatedAt       string `json:"created_at"`
+	ReplyCount      int64  `json:"reply_count"`
 }
 
 type ListCommentsRespond struct {
@@ -81,16 +86,22 @@ type ListFoldersRespond struct {
 }
 
 type UserProfileRespond struct {
-	Uuid          string     `json:"uuid"`
-	Nickname      string     `json:"nickname"`
-	Avatar        string     `json:"avatar"`
-	Signature     string     `json:"signature"`
-	PostCount     int64      `json:"post_count"`
-	TotalLikes    int        `json:"total_likes"`
-	FollowingCount int64     `json:"following_count"`
-	FollowerCount int64     `json:"follower_count"`
-	IsFollowed    bool       `json:"is_followed"`
-	IsFriend      bool       `json:"is_friend"`
-	Posts         []PostItem `json:"posts"`
-	Total         int64      `json:"total"`
+	Uuid           string     `json:"uuid"`
+	Nickname       string     `json:"nickname"`
+	Avatar         string     `json:"avatar"`
+	Signature      string     `json:"signature"`
+	PostCount      int64      `json:"post_count"`
+	TotalLikes     int        `json:"total_likes"`
+	FollowingCount int64      `json:"following_count"`
+	FollowerCount  int64      `json:"follower_count"`
+	IsFollowed     bool       `json:"is_followed"`
+	IsFriend       bool       `json:"is_friend"`
+	Posts          []PostItem `json:"posts"`
+	Total          int64      `json:"total"`
+}
+
+// CommentThreadRespond 评论或回复分页结果，has_more 表示仍有后续内容。
+type CommentThreadRespond struct {
+	List    []CommentItem `json:"list"`
+	HasMore bool          `json:"has_more"`
 }

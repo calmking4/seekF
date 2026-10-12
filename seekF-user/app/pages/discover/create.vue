@@ -307,6 +307,7 @@
 
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { readDiscoverMediaSize } from '~/utils/discoverMedia'
 import {
   uploadVideoResumable,
   abortVideoUpload,
@@ -592,6 +593,7 @@ const handleFileChange = async (e) => {
   for (const file of files) {
     const url = URL.createObjectURL(file)
     const type = file.type.startsWith('video') ? 'video' : 'image'
+    const size = await readDiscoverMediaSize(url, type)
     if (mediaType.value === 'video') {
       const fingerprint = getFileFingerprint(file)
       const existing = mediaList.value[0]
@@ -621,6 +623,7 @@ const handleFileChange = async (e) => {
 
       mediaList.value = [{
         url,
+        ...size,
         type: 'video',
         file,
         fileName: file.name,
@@ -635,7 +638,7 @@ const handleFileChange = async (e) => {
       }]
       nextTick(() => startVideoUpload(mediaList.value[0], 0))
     } else {
-      mediaList.value.push({ url, type: 'image', file })
+      mediaList.value.push({ url, ...size, type: 'image', file })
       persistDraft()
     }
   }
@@ -762,6 +765,7 @@ const handlePublish = async () => {
   publishing.value = true
   try {
     const urls = []
+    const mediaSizes = []
     for (const media of mediaList.value) {
       if (media.type === 'video') {
         if (media.uploadStatus === 'uploading') {
@@ -777,15 +781,19 @@ const handlePublish = async () => {
           return
         }
         urls.push(media.uploadedUrl)
+        mediaSizes.push({ width: media.width || 0, height: media.height || 0 })
       } else {
         if (media.uploadedUrl) {
           urls.push(media.uploadedUrl)
         } else if (media.file) {
-          urls.push(await uploadImage(media.file, 'discover_image'))
+          media.uploadedUrl = await uploadImage(media.file, 'discover_image')
+          urls.push(media.uploadedUrl)
         }
+        if (media.uploadedUrl) mediaSizes.push({ width: media.width || 0, height: media.height || 0 })
       }
     }
 
+    const coverSize = coverUrl.value ? await readDiscoverMediaSize(coverUrl.value) : { width: 0, height: 0 }
     const postRes = await useApi$('/user/discover/create', {
       body: {
         title: title.value,
@@ -793,6 +801,8 @@ const handlePublish = async () => {
         media_type: mediaType.value === 'video' ? 1 : 0,
         tags: tags.value,
         urls,
+        media_sizes: mediaSizes,
+        cover_size: coverSize,
         cover_url: coverUrl.value,
       },
     })

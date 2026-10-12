@@ -1,10 +1,12 @@
 <template>
-  <Teleport to="body">
+  <Teleport to="body" :disabled="standalone">
     <Transition name="discover">
-      <div v-if="show" class="discover-overlay" @click.self="handleClose">
-      <div class="note-card">
+      <div v-if="show" :class="standalone ? 'discover-standalone' : 'discover-overlay'" @click.self="handleClose">
+      <button v-if="!standalone" type="button" aria-label="关闭详情" class="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-gray-600 focus-visible:ring-2 focus-visible:ring-blue-500" @click="handleClose"><Icon name="mdi:close" /></button>
+      <div ref="dialogRef" class="note-card" tabindex="-1" :role="standalone ? 'region' : 'dialog'" :aria-modal="standalone ? undefined : true" :aria-label="detail?.title || item?.title || '动态详情'" @keydown="handleKeydown">
         <!-- 左侧媒体区：宽度由首张图测量锁定；切换时后续图宽度铺满，留白 bg-gray-50 -->
         <div
+          ref="mediaContainerRef"
           class="image-container bg-gray-50"
           :class="{ 'image-container--locked': lockedWidthPx != null }"
           :style="lockedWidthPx != null ? { width: `${lockedWidthPx}px` } : undefined"
@@ -15,6 +17,7 @@
               :key="detail.urls[0]"
               :src="detail.urls[0]"
               class="video-player"
+              @loadedmetadata="onVideoMetadataLoad"
               controls
               preload="metadata"
               playsinline
@@ -23,32 +26,33 @@
             </video>
           </div>
           <!-- 图片轮播 -->
-          <div v-else-if="detail?.urls?.length && detail?.media_type !== 1" class="carousel">
+          <div v-else-if="detail?.urls?.length && detail?.media_type !== 1 && !imageError" class="carousel">
             <Transition name="carousel-fade" mode="out-in">
               <img
                 :key="detail.urls[currentIndex]"
                 :src="detail.urls[currentIndex]"
                 :alt="detail.title"
                 class="cover-image"
-                :class="currentIndex > 0 ? 'cover-image--slide' : 'cover-image--first'"
+                :class="currentIndex > 0 ? 'cover-image--slide' : 'cover-image--first w-full h-full'"
                 @load="onCarouselImageLoad"
+                @error="imageError = true"
               />
             </Transition>
             <!-- 左右切换箭头 -->
-            <div
+            <button type="button" aria-label="上一张图片"
               v-if="detail.urls.length > 1"
               class="carousel-arrow carousel-prev"
               @click.stop="prevImage"
             >
               <Icon name="mdi:chevron-left" />
-            </div>
-            <div
+            </button>
+            <button type="button" aria-label="下一张图片"
               v-if="detail.urls.length > 1"
               class="carousel-arrow carousel-next"
               @click.stop="nextImage"
             >
               <Icon name="mdi:chevron-right" />
-            </div>
+            </button>
             <!-- 页码指示器 -->
             <div v-if="detail.urls.length > 1" class="carousel-indicator">
               {{ currentIndex + 1 }}/{{ detail.urls.length }}
@@ -56,11 +60,12 @@
           </div>
           <!-- 回退：单图 -->
           <img
-            v-else-if="item?.src && item?.type !== 'video'"
+            v-else-if="item?.src && item?.type !== 'video' && !imageError"
             :src="item.src"
             :alt="item.title"
-            class="cover-image cover-image--first"
+            class="cover-image cover-image--first w-full h-full"
             @load="onCarouselImageLoad"
+                @error="imageError = true"
           />
           <!-- 回退：无媒体 -->
           <div v-else class="image-content">
@@ -71,7 +76,7 @@
         </div>
 
         <!-- 右侧内容区 -->
-        <div class="content-container">
+        <div ref="contentContainerRef" class="content-container">
           <!-- 作者信息（固定顶部） -->
           <div class="author-header">
             <button type="button" class="author-info" :disabled="!authorId" @click="goToAuthor">
@@ -92,20 +97,29 @@
 
           <!-- 可滚动的中间区域 -->
           <div class="scroll-area">
+            <div v-if="detailLoading && !detail" class="py-6 flex items-center justify-center text-sm text-gray-500" role="status"><Icon name="uil:spinner" class="animate-spin text-xl mr-2" />正在加载动态</div>
+            <div v-if="detailError" class="py-6 text-center text-sm text-gray-500" role="alert"><p>{{ detailError }}</p><button type="button" class="mt-3 text-blue-500" @click="fetchDetail">重试</button></div>
+            <template v-else>
+
             <!-- 帖子内容 -->
             <div class="post-content">
               <h3 class="post-title">{{ detail?.title || item?.title }}</h3>
               <p v-if="detail?.content" class="post-text">{{ detail.content }}</p>
               <div v-if="detail?.tags?.length" class="post-tags">
-                <span v-for="tag in detail.tags" :key="tag" class="tag">#{{ tag }}</span>
+                <NuxtLink v-for="tag in detail.tags" :key="tag" class="tag" :to="'/discover/search?q=' + encodeURIComponent(tag)">#{{ tag }}</NuxtLink>
               </div>
               <p class="post-time">{{ detail?.created_at || '' }}</p>
             </div>
 
             <!-- 评论区 -->
             <div class="comment-section">
-              <p class="comment-title">共 {{ detail?.comment_count ?? 0 }} 条评论</p>
-              <div v-if="comments.length === 0" class="no-comment">暂无评论</div>
+              <div class="flex items-center justify-between">
+                <p class="comment-title">共 {{ detail?.comment_count ?? 0 }} 条评论</p>
+                <button type="button" class="mb-[15px] inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50" :aria-label="commentsLoading ? '正在刷新评论' : '刷新评论'" :title="commentsLoading ? '正在刷新评论' : '刷新评论'" :aria-busy="commentsLoading" :disabled="!detail || commentsLoading || submitting" @click="fetchComments(true)">
+                  <Icon name="mdi:refresh" class="text-lg" :class="{ 'animate-spin': commentsLoading }" />
+                </button>
+              </div>
+              <div v-if="comments.length === 0 && !commentsLoading && !commentsError" class="no-comment">暂无评论</div>
               <div class="comment-item" v-for="c in comments" :key="c.uuid">
                 <div class="comment-main">
                   <div class="comment-avatar-col">
@@ -116,105 +130,122 @@
                     <p class="comment-text">{{ c.content }}</p>
                     <p class="comment-time">{{ c.created_at }}</p>
                     <div class="comment-actions">
-                      <span
-                        class="comment-like"
+                      <button type="button" class="comment-like disabled:opacity-50" :aria-label="c.is_liked ? '取消评论点赞' : '点赞评论'" :aria-pressed="c.is_liked" :disabled="isPending(c.uuid, true)"
                         :class="{ 'liked': c.is_liked }"
                         @click.stop="toggleCommentLike(c)"
                       >
                         <Icon v-if="c.is_liked" name="mdi:heart" />
                         <Icon v-else name="mdi:heart-outline" />
                         {{ c.like_count }}
-                      </span>
-                      <span class="reply-btn" @click="startReply(c)">回复</span>
+                      </button>
+                      <button type="button" class="reply-btn" :disabled="submitting" @click="startReply(c)">回复</button>
                     </div>
                   </div>
                 </div>
-                <!-- 回复列表 -->
-                <div v-if="c.replies?.length" class="reply-list">
-                  <div class="reply-item" v-for="reply in c.replies" :key="reply.uuid">
-                    <div class="comment-main">
-                      <div class="comment-avatar-col">
-                        <span class="comment-author">{{ reply.nickname }}</span>
-                        <el-avatar :size="28" :src="reply.avatar" />
-                      </div>
-                      <div class="comment-content-col">
-                        <p class="comment-text"><span v-if="reply.reply_to_nickname" class="reply-to">回复 {{ reply.reply_to_nickname }}：</span>{{ reply.content }}</p>
-                        <p class="comment-time">{{ reply.created_at }}</p>
-                        <div class="comment-actions">
-                          <span
-                            class="comment-like"
-                            :class="{ 'liked': reply.is_liked }"
-                            @click.stop="toggleCommentLike(reply)"
-                          >
-                            <Icon v-if="reply.is_liked" name="mdi:heart" />
-                            <Icon v-else name="mdi:heart-outline" />
-                            {{ reply.like_count }}
-                          </span>
-                          <span class="reply-btn" @click="startReply(reply, c)">回复</span>
+                <!-- 回复沿用独立分页；网格行过渡支持不同回复数量，收起时禁止隐藏内容获得焦点。 -->
+                <button v-if="c.reply_count || c.replies?.length" type="button" class="ml-[42px] mt-3 inline-flex items-center gap-1 rounded-full bg-slate-50 px-2.5 py-1 text-xs text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200" :aria-expanded="c.expanded" :aria-controls="'discover-replies-' + c.uuid" @click="toggleReplies(c)">
+                  <span>{{ c.expanded ? '收起回复' : '展开 ' + c.reply_count + ' 条回复' }}</span>
+                  <Icon name="mdi:chevron-down" class="text-sm transition-transform duration-200 motion-reduce:transition-none" :class="{ 'rotate-180': c.expanded }" />
+                </button>
+                <div :id="'discover-replies-' + c.uuid" class="grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none" :class="c.expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'" :aria-hidden="!c.expanded" :inert="!c.expanded">
+                  <div class="min-h-0 overflow-hidden">
+                    <div class="reply-list">
+                      <p v-if="c.replyLoading && !c.replies.length" class="flex items-center gap-1.5 py-1 text-xs text-slate-400" role="status"><Icon name="uil:spinner" class="animate-spin" />正在加载回复...</p>
+                      <div class="reply-item" v-for="reply in c.replies" :key="reply.uuid">
+                        <div class="comment-main">
+                          <div class="comment-avatar-col">
+                            <span class="comment-author">{{ reply.nickname }}</span>
+                            <el-avatar :size="28" :src="reply.avatar" />
+                          </div>
+                          <div class="comment-content-col">
+                            <p class="comment-text"><span v-if="reply.reply_to_nickname" class="reply-to">回复 {{ reply.reply_to_nickname }}：</span>{{ reply.content }}</p>
+                            <p class="comment-time">{{ reply.created_at }}</p>
+                            <div class="comment-actions">
+                              <button type="button" class="comment-like disabled:opacity-50" :aria-label="reply.is_liked ? '取消评论点赞' : '点赞评论'" :aria-pressed="reply.is_liked" :disabled="isPending(reply.uuid, true)"
+                                :class="{ 'liked': reply.is_liked }"
+                                @click.stop="toggleCommentLike(reply)"
+                              >
+                                <Icon v-if="reply.is_liked" name="mdi:heart" />
+                                <Icon v-else name="mdi:heart-outline" />
+                                {{ reply.like_count }}
+                              </button>
+                              <button type="button" class="reply-btn" :disabled="submitting" @click="startReply(reply, c)">回复</button>
+                            </div>
+                          </div>
                         </div>
                       </div>
+                      <p v-if="c.replyError" class="text-xs text-red-500" role="alert">{{ c.replyError }}</p>
+                      <button v-if="c.replyHasMore || c.replyError" type="button" class="text-xs text-blue-500 disabled:opacity-50" :disabled="c.replyLoading" @click="loadReplies(c)">{{ c.replyLoading ? '正在加载回复...' : c.replyError ? '重试加载回复' : '加载更多回复' }}</button>
                     </div>
                   </div>
                 </div>
               </div>
+              <p v-if="commentsError" class="text-center text-xs text-red-500" role="alert">{{ commentsError }}</p>
+              <button v-if="commentsHasMore || commentsError" type="button" class="w-full py-3 text-sm text-blue-500 disabled:opacity-50" :disabled="commentsLoading" @click="fetchComments()">{{ commentsLoading ? '正在加载评论...' : commentsError ? '重试加载评论' : '加载更多评论' }}</button>
             </div>
+            </template>
           </div>
 
           <!-- 底部互动栏（固定底部） -->
           <div class="interaction-bar" :class="{ 'interaction-bar--active': showCommentInput }">
             <!-- 默认状态：输入提示 + 操作按钮 -->
-            <div v-if="!showCommentInput" class="input-area" @click="openCommentInput">
+            <button v-if="!showCommentInput" ref="commentPromptRef" type="button" class="input-area" :disabled="!detail" @click="openCommentInput">
               <span class="input-placeholder">说点什么...</span>
-            </div>
+            </button>
             <div v-if="!showCommentInput" class="action-icons">
-              <span class="action-item" :class="{ 'liked': isLiked }" @click.stop="toggleLike">
+              <button type="button" class="action-item disabled:opacity-50" :aria-label="isLiked ? '取消点赞' : '点赞'" :aria-pressed="isLiked" :disabled="!detail || isPending(item?.id)" :class="{ 'liked': isLiked }" @click.stop="toggleLike">
                 <Icon v-if="isLiked" name="solar:heart-angle-bold" />
                 <Icon v-else name="mdi:heart-outline" />
                 <span class="action-count">{{ likeCount }}</span>
-              </span>
-              <span class="action-item" :class="{ 'collected': isCollected }" @click.stop="toggleCollect">
+              </button>
+              <button type="button" class="action-item disabled:opacity-50" :aria-label="isCollected ? '取消收藏' : '收藏'" :disabled="!detail || collecting" :class="{ 'collected': isCollected }" @click.stop="toggleCollect">
                 <Icon v-if="isCollected" name="mdi:bookmark" />
                 <Icon v-else name="mdi:bookmark-outline" />
                 <span class="action-count">{{ collectCount }}</span>
-              </span>
-              <span class="action-item">
+              </button>
+              <button type="button" class="action-item" aria-label="写评论" :disabled="!detail" @click="openCommentInput">
                 <Icon name="mdi:chat-outline" />
                 <span class="action-count">{{ detail?.comment_count ?? 0 }}</span>
-              </span>
-              <span class="action-item">
+              </button>
+              <button type="button" class="action-item" aria-label="复制分享链接" :disabled="!detail" @click="sharePost">
                 <Icon name="ri:share-circle-fill" />
-              </span>
+              </button>
             </div>
 
             <!-- 激活状态：输入框 + 发送/取消 -->
             <div v-if="showCommentInput" class="comment-input-wrapper">
               <div v-if="replyTarget" class="reply-hint">
                 回复 {{ replyTarget.nickname }}
-                <span class="cancel-reply" @click="cancelReply">&times;</span>
+                <button type="button" class="cancel-reply" aria-label="取消回复" :disabled="submitting" @click="cancelReply">&times;</button>
               </div>
               <textarea
                 ref="commentInputRef"
                 v-model="commentText"
                 class="comment-input"
+                aria-label="评论内容"
+                :disabled="submitting"
                 :placeholder="replyTarget ? `回复 ${replyTarget.nickname}...` : '写评论...'"
                 rows="3"
               ></textarea>
               <div class="comment-btn-group">
                 <button
+                  type="button"
                   class="ai-assist-btn"
+                  :disabled="submitting"
                   :class="{ 'active': isAIComment }"
                   @click="toggleAIComment"
                 >
                   <Icon name="mdi:robot-outline" /> @AI助手
                 </button>
                 <div class="comment-btn-right">
-                  <button class="cancel-btn" @click="closeCommentInput">取消</button>
+                  <button type="button" class="cancel-btn" :disabled="submitting" @click="closeCommentInput">取消</button>
                   <button
+                    type="button"
                     class="send-btn"
-                    :disabled="!commentText.trim()"
+                    :disabled="!detail || submitting || !commentText.trim()"
                     @click="submitComment"
                   >
-                    发送
+                    {{ submitting ? '发送中...' : '发送' }}
                   </button>
                 </div>
               </div>
@@ -236,438 +267,338 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, computed, onMounted, watch, nextTick } from 'vue'
-
-const props = defineProps({
-  item: {
-    type: Object,
-    default: null
-  }
-})
-
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { mergeDiscoverPage, discoverMediaWidth } from '~/utils/discover'
+const props = defineProps({ item: { type: Object, default: null }, standalone: Boolean })
 const emit = defineEmits(['close', 'like-updated', 'collect-updated', 'follow-updated'])
-
+const auth = useAuthState()
 const show = ref(false)
 const detail = ref(null)
-const auth = useAuthState()
+const detailLoading = ref(false)
+const detailError = ref('')
+const currentIndex = ref(0)
+const imageError = ref(false)
 const authorId = computed(() => detail.value?.user_id || props.item?.user_id || '')
 const isSelf = computed(() => !!authorId.value && authorId.value === auth.getUser()?.uuid)
 const isFollowing = ref(false)
 const followLoading = ref(false)
-const comments = shallowRef([])
-const currentIndex = ref(0)
 const isLiked = ref(false)
 const likeCount = ref(0)
+const { setLike, isPending } = useDiscoverLike()
 const isCollected = ref(false)
 const collectCount = ref(0)
 const collectedFolderUuid = ref('')
 const showCollectDialog = ref(false)
+const collecting = ref(false)
 const showCommentInput = ref(false)
 const commentText = ref('')
 const commentInputRef = ref(null)
-const replyTarget = ref(null) // { uuid, nickname, parentUuid }
+const replyTarget = ref(null)
 const isAIComment = ref(false)
+const submitting = ref(false)
 const AI_PREFIX = '@AI助手 '
-
-/** 左侧栏宽度（px），取首张图在当前 flex 布局下 contain 后的 offsetWidth，切换幻灯片不变 */
+const comments = ref([])
+const commentsPage = ref(1)
+const commentsHasMore = ref(true)
+const commentsLoading = ref(false)
+const commentsError = ref('')
+const commentsRetryReset = ref(false)
+const dialogRef = ref(null)
+const mediaContainerRef = ref(null)
+const contentContainerRef = ref(null)
+const commentPromptRef = ref(null)
 const lockedWidthPx = ref(null)
+const firstMediaSize = ref(null)
+let enterFrame
+let mediaFrame
+let mediaResizeObserver
 
-function onCarouselImageLoad(ev) {
-  if (currentIndex.value !== 0) return
-  const img = ev?.target
-  if (!img || !(img instanceof HTMLImageElement)) return
-  requestAnimationFrame(() => {
-    const w = img.offsetWidth
-    if (w > 0) lockedWidthPx.value = w
-  })
+// 首图决定左栏宽度，右侧继续使用原来的 480px 内容栏；不再各占一半。
+const updateMediaWidth = () => {
+  if (!dialogRef.value || !contentContainerRef.value || !firstMediaSize.value || disposed) return
+  if (window.innerWidth < 768) { lockedWidthPx.value = null; return }
+  const parent = dialogRef.value.parentElement
+  const style = window.getComputedStyle(parent)
+  const availableWidth = parent.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0) - contentContainerRef.value.offsetWidth
+  lockedWidthPx.value = discoverMediaWidth(firstMediaSize.value, dialogRef.value.clientHeight, availableWidth)
 }
 
-watch(
-  () => [detail.value?.urls?.[0], props.item?.src],
-  () => {
-    currentIndex.value = 0
-    lockedWidthPx.value = null
-  },
-)
+const scheduleMediaWidth = () => {
+  cancelAnimationFrame(mediaFrame)
+  mediaFrame = requestAnimationFrame(updateMediaWidth)
+}
 
-onMounted(() => {
-  requestAnimationFrame(() => {
-    show.value = true
-  })
-  fetchDetail()
+// 仅首图可以修改左栏宽度，后续图片完整显示并沿用首图的布局。
+const onCarouselImageLoad = event => {
+  if (currentIndex.value !== 0) return
+  const image = event?.target
+  if (!image?.naturalWidth || !image?.naturalHeight) return
+  firstMediaSize.value = { width: image.naturalWidth, height: image.naturalHeight }
+  scheduleMediaWidth()
+}
+
+const onVideoMetadataLoad = event => {
+  const video = event?.target
+  if (!video?.videoWidth || !video?.videoHeight) return
+  firstMediaSize.value = { width: video.videoWidth, height: video.videoHeight }
+  scheduleMediaWidth()
+}
+
+watch(() => [detail.value?.urls?.[0], props.item?.src, props.item?.id], () => {
+  currentIndex.value = 0
+  lockedWidthPx.value = null
+  firstMediaSize.value = null
+  imageError.value = false
 })
+let previousFocus
+let disposed = false
+let closeTimer
+let detailVersion = 0
 
 const fetchDetail = async () => {
-  if (!props.item?.id) return
+  if (!props.item?.id || detailLoading.value) return
+  const version = ++detailVersion
+  detailLoading.value = true
+  detailError.value = ''
   try {
-    const res = await useApi$('/user/discover/detail', {
-      body: { uuid: props.item.id },
-    })
-    if (res.code === 200 && res.data) {
-      detail.value = res.data
-      fetchFollowState()
-      currentIndex.value = 0
-      isLiked.value = res.data.is_liked || false
-      likeCount.value = res.data.like_count || 0
-      isCollected.value = res.data.is_collected || false
-      collectCount.value = res.data.collect_count || 0
-      // 如果已收藏，获取所在收藏夹 UUID
-      if (isCollected.value) {
-        checkCollectedFolder()
-      }
-      fetchComments()
-      // 通知页携带准确的评论上下文，无需依赖评论列表第一页。
-      if (props.item.initialReply) {
-        const comment = props.item.initialReply
-        startReply(comment, comment.parent_id ? { uuid: comment.parent_id } : undefined)
-      }
+    const response = await useApi$('/user/discover/detail', { body: { uuid: props.item.id }, retry: 0 })
+    if (disposed || version !== detailVersion) return
+    if (response.code !== 200 || !response.data) throw new Error(response.message || '动态暂时无法访问')
+    detail.value = response.data
+    currentIndex.value = 0
+    isLiked.value = !!response.data.is_liked
+    likeCount.value = response.data.like_count || 0
+    isCollected.value = !!response.data.is_collected
+    collectCount.value = response.data.collect_count || 0
+    fetchFollowState()
+    if (isCollected.value) checkCollectedFolder()
+    fetchComments(true)
+    if (props.item.initialReply) {
+      const comment = props.item.initialReply
+      startReply(comment, comment.parent_id ? { uuid: comment.parent_id } : undefined)
     }
-  } catch (e) {
-    console.error('获取帖子详情失败:', e)
+  } catch (err) {
+    if (!disposed && version === detailVersion) detailError.value = err?.data?.message || '动态暂时无法访问，请稍后重试'
+  } finally {
+    if (!disposed && version === detailVersion) detailLoading.value = false
   }
 }
-
-const goToAuthor = () => {
-  if (!authorId.value) return
-  emit('close')
-  return navigateTo(`/user/${encodeURIComponent(authorId.value)}`)
-}
-
 const fetchFollowState = async () => {
   if (!authorId.value || isSelf.value) return
   followLoading.value = true
   try {
-    const res = await useApi$('/user/follow/counts', {
-      body: { user_id: authorId.value },
-    })
-    if (res.code === 200) {
-      isFollowing.value = !!res.data?.is_following
-    }
-  } catch (error) {
-    console.error('获取作者关注状态失败:', error)
-  } finally {
-    followLoading.value = false
-  }
+    const response = await useApi$('/user/follow/counts', { body: { user_id: authorId.value } })
+    if (!disposed && response.code === 200) isFollowing.value = !!response.data?.is_following
+  } catch (err) { console.error('获取作者关注状态失败:', err) }
+  finally { if (!disposed) followLoading.value = false }
 }
-
 const toggleFollow = async () => {
-  if (!authorId.value || isSelf.value || followLoading.value || !detail.value) return
+  if (!authorId.value || followLoading.value) return
   followLoading.value = true
   try {
-    const res = await useApi$('/user/follow/toggle', {
-      body: { follow_user_id: authorId.value },
-    })
-    if (res.code === 200) {
-      isFollowing.value = !!res.data.is_followed
-      emit('follow-updated', { userId: authorId.value, isFollowing: isFollowing.value })
-      ElMessage.success(isFollowing.value ? '关注成功' : '已取消关注')
-    } else {
-      ElMessage.error(res.message || '关注操作失败，请稍后重试')
-    }
-  } catch (error) {
-    console.error('关注作者失败:', error)
-  } finally {
-    followLoading.value = false
-  }
+    const response = await useApi$('/user/follow/toggle', { body: { follow_user_id: authorId.value }, retry: 0 })
+    if (disposed) return
+    if (response.code !== 200) throw new Error('关注操作失败')
+    isFollowing.value = !!response.data.is_followed
+    emit('follow-updated', { userId: authorId.value, isFollowing: isFollowing.value })
+  } catch (err) { if (!disposed) ElMessage.error(err?.data?.message || '关注操作失败，请稍后重试') }
+  finally { if (!disposed) followLoading.value = false }
 }
+const goToAuthor = () => { if (authorId.value) { emit('close', 'author'); navigateTo('/user/' + encodeURIComponent(authorId.value)) } }
 
-const checkCollectedFolder = async () => {
-  if (!props.item?.id) return
+const buildComment = comment => ({ ...comment, replies: [], expanded: false, replyPage: 1, replyHasMore: true, replyLoading: false, replyError: '' })
+const fetchComments = async (reset = false) => {
+  reset = reset || (!!commentsError.value && commentsRetryReset.value)
+  if (!props.item?.id || commentsLoading.value || (!reset && !commentsHasMore.value && !commentsError.value)) return
+  commentsLoading.value = true
+  commentsError.value = ''
+  const page = reset ? 1 : commentsPage.value
   try {
-    const res = await useApi$('/user/discover/check-collected', {
-      method: 'POST',
-      body: { post_uuid: props.item.id },
-    })
-    if (res.code === 200 && res.data?.is_collected) {
-      collectedFolderUuid.value = res.data.folder_uuid || ''
-    }
-  } catch (e) {
-    console.error('检查收藏状态失败:', e)
-  }
+    const response = await useApi$('/user/discover/comment/threads', { body: { post_uuid: props.item.id, page, page_size: 20 }, retry: 0 })
+    if (disposed) return
+    if (response.code !== 200 || !Array.isArray(response.data?.list)) throw new Error('获取评论失败')
+    const list = response.data.list.map(buildComment)
+    comments.value = reset ? list : mergeDiscoverPage(comments.value, list)
+    commentsPage.value = page + 1
+    commentsHasMore.value = !!response.data.has_more
+    commentsRetryReset.value = false
+  } catch (err) { if (!disposed) { commentsRetryReset.value = reset; commentsError.value = err?.data?.message || '获取评论失败，请重试' } }
+  finally { if (!disposed) commentsLoading.value = false }
 }
-
-const fetchComments = async () => {
-  if (!props.item?.id) return
+const loadReplies = async comment => {
+  if (comment.replyLoading || !comment.replyHasMore) return
+  comment.replyLoading = true
+  comment.replyError = ''
   try {
-    const res = await useApi$('/user/discover/comment/list', {
-      body: { post_uuid: props.item.id, page: 1, page_size: 50 },
-    })
-    if (res.code === 200 && res.data?.list) {
-      // 构建评论树：顶级评论 + 回复
-      const commentMap = {}
-      const topLevel = []
-
-      // 先收集所有评论
-      for (const c of res.data.list) {
-        commentMap[c.uuid] = { ...c, replies: [] }
-      }
-
-      // 组装树结构
-      for (const c of res.data.list) {
-        if (c.parent_id && commentMap[c.parent_id]) {
-          // 是回复，添加到父评论的replies中
-          commentMap[c.parent_id].replies.push(commentMap[c.uuid])
-        } else {
-          // 是顶级评论
-          topLevel.push(commentMap[c.uuid])
-        }
-      }
-
-      comments.value = topLevel
-    }
-  } catch (e) {
-    console.error('获取评论失败:', e)
+    const response = await useApi$('/user/discover/comment/replies', { body: { post_uuid: props.item.id, parent_id: comment.uuid, page: comment.replyPage, page_size: 10 }, retry: 0 })
+    if (disposed) return
+    if (response.code !== 200 || !Array.isArray(response.data?.list)) throw new Error('获取回复失败')
+    comment.replies = mergeDiscoverPage(comment.replies, response.data.list)
+    comment.replyPage++
+    comment.replyHasMore = !!response.data.has_more
+  } catch (err) { if (!disposed) comment.replyError = err?.data?.message || '获取回复失败，请重试' }
+  finally { if (!disposed) comment.replyLoading = false }
+}
+const toggleReplies = comment => {
+  comment.expanded = !comment.expanded
+  if (comment.expanded && comment.replyPage === 1) loadReplies(comment)
+}
+const updateCommentLike = result => {
+  for (const comment of comments.value) {
+    const target = comment.uuid === result.uuid ? comment : comment.replies.find(reply => reply.uuid === result.uuid)
+    if (target) { Object.assign(target, result); return }
   }
 }
-
+// 评论点赞继续使用阶段一的幂等接口，样式沿用原模板。
+const toggleCommentLike = async comment => {
+  const result = await setLike(comment.uuid, comment.is_liked, true)
+  if (result && !disposed) updateCommentLike({ uuid: comment.uuid, is_liked: result.is_liked, like_count: result.like_count })
+}
 const toggleLike = async () => {
-  if (!props.item?.id) return
+  const result = await setLike(props.item?.id, isLiked.value)
+  if (!result || disposed) return
+  isLiked.value = result.is_liked
+  likeCount.value = result.like_count
+  emit('like-updated', { postId: props.item.id, likeCount: likeCount.value, isLiked: isLiked.value })
+}
+const checkCollectedFolder = async () => {
   try {
-    const res = await useApi$('/user/discover/like', {
-      body: { target_uuid: props.item.id },
-    })
-    if (res.code === 200) {
-      isLiked.value = res.data.is_liked
-      likeCount.value = res.data.like_count
-      // 通知父组件更新赞数
-      emit('like-updated', {
-        postId: props.item.id,
-        likeCount: likeCount.value,
-        isLiked: isLiked.value,
-      })
-    }
-  } catch (e) {
-    console.error('点赞失败:', e)
-  }
+    const response = await useApi$('/user/discover/check-collected', { body: { post_uuid: props.item.id } })
+    if (!disposed && response.code === 200) collectedFolderUuid.value = response.data?.folder_uuid || ''
+  } catch (err) { console.error('检查收藏状态失败:', err) }
 }
-
-const toggleCollect = () => {
-  if (!props.item?.id) return
-  if (isCollected.value) {
-    // 已收藏，直接取消收藏
-    handleUncollect()
-  } else {
-    // 未收藏，打开收藏夹选择弹窗
-    showCollectDialog.value = true
-  }
-}
-
-const handleUncollect = async () => {
-  if (!collectedFolderUuid.value) return
+const toggleCollect = async () => {
+  if (collecting.value) return
+  if (!isCollected.value) { showCollectDialog.value = true; return }
+  collecting.value = true
   try {
-    const res = await useApi$('/user/discover/uncollect', {
-      method: 'POST',
-      body: { post_uuid: props.item.id, folder_uuid: collectedFolderUuid.value },
-    })
-    if (res.code === 200) {
-      isCollected.value = false
-      collectCount.value = res.data.collect_count
-      collectedFolderUuid.value = ''
-      emit('collect-updated', {
-        postId: props.item.id,
-        collectCount: collectCount.value,
-        isCollected: false,
-      })
-    }
-  } catch (e) {
-    console.error('取消收藏失败:', e)
-  }
+    if (!collectedFolderUuid.value) await checkCollectedFolder()
+    if (!collectedFolderUuid.value) throw new Error('未找到收藏夹')
+    const response = await useApi$('/user/discover/uncollect', { body: { post_uuid: props.item.id, folder_uuid: collectedFolderUuid.value }, retry: 0 })
+    if (disposed) return
+    if (response.code !== 200) throw new Error('取消收藏失败')
+    isCollected.value = false
+    collectCount.value = response.data.collect_count
+    collectedFolderUuid.value = ''
+    emit('collect-updated', { postId: props.item.id, collectCount: collectCount.value, isCollected: false })
+  } catch (err) { if (!disposed) ElMessage.error(err?.data?.message || '取消收藏失败，请重试') }
+  finally { if (!disposed) collecting.value = false }
 }
-
 const handleCollected = ({ collectCount: count, folderUuid }) => {
   isCollected.value = true
   collectCount.value = count
   collectedFolderUuid.value = folderUuid
-  emit('collect-updated', {
-    postId: props.item.id,
-    collectCount: count,
-    isCollected: true,
-  })
+  emit('collect-updated', { postId: props.item.id, collectCount: count, isCollected: true })
 }
-
-// 评论点赞
-const toggleCommentLike = async (comment) => {
-  try {
-    const res = await useApi$('/user/discover/comment/like', {
-      body: { comment_uuid: comment.uuid },
-    })
-    if (res.code === 200) {
-      // 在 comments 数组中找到对应的评论并更新
-      const updateComment = (list) => {
-        for (const c of list) {
-          if (c.uuid === comment.uuid) {
-            c.is_liked = res.data.is_liked
-            c.like_count = res.data.like_count
-            return true
-          }
-          if (c.replies && updateComment(c.replies)) {
-            return true
-          }
-        }
-        return false
-      }
-      updateComment(comments.value)
-      // 手动触发 shallowRef 更新
-      comments.value = [...comments.value]
-    }
-  } catch (e) {
-    console.error('评论点赞失败:', e)
-  }
-}
-
-const prevImage = () => {
-  if (!detail.value?.urls?.length) return
-  currentIndex.value = (currentIndex.value - 1 + detail.value.urls.length) % detail.value.urls.length
-}
-
-const nextImage = () => {
-  if (!detail.value?.urls?.length) return
-  currentIndex.value = (currentIndex.value + 1) % detail.value.urls.length
-}
-
-const openCommentInput = () => {
-  showCommentInput.value = true
-  nextTick(() => {
-    commentInputRef.value?.focus()
-  })
-}
-
+const prevImage = () => { currentIndex.value = (currentIndex.value - 1 + detail.value.urls.length) % detail.value.urls.length }
+const nextImage = () => { currentIndex.value = (currentIndex.value + 1) % detail.value.urls.length }
+watch(currentIndex, () => { imageError.value = false })
+const openCommentInput = () => { showCommentInput.value = true; nextTick(() => commentInputRef.value?.focus()) }
 const closeCommentInput = () => {
+  if (submitting.value) return
   showCommentInput.value = false
   commentText.value = ''
   replyTarget.value = null
   isAIComment.value = false
+  nextTick(() => commentPromptRef.value?.focus({ preventScroll: true }))
 }
-
+const cancelReply = () => { if (!submitting.value) replyTarget.value = null }
 const startReply = (comment, parentComment) => {
-  // 始终将新评论嵌套在顶级评论下
-  // parentComment存在说明回复的是非顶级评论，否则回复的是顶级评论
-  const topLevelUuid = parentComment ? parentComment.uuid : comment.uuid
-  replyTarget.value = {
-    uuid: comment.uuid,
-    userId: comment.user_id,
-    nickname: comment.nickname,
-    content: comment.content,
-    parentUuid: topLevelUuid,
-    isReplyToTopLevel: !parentComment,
-  }
+  if (submitting.value) return
+  replyTarget.value = { uuid: comment.uuid, userId: comment.user_id, nickname: comment.nickname, content: comment.content, parentUuid: parentComment?.uuid || comment.uuid, isReplyToTopLevel: !parentComment }
   openCommentInput()
 }
-
-const cancelReply = () => {
-  replyTarget.value = null
-}
-
-const submitComment = async () => {
-  if (!commentText.value.trim() || !props.item?.id) return
-
-  // 检测@AI助手评论
-  const trimmedText = commentText.value.trim()
-  if (trimmedText.startsWith('@AI助手') || isAIComment.value) {
-    await submitAIComment(trimmedText)
-    return
-  }
-
-  try {
-    const body = {
-      post_uuid: props.item.id,
-      content: trimmedText,
-    }
-    // 如果是回复评论
-    if (replyTarget.value) {
-      body.parent_id = replyTarget.value.parentUuid
-      // 仅回复非顶级评论时才设置reply_to_user_id，用于显示"回复 XXX:"
-      if (!replyTarget.value.isReplyToTopLevel) {
-        body.reply_to_user_id = replyTarget.value.userId
-      }
-    }
-
-    const res = await useApi$('/user/discover/comment/add', {
-      body,
-    })
-    if (res.code === 200) {
-      commentText.value = ''
-      showCommentInput.value = false
-      replyTarget.value = null
-      // 刷新评论列表
-      await fetchComments()
-      // 更新评论数
-      if (detail.value) {
-        detail.value.comment_count = (detail.value.comment_count || 0) + 1
-      }
-      ElMessage.success('评论成功')
-    } else {
-      ElMessage.error(res.message || '评论失败')
-    }
-  } catch (e) {
-    console.error('评论失败:', e)
-    ElMessage.error('评论失败')
-  }
-}
-
 const toggleAIComment = () => {
-  if (isAIComment.value) {
-    isAIComment.value = false
-    if (commentText.value.startsWith(AI_PREFIX)) {
-      commentText.value = commentText.value.slice(AI_PREFIX.length)
-    }
-  } else {
-    isAIComment.value = true
-    if (!commentText.value.startsWith(AI_PREFIX)) {
-      commentText.value = AI_PREFIX + commentText.value
-    }
-    nextTick(() => commentInputRef.value?.focus())
-  }
+  if (submitting.value) return
+  isAIComment.value = !isAIComment.value
+  if (isAIComment.value && !commentText.value.startsWith(AI_PREFIX)) commentText.value = AI_PREFIX + commentText.value
+  else if (!isAIComment.value && commentText.value.startsWith(AI_PREFIX)) commentText.value = commentText.value.slice(AI_PREFIX.length)
+  nextTick(() => commentInputRef.value?.focus())
 }
-
-const submitAIComment = async (fullText) => {
-  let question = fullText
-  if (question.startsWith(AI_PREFIX.trim())) {
-    question = question.slice(AI_PREFIX.trim().length).trim()
+const submitComment = async () => {
+  if (submitting.value || !props.item?.id || !commentText.value.trim()) return
+  const text = commentText.value.trim()
+  const aiComment = text.startsWith('@AI助手') || isAIComment.value
+  const question = aiComment ? text.replace(/^@AI助手\s*/, '').trim() : ''
+  if (aiComment && !question) { ElMessage.warning('请输入你的问题'); return }
+  submitting.value = true
+  const target = replyTarget.value
+  const body = { post_uuid: props.item.id, content: text }
+  if (target) {
+    body.parent_id = target.parentUuid
+    if (!target.isReplyToTopLevel) body.reply_to_user_id = target.userId
   }
-  if (!question) {
-    ElMessage.warning('请输入你的问题')
-    return
-  }
-
+  if (aiComment) { body.ai_question = question; body.reply_to_content = target?.content || '' }
   try {
-    const body = {
-      post_uuid: props.item.id,
-      content: fullText,       // 完整内容（含@AI助手前缀），存数据库
-      ai_question: question,   // 去掉前缀的问题，给AI处理
+    const response = await useApi$(aiComment ? '/user/discover/comment/ai' : '/user/discover/comment/add', { body, retry: 0 })
+    if (disposed) return
+    if (response.code !== 200) throw new Error('评论发送失败')
+    const comment = aiComment ? response.data?.user_comment : response.data
+    if (comment?.uuid) {
+      const normalized = { ...comment, reply_to_nickname: target && !target.isReplyToTopLevel ? target.nickname : comment.reply_to_nickname }
+      if (target) {
+        const parent = comments.value.find(item => item.uuid === target.parentUuid)
+        if (parent) { parent.reply_count = (parent.reply_count || 0) + 1; parent.replies = mergeDiscoverPage(parent.replies, [normalized]); parent.expanded = true }
+      } else comments.value = mergeDiscoverPage(comments.value, [buildComment(normalized)])
     }
-    if (replyTarget.value) {
-      body.parent_id = replyTarget.value.parentUuid
-      if (!replyTarget.value.isReplyToTopLevel) {
-        body.reply_to_user_id = replyTarget.value.userId
-      }
-      body.reply_to_content = replyTarget.value.content || ''
-    }
-
-    const res = await useApi$('/user/discover/comment/ai', { body })
-    if (res.code === 200) {
-      commentText.value = ''
-      showCommentInput.value = false
-      replyTarget.value = null
-      isAIComment.value = false
-      await fetchComments()
-      if (detail.value) {
-        detail.value.comment_count = (detail.value.comment_count || 0) + 1
-      }
-      ElMessage.success('评论已发送，AI助手稍后回复')
-    } else {
-      ElMessage.error(res.message || '评论失败')
-    }
-  } catch (e) {
-    console.error('AI评论失败:', e)
-    ElMessage.error('评论失败，请稍后重试')
+    detail.value.comment_count = (detail.value.comment_count || 0) + 1
+    submitting.value = false
+    closeCommentInput()
+    ElMessage.success(aiComment ? '评论已发送，AI助手稍后回复，可刷新评论查看' : '评论成功')
+  } catch (err) { if (!disposed) ElMessage.error(err?.data?.message || '评论发送失败，请重试') }
+  finally { if (!disposed) submitting.value = false }
+}
+const sharePost = async () => {
+  const url = new URL('/discover/post/' + encodeURIComponent(props.item.id), window.location.origin).href
+  try {
+    await navigator.clipboard.writeText(url)
+    ElMessage.success('分享链接已复制')
+  } catch {
+    // HTTP 或浏览器不支持剪贴板时，展示可手动复制的真实链接。
+    try { await ElMessageBox.prompt('请复制下方链接，查看内容需要登录', '分享动态', { inputValue: url, confirmButtonText: '完成', cancelButtonText: '关闭', inputType: 'text' }) } catch { /* 用户关闭分享窗口。 */ }
   }
 }
-
 const handleClose = () => {
+  if (props.standalone || showCollectDialog.value) return
   show.value = false
-  setTimeout(() => emit('close'), 300)
+  clearTimeout(closeTimer)
+  closeTimer = setTimeout(() => emit('close'), 300)
 }
+const handleKeydown = event => {
+  if (props.standalone || showCollectDialog.value) return
+  if (event.key === 'Escape') { event.preventDefault(); handleClose() }
+  if (event.key !== 'Tab') return
+  const elements = [...dialogRef.value.querySelectorAll('button:not(:disabled), a[href], textarea:not(:disabled), input:not(:disabled), [tabindex="0"]')].filter(element => element.getClientRects().length)
+  if (!elements.length) { event.preventDefault(); dialogRef.value.focus(); return }
+  const first = elements[0], last = elements[elements.length - 1]
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.value)) { event.preventDefault(); last.focus() }
+  else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialogRef.value)) { event.preventDefault(); first.focus() }
+}
+onMounted(() => {
+  previousFocus = document.activeElement
+  // 保留原来的下一帧入场，让遮罩和卡片缩放过渡能够生效。
+  enterFrame = requestAnimationFrame(async () => {
+    if (disposed) return
+    show.value = true
+    await nextTick()
+    if (!props.standalone) dialogRef.value?.focus({ preventScroll: true })
+    mediaResizeObserver = new ResizeObserver(scheduleMediaWidth)
+    if (dialogRef.value?.parentElement) mediaResizeObserver.observe(dialogRef.value.parentElement)
+    scheduleMediaWidth()
+  })
+  window.addEventListener('resize', scheduleMediaWidth)
+  fetchDetail()
+})
+onUnmounted(() => {
+  disposed = true
+  detailVersion++
+  clearTimeout(closeTimer)
+  cancelAnimationFrame(enterFrame)
+  cancelAnimationFrame(mediaFrame)
+  mediaResizeObserver?.disconnect()
+  window.removeEventListener('resize', scheduleMediaWidth)
+  if (!props.standalone && previousFocus?.isConnected) previousFocus.focus()
+})
 </script>
 
 <style scoped>
@@ -1273,5 +1204,27 @@ const handleClose = () => {
 
 .carousel-fade-leave-to {
   opacity: 0;
+}
+
+/* 阶段一的独立详情沿用原卡片外观；仅保留已有的窄屏兼容。 */
+.discover-standalone {
+  display: flex;
+  justify-content: center;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+.note-card { max-width: 100%; min-width: 0; outline: none; }
+.content-container, .scroll-area { min-height: 0; }
+@media (max-width: 767px) {
+  .discover-overlay, .discover-standalone { padding: 12px; }
+  .note-card { flex-direction: column; width: 100%; height: 85dvh; }
+  .image-container { flex: 0 0 auto; width: 100% !important; height: 30dvh; }
+  .content-container { flex: 1; width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .discover-enter-active, .discover-leave-active,
+  .discover-enter-active .note-card, .discover-leave-active .note-card,
+  .carousel-fade-enter-active, .carousel-fade-leave-active { transition: none; }
 }
 </style>

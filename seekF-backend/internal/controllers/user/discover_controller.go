@@ -12,15 +12,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// DiscoverController 发现页内容与互动请求控制器。
 type DiscoverController struct {
 	discoverService userservice.DiscoverService
 }
 
+// NewDiscoverController 创建发现页控制器。
 func NewDiscoverController(discoverService userservice.DiscoverService) *DiscoverController {
 	return &DiscoverController{
 		discoverService: discoverService,
 	}
 }
+
+// ========== 帖子 ==========
 
 // CreatePost 发布帖子
 func (c *DiscoverController) CreatePost(ctx *gin.Context) {
@@ -45,7 +49,28 @@ func (c *DiscoverController) CreatePost(ctx *gin.Context) {
 		return
 	}
 
-	postInfo, err := c.discoverService.CreatePost(ctx.Request.Context(), userId, req.Title, req.Content, req.MediaType, req.Tags, req.Urls, req.CoverUrl)
+	if len(req.MediaSizes) != 0 && len(req.MediaSizes) != len(req.Urls) {
+		resp.Error(ctx, "媒体尺寸与文件数量不一致", http.StatusBadRequest)
+		return
+	}
+	sizes := make([]userservice.MediaSize, 0, len(req.MediaSizes))
+	for _, size := range req.MediaSizes {
+		if size.Width < 0 || size.Height < 0 || size.Width > 65535 || size.Height > 65535 || (size.Width == 0) != (size.Height == 0) {
+			resp.Error(ctx, "媒体尺寸无效", http.StatusBadRequest)
+			return
+		}
+		sizes = append(sizes, userservice.MediaSize{Width: size.Width, Height: size.Height})
+	}
+	var coverSize userservice.MediaSize
+	if req.CoverSize != nil {
+		size := req.CoverSize
+		if size.Width < 0 || size.Height < 0 || size.Width > 65535 || size.Height > 65535 || (size.Width == 0) != (size.Height == 0) {
+			resp.Error(ctx, "封面尺寸无效", http.StatusBadRequest)
+			return
+		}
+		coverSize = userservice.MediaSize{Width: size.Width, Height: size.Height}
+	}
+	postInfo, err := c.discoverService.CreatePost(ctx.Request.Context(), userId, req.Title, req.Content, req.MediaType, req.Tags, req.Urls, req.CoverUrl, sizes, coverSize)
 	if err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
@@ -62,6 +87,8 @@ func (c *DiscoverController) CreatePost(ctx *gin.Context) {
 		CoverUrl:  postInfo.CoverUrl,
 		Tags:      postInfo.Tags,
 		FirstUrl:  postInfo.FirstUrl,
+		Width:     postInfo.Width,
+		Height:    postInfo.Height,
 		CreatedAt: postInfo.CreatedAt,
 	})
 }
@@ -101,6 +128,8 @@ func (c *DiscoverController) ListPosts(ctx *gin.Context) {
 			CoverUrl:     p.CoverUrl,
 			Tags:         p.Tags,
 			FirstUrl:     p.FirstUrl,
+			Width:        p.Width,
+			Height:       p.Height,
 			LikeCount:    p.LikeCount,
 			CommentCount: p.CommentCount,
 			CollectCount: p.CollectCount,
@@ -152,6 +181,8 @@ func (c *DiscoverController) SearchPosts(ctx *gin.Context) {
 			CoverUrl:     p.CoverUrl,
 			Tags:         p.Tags,
 			FirstUrl:     p.FirstUrl,
+			Width:        p.Width,
+			Height:       p.Height,
 			LikeCount:    p.LikeCount,
 			CommentCount: p.CommentCount,
 			CollectCount: p.CollectCount,
@@ -206,6 +237,8 @@ func (c *DiscoverController) ListLikedPosts(ctx *gin.Context) {
 			CoverUrl:     p.CoverUrl,
 			Tags:         p.Tags,
 			FirstUrl:     p.FirstUrl,
+			Width:        p.Width,
+			Height:       p.Height,
 			LikeCount:    p.LikeCount,
 			CommentCount: p.CommentCount,
 			CollectCount: p.CollectCount,
@@ -266,36 +299,35 @@ func (c *DiscoverController) GetPostDetail(ctx *gin.Context) {
 	})
 }
 
-// ToggleLike 切换点赞状态
-func (c *DiscoverController) ToggleLike(ctx *gin.Context) {
+// ========== 点赞 ==========
+
+// SetPostLike 明确设置帖子的点赞状态。
+func (c *DiscoverController) SetPostLike(ctx *gin.Context) { c.setDiscoverLike(ctx, false) }
+
+// SetCommentLike 明确设置评论的点赞状态。
+func (c *DiscoverController) SetCommentLike(ctx *gin.Context) { c.setDiscoverLike(ctx, true) }
+
+// setDiscoverLike 校验目标状态并返回事务内确定的点赞结果。
+func (c *DiscoverController) setDiscoverLike(ctx *gin.Context, isComment bool) {
 	userId := ctx.GetString("Uuid")
 	if userId == "" {
-		resp.Error(ctx, "获取用户信息失败", http.StatusBadRequest)
+		resp.Error(ctx, "请先登录", http.StatusUnauthorized)
 		return
 	}
-
-	var req userreq.ToggleLikeRequest
-	if err := ctx.ShouldBind(&req); err != nil {
-		resp.Error(ctx, "参数错误", http.StatusBadRequest)
+	var req userreq.SetDiscoverLikeRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.Error(ctx, "请提供目标和明确的点赞状态", http.StatusBadRequest)
 		return
 	}
-	if req.TargetUuid == "" {
-		resp.Error(ctx, "target_uuid不能为空", http.StatusBadRequest)
-		return
-	}
-
-	isLiked, likeCount, err := c.discoverService.ToggleLike(ctx.Request.Context(), userId, req.TargetUuid)
+	liked, count, err := c.discoverService.SetLike(ctx.Request.Context(), userId, req.TargetUuid, *req.IsLiked, isComment)
 	if err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	if isLiked {
-		resp.Success(ctx, "点赞成功", gin.H{"is_liked": true, "like_count": likeCount})
-	} else {
-		resp.Success(ctx, "取消点赞", gin.H{"is_liked": false, "like_count": likeCount})
-	}
+	resp.Success(ctx, "点赞状态已更新", gin.H{"is_liked": liked, "like_count": count})
 }
+
+// ========== 评论 ==========
 
 // AddComment 添加评论
 func (c *DiscoverController) AddComment(ctx *gin.Context) {
@@ -417,35 +449,46 @@ func (c *DiscoverController) ListComments(ctx *gin.Context) {
 	})
 }
 
-// ToggleCommentLike 切换评论点赞状态
-func (c *DiscoverController) ToggleCommentLike(ctx *gin.Context) {
-	userId := ctx.GetString("Uuid")
-	if userId == "" {
-		resp.Error(ctx, "获取用户信息失败", http.StatusBadRequest)
-		return
-	}
+// ListCommentThreads 分页读取顶级评论及各自回复数量。
+func (c *DiscoverController) ListCommentThreads(ctx *gin.Context) {
+	c.listDiscoverCommentThread(ctx, false)
+}
 
-	var req userreq.ToggleCommentLikeRequest
-	if err := ctx.ShouldBind(&req); err != nil {
-		resp.Error(ctx, "参数错误", http.StatusBadRequest)
-		return
-	}
-	if req.CommentUuid == "" {
-		resp.Error(ctx, "comment_uuid不能为空", http.StatusBadRequest)
-		return
-	}
+// ListCommentReplies 分页读取指定顶级评论的回复。
+func (c *DiscoverController) ListCommentReplies(ctx *gin.Context) {
+	c.listDiscoverCommentThread(ctx, true)
+}
 
-	isLiked, likeCount, err := c.discoverService.ToggleCommentLike(ctx.Request.Context(), userId, req.CommentUuid)
+// listDiscoverCommentThread 统一处理评论线程分页与响应装配。
+func (c *DiscoverController) listDiscoverCommentThread(ctx *gin.Context, replies bool) {
+	var req userreq.CommentThreadRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.Error(ctx, "评论分页参数错误", http.StatusBadRequest)
+		return
+	}
+	if replies && req.ParentUuid == "" {
+		resp.Error(ctx, "请选择需要查看回复的评论", http.StatusBadRequest)
+		return
+	}
+	if !replies {
+		req.ParentUuid = ""
+	}
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+	if req.PageSize <= 0 || req.PageSize > 50 {
+		req.PageSize = 20
+	}
+	comments, hasMore, err := c.discoverService.ListCommentThread(ctx.Request.Context(), ctx.GetString("Uuid"), req.PostUuid, req.ParentUuid, req.Page, req.PageSize)
 	if err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	if isLiked {
-		resp.Success(ctx, "点赞成功", gin.H{"is_liked": true, "like_count": likeCount})
-	} else {
-		resp.Success(ctx, "取消点赞", gin.H{"is_liked": false, "like_count": likeCount})
+	items := make([]userresp.CommentItem, 0, len(comments))
+	for _, comment := range comments {
+		items = append(items, userresp.CommentItem{Uuid: comment.Uuid, UserId: comment.UserId, Nickname: comment.Nickname, Avatar: comment.Avatar, ParentId: comment.ParentId, ReplyToUserId: comment.ReplyToUserId, ReplyToNickname: comment.ReplyToNickname, Content: comment.Content, LikeCount: comment.LikeCount, IsLiked: comment.IsLiked, ReplyCount: comment.ReplyCount, CreatedAt: comment.CreatedAt})
 	}
+	resp.Success(ctx, "获取成功", userresp.CommentThreadRespond{List: items, HasMore: hasMore})
 }
 
 // ========== 收藏夹 ==========
@@ -611,6 +654,8 @@ func (c *DiscoverController) GetFolderDetail(ctx *gin.Context) {
 	})
 }
 
+// ========== 收藏记录 ==========
+
 // ListCollectedPosts 获取收藏夹中的帖子列表
 func (c *DiscoverController) ListCollectedPosts(ctx *gin.Context) {
 	userId := ctx.GetString("Uuid")
@@ -650,6 +695,8 @@ func (c *DiscoverController) ListCollectedPosts(ctx *gin.Context) {
 			CoverUrl:     p.CoverUrl,
 			Tags:         p.Tags,
 			FirstUrl:     p.FirstUrl,
+			Width:        p.Width,
+			Height:       p.Height,
 			LikeCount:    p.LikeCount,
 			CommentCount: p.CommentCount,
 			CollectCount: p.CollectCount,
@@ -746,6 +793,8 @@ func (c *DiscoverController) CheckCollected(ctx *gin.Context) {
 	resp.Success(ctx, "获取成功", gin.H{"is_collected": isCollected, "folder_uuid": folderUuid})
 }
 
+// ========== 用户主页 ==========
+
 // GetUserProfile 获取用户主页信息
 func (c *DiscoverController) GetUserProfile(ctx *gin.Context) {
 	userId := ctx.GetString("Uuid")
@@ -785,6 +834,8 @@ func (c *DiscoverController) GetUserProfile(ctx *gin.Context) {
 			CoverUrl:     p.CoverUrl,
 			Tags:         p.Tags,
 			FirstUrl:     p.FirstUrl,
+			Width:        p.Width,
+			Height:       p.Height,
 			LikeCount:    p.LikeCount,
 			CommentCount: p.CommentCount,
 			CollectCount: p.CollectCount,
