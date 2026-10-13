@@ -22,7 +22,7 @@ export function extractVideoPoster(source) {
       objectUrl = URL.createObjectURL(source)
       video.src = objectUrl
     } else {
-      video.crossOrigin = 'anonymous'
+      video.crossOrigin = String(source || '').includes('/user/file/view?') ? 'use-credentials' : 'anonymous'
       video.src = source
     }
 

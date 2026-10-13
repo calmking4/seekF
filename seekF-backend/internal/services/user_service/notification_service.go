@@ -160,7 +160,7 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 				posts[targetUuid] = post
 			}
 			if _, cached := covers[targetUuid]; !cached {
-				if post != nil && post.Status == 0 {
+				if CanViewDiscoverPost(post, userId) {
 					covers[targetUuid] = post.CoverUrl
 					if post.MediaType == 0 && post.CoverUrl == "" {
 						media, err := s.discoverDAO.FindMediaByPostId(post.Id)
@@ -173,9 +173,15 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 					}
 				}
 			}
-			if post != nil && post.Status == 0 {
+			if CanViewDiscoverPost(post, userId) {
 				info.PostTitle, info.PostCover, info.TargetAvailable = post.Title, covers[targetUuid], true
 			}
+		}
+		if n.Type != NotificationTypeFollow && !info.TargetAvailable {
+			info.Content = ""
+			info.TargetUuid = ""
+			info.CommentUuid = ""
+			info.CommentParentUuid = ""
 		}
 		result = append(result, info)
 	}

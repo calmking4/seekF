@@ -1,6 +1,8 @@
 package user
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -39,10 +41,14 @@ func (c *FileController) UploadFile(ctx *gin.Context) {
 	fileType := oss.ParseFileCategory(ctx.PostForm("fileType"))
 
 	// 调用服务层上传文件
-	result, err := c.fileService.UploadFile(ctx, file, fileType)
+	result, err := c.fileService.UploadFile(ctx.Request.Context(), ctx.GetString("Uuid"), file, fileType)
 	if err != nil {
-		zlog.Error(err.Error())
-		resp.Error(ctx, "文件上传失败", http.StatusInternalServerError)
+		zlog.Error(fmt.Sprintf("上传文件失败，用户=%s，文件=%s，大小=%d字节: %v", ctx.GetString("Uuid"), file.Filename, file.Size, err))
+		if errors.Is(err, userservice.ErrInvalidUpload) {
+			resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		} else {
+			resp.Error(ctx, "文件上传失败", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -58,7 +64,7 @@ func (c *FileController) InitMultipartUpload(ctx *gin.Context) {
 		return
 	}
 
-	result, err := c.fileService.InitMultipartUpload(ctx.Request.Context(), req)
+	result, err := c.fileService.InitMultipartUpload(ctx.Request.Context(), ctx.GetString("Uuid"), req)
 	if err != nil {
 		zlog.Error("初始化分片上传失败: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusInternalServerError)
@@ -97,7 +103,7 @@ func (c *FileController) UploadPart(ctx *gin.Context) {
 		return
 	}
 
-	etag, err := c.fileService.UploadPart(ctx.Request.Context(), objectKey, uploadId, int32(partNumber), file)
+	etag, err := c.fileService.UploadPart(ctx.Request.Context(), ctx.GetString("Uuid"), objectKey, uploadId, int32(partNumber), file)
 	if err != nil {
 		zlog.Error("上传分片失败: " + err.Error())
 		resp.Error(ctx, "上传分片失败", http.StatusInternalServerError)
@@ -119,7 +125,7 @@ func (c *FileController) ListUploadParts(ctx *gin.Context) {
 		return
 	}
 
-	parts, err := c.fileService.ListUploadParts(ctx.Request.Context(), req.ObjectKey, req.UploadId)
+	parts, err := c.fileService.ListUploadParts(ctx.Request.Context(), ctx.GetString("Uuid"), req.ObjectKey, req.UploadId)
 	if err != nil {
 		zlog.Error("查询已上传分片失败: " + err.Error())
 		resp.Error(ctx, "查询分片失败", http.StatusInternalServerError)
@@ -147,7 +153,7 @@ func (c *FileController) CompleteMultipartUpload(ctx *gin.Context) {
 		return
 	}
 
-	result, err := c.fileService.CompleteMultipartUpload(ctx.Request.Context(), req)
+	result, err := c.fileService.CompleteMultipartUpload(ctx.Request.Context(), ctx.GetString("Uuid"), req)
 	if err != nil {
 		zlog.Error("完成分片上传失败: " + err.Error())
 		resp.Error(ctx, "合并分片失败", http.StatusInternalServerError)
@@ -169,7 +175,7 @@ func (c *FileController) AbortMultipartUpload(ctx *gin.Context) {
 		return
 	}
 
-	if err := c.fileService.AbortMultipartUpload(ctx.Request.Context(), req.ObjectKey, req.UploadId); err != nil {
+	if err := c.fileService.AbortMultipartUpload(ctx.Request.Context(), ctx.GetString("Uuid"), req.ObjectKey, req.UploadId); err != nil {
 		zlog.Error("取消分片上传失败: " + err.Error())
 		resp.Error(ctx, "取消上传失败", http.StatusInternalServerError)
 		return
@@ -192,11 +198,45 @@ func (c *FileController) DeleteFile(ctx *gin.Context) {
 		return
 	}
 
-	if err := c.fileService.DeleteFile(ctx.Request.Context(), req.ObjectKey, req.URL); err != nil {
+	if err := c.fileService.DeleteFile(ctx.Request.Context(), ctx.GetString("Uuid"), req.ObjectKey, req.URL); err != nil {
 		zlog.Error("删除文件失败: " + err.Error())
 		resp.Error(ctx, "删除文件失败", http.StatusInternalServerError)
 		return
 	}
 
 	resp.Success(ctx, "删除成功", nil)
+}
+
+// ViewDiscoverFile 在业务鉴权后流式返回发现页媒体，支持视频Range请求。
+func (c *FileController) ViewDiscoverFile(ctx *gin.Context) {
+	stream, err := c.fileService.OpenDiscoverFile(ctx.Request.Context(), ctx.GetString("Uuid"), ctx.Query("url"), ctx.GetHeader("Range"))
+	if err != nil {
+		resp.Error(ctx, "媒体不存在或无权访问", http.StatusForbidden)
+		return
+	}
+	defer stream.Body.Close()
+	status := http.StatusOK
+	headers := map[string]string{"Cache-Control": "private, no-store", "Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff"}
+	if stream.ContentRange != "" {
+		status = http.StatusPartialContent
+		headers["Content-Range"] = stream.ContentRange
+	}
+	ctx.DataFromReader(status, stream.Length, stream.ContentType, stream.Body, headers)
+}
+
+// DiscoverAssetStates 返回草稿资源可用状态，不返回他人的资源详情。
+func (c *FileController) DiscoverAssetStates(ctx *gin.Context) {
+	var req struct {
+		URLs []string `json:"urls"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.Error(ctx, "资源列表参数错误", http.StatusBadRequest)
+		return
+	}
+	states, err := c.fileService.DiscoverAssetStates(ctx.Request.Context(), ctx.GetString("Uuid"), req.URLs)
+	if err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+	resp.Success(ctx, "资源状态已检查", states)
 }

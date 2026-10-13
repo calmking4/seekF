@@ -1,3 +1,4 @@
+import { discoverMediaURL } from '~/utils/discoverAccess'
 const CHUNK_SIZE = 5 * 1024 * 1024
 const STORAGE_PREFIX = 'seekf_video_upload_'
 
@@ -19,28 +20,30 @@ function getFileFingerprint(file) {
   return `${file.name}_${file.size}_${file.lastModified}`
 }
 
-function getStorageKey(fingerprint) {
-  return STORAGE_PREFIX + fingerprint
+function uploadUserId() { const user = useAuthState().getUser(); return user?.uuid || user?.Uuid || 'anonymous' }
+
+function getStorageKey(fingerprint, userId = uploadUserId()) {
+  return STORAGE_PREFIX + userId + '_' + fingerprint
 }
 
-function loadUploadState(fingerprint) {
+function loadUploadState(fingerprint, userId = uploadUserId()) {
   if (typeof localStorage === 'undefined') return null
   try {
-    const raw = localStorage.getItem(getStorageKey(fingerprint))
+    const raw = localStorage.getItem(getStorageKey(fingerprint, userId))
     return raw ? JSON.parse(raw) : null
   } catch {
     return null
   }
 }
 
-function saveUploadState(fingerprint, state) {
+function saveUploadState(fingerprint, state, userId = uploadUserId()) {
   if (typeof localStorage === 'undefined') return
-  localStorage.setItem(getStorageKey(fingerprint), JSON.stringify(state))
+  localStorage.setItem(getStorageKey(fingerprint, userId), JSON.stringify(state))
 }
 
-function clearUploadState(fingerprint) {
+function clearUploadState(fingerprint, userId = uploadUserId()) {
   if (typeof localStorage === 'undefined') return
-  localStorage.removeItem(getStorageKey(fingerprint))
+  localStorage.removeItem(getStorageKey(fingerprint, userId))
 }
 
 function calcTotalParts(fileSize, partSize) {
@@ -77,11 +80,12 @@ function fillPartSizes(parts, fileSize, partSize) {
  */
 export async function uploadVideoResumable(file, fileType, callbacks = {}) {
   const { onProgress, onStatus, signal, pauseSignal } = callbacks
+  const userId = uploadUserId()
   const config = useRuntimeConfig()
   const apiBase = (config.public.apiBase || 'http://localhost:8080/').replace(/\/$/, '')
 
   const fingerprint = getFileFingerprint(file)
-  let state = loadUploadState(fingerprint)
+  let state = loadUploadState(fingerprint, userId)
   let partSize = CHUNK_SIZE
 
   const notifyProgress = (parts) => {
@@ -90,6 +94,11 @@ export async function uploadVideoResumable(file, fileType, callbacks = {}) {
 
   // 尝试恢复已有上传任务
   if (state?.uploadId && state?.objectKey) {
+    // 完成响应丢失时先检查已登记的资源，避免重复上传完整视频。
+    try {
+      const ready = await $fetch(apiBase + '/user/file/assets/status', { method: 'POST', credentials: 'include', body: { urls: [state.url] }, signal })
+      if (ready.code === 200 && ready.data?.[state.url] === true) { clearUploadState(fingerprint, userId); onProgress?.(100); onStatus?.('上传完成'); return { url: discoverMediaURL(state.url, apiBase), objectKey: state.objectKey } }
+    } catch { /* 状态暂不可用时继续检查分片。 */ }
     onStatus?.('正在恢复上传...')
     onProgress?.(1)
     try {
@@ -112,10 +121,17 @@ export async function uploadVideoResumable(file, fileType, callbacks = {}) {
           file.size,
           partSize,
         )
-        saveUploadState(fingerprint, state)
+        saveUploadState(fingerprint, state, userId)
         notifyProgress(state.parts)
       }
     } catch {
+      // 云端已合并但数据库提交或响应丢失时，使用原任务重试完成登记。
+      if (state.parts?.length === calcTotalParts(file.size, state.partSize || CHUNK_SIZE)) {
+        try {
+          const completed = await $fetch(apiBase + '/user/file/upload/complete', { method: 'POST', credentials: 'include', body: { upload_id: state.uploadId, object_key: state.objectKey, parts: [...state.parts].sort((a, b) => a.partNumber - b.partNumber).map(part => ({ part_number: part.partNumber, etag: part.etag })) }, signal })
+          if (completed.code === 200 && completed.data?.url) { clearUploadState(fingerprint, userId); onProgress?.(100); onStatus?.('上传完成'); return { url: discoverMediaURL(completed.data.url, apiBase), objectKey: completed.data.objectKey } }
+        } catch { /* 任务已失效时初始化新任务。 */ }
+      }
       state = null
     }
   }
@@ -150,7 +166,7 @@ export async function uploadVideoResumable(file, fileType, callbacks = {}) {
       fileSize: file.size,
       partSize,
     }
-    saveUploadState(fingerprint, state)
+    saveUploadState(fingerprint, state, userId)
   } else {
     partSize = state.partSize || CHUNK_SIZE
   }
@@ -207,7 +223,7 @@ export async function uploadVideoResumable(file, fileType, callbacks = {}) {
       size: chunkSize,
     })
     uploadedPartNumbers.add(partNumber)
-    saveUploadState(fingerprint, state)
+    saveUploadState(fingerprint, state, userId)
     notifyProgress(state.parts)
   }
 
@@ -221,7 +237,7 @@ export async function uploadVideoResumable(file, fileType, callbacks = {}) {
     body: {
       upload_id: state.uploadId,
       object_key: state.objectKey,
-      parts: state.parts.map((p) => ({
+      parts: [...state.parts].sort((a, b) => a.partNumber - b.partNumber).map((p) => ({
         part_number: p.partNumber,
         etag: p.etag,
       })),
@@ -233,12 +249,12 @@ export async function uploadVideoResumable(file, fileType, callbacks = {}) {
     throw new Error(completeRes.message || '合并分片失败')
   }
 
-  clearUploadState(fingerprint)
+  clearUploadState(fingerprint, userId)
   onProgress?.(100)
   onStatus?.('上传完成')
 
   return {
-    url: completeRes.data.url,
+    url: discoverMediaURL(completeRes.data.url, apiBase),
     objectKey: completeRes.data.objectKey,
   }
 }

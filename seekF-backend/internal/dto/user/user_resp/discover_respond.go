@@ -2,6 +2,8 @@ package userresp
 
 // PostItem 帖子列表信息及首个媒体的像素尺寸。
 type PostItem struct {
+	Visibility   int8     `json:"visibility"`
+	Version      uint64   `json:"version"`
 	Uuid         string   `json:"uuid"`
 	UserId       string   `json:"user_id"`
 	Nickname     string   `json:"nickname"`
@@ -28,6 +30,8 @@ type ListPostsRespond struct {
 }
 
 type PostDetailRespond struct {
+	Visibility   int8     `json:"visibility"`
+	Version      uint64   `json:"version"`
 	Uuid         string   `json:"uuid"`
 	UserId       string   `json:"user_id"`
 	Nickname     string   `json:"nickname"`

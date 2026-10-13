@@ -2,13 +2,22 @@ package userservice
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
+	userreq "seekF-backend/internal/dto/user/user_req"
+	"sort"
+	"strings"
+	"unicode/utf8"
 
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
 	aipkg "seekF-backend/internal/pkg/ai"
 	"seekF-backend/internal/pkg/db"
+	"seekF-backend/internal/pkg/upload/oss"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 
@@ -19,7 +28,9 @@ import (
 type DiscoverService interface {
 	SetLike(ctx context.Context, userId, targetUuid string, liked bool, isComment bool) (bool, int, error)
 	ListCommentThread(ctx context.Context, userId, postUuid, parentUuid string, page, pageSize int) ([]CommentInfo, bool, error)
-	CreatePost(ctx context.Context, userId, title, content string, mediaType int8, tags []string, urls []string, coverUrl string, mediaSizes []MediaSize, coverSize MediaSize) (*PostInfo, error)
+	CreatePost(ctx context.Context, userId string, input userreq.CreatePostRequest) (*PostInfo, error)
+	UpdatePost(ctx context.Context, userId, postUuid string, input userreq.CreatePostRequest) (*PostInfo, error)
+	DeletePost(ctx context.Context, userId, postUuid string) error
 	ListPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error)
 	ListLikedPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error)
 	GetPostDetail(ctx context.Context, userId, uuid string) (*PostDetailInfo, error)
@@ -35,7 +46,7 @@ type DiscoverService interface {
 	CreateFolder(ctx context.Context, userId, name, description string, isPublic int8) (*FolderInfo, error)
 	UpdateFolder(ctx context.Context, userId, folderUuid, name, description string, isPublic int8) error
 	DeleteFolder(ctx context.Context, userId, folderUuid string) error
-	ListFolders(ctx context.Context, userId string) ([]FolderInfo, error)
+	ListFolders(ctx context.Context, userId, viewerId string) ([]FolderInfo, error)
 	GetFolderDetail(ctx context.Context, userId, folderUuid string) (*FolderDetailInfo, error)
 	ListCollectedPosts(ctx context.Context, userId, folderUuid string, page, pageSize int) ([]PostInfo, int64, error)
 
@@ -61,6 +72,8 @@ type MediaSize struct {
 
 // PostInfo 帖子列表展示信息。
 type PostInfo struct {
+	Visibility   int8
+	Version      uint64
 	Width        int
 	Height       int
 	Uuid         string
@@ -82,6 +95,8 @@ type PostInfo struct {
 }
 
 type PostDetailInfo struct {
+	Visibility   int8
+	Version      uint64
 	Uuid         string
 	UserId       string
 	Nickname     string
@@ -146,102 +161,9 @@ func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.Use
 	}
 }
 
-// CreatePost 保存帖子与媒体尺寸，并异步建立搜索索引。
-func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId, title, content string, mediaType int8, tags []string, urls []string, coverUrl string, mediaSizes []MediaSize, coverSize MediaSize) (*PostInfo, error) {
-	postUUID := "D" + util.GetNowAndLenRandomString(11)
-
-	tagsJSON, err := json.Marshal(tags)
-	if err != nil {
-		tagsJSON = []byte("[]")
-	}
-
-	post := &models.DiscoverPost{
-		Uuid:       postUUID,
-		UserId:     userId,
-		Title:      title,
-		Content:    content,
-		MediaType:  mediaType,
-		CoverUrl:   coverUrl,
-		CoverWidth: coverSize.Width, CoverHeight: coverSize.Height,
-		Tags:   tagsJSON,
-		Status: 0,
-	}
-
-	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-
-		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
-
-		if err := txDiscoverDAO.CreatePost(post); err != nil {
-			return fmt.Errorf("创建帖子失败: %v", err)
-		}
-
-		for i, url := range urls {
-			var size MediaSize
-			if i < len(mediaSizes) {
-				size = mediaSizes[i]
-			}
-			media := &models.DiscoverMedia{
-				PostId:    post.Id,
-				Width:     size.Width,
-				Height:    size.Height,
-				Type:      mediaType,
-				Url:       url,
-				SortOrder: i,
-			}
-			if err := txDiscoverDAO.CreateMedia(media); err != nil {
-				return fmt.Errorf("保存媒体失败: %v", err)
-			}
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// 异步索引帖子到ES（搜索用）
-	go func() {
-		if db.ESClient != nil {
-			esDAO := userdao.NewESDiscoverDAO()
-			if err := esDAO.IndexPost(post); err != nil {
-				zlog.Error("索引帖子到ES失败: " + err.Error())
-			}
-		}
-	}()
-
-	user, _ := s.userInfoDAO.FindUserByUuid(userId)
-	nickname, avatar := "", ""
-	if user != nil {
-		nickname, avatar = user.Nickname, user.Avatar
-	}
-
-	firstUrl := ""
-	if len(urls) > 0 {
-		firstUrl = urls[0]
-	}
-
-	var firstSize MediaSize
-	if len(mediaSizes) > 0 {
-		firstSize = mediaSizes[0]
-	}
-	if mediaType == 1 && coverUrl != "" && coverSize.Width > 0 && coverSize.Height > 0 {
-		firstSize = coverSize
-	}
-	return &PostInfo{
-		Width:     firstSize.Width,
-		Height:    firstSize.Height,
-		Uuid:      postUUID,
-		UserId:    userId,
-		Nickname:  nickname,
-		Avatar:    avatar,
-		Title:     title,
-		Content:   content,
-		MediaType: mediaType,
-		CoverUrl:  coverUrl,
-		Tags:      tags,
-		FirstUrl:  firstUrl,
-		CreatedAt: post.CreatedAt.Format("2006-01-02 15:04:05"),
-	}, nil
+// CreatePost 在事务中校验资源归属并幂等发布作品。
+func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId string, input userreq.CreatePostRequest) (*PostInfo, error) {
+	return s.saveDiscoverPost(ctx, userId, "", input)
 }
 
 // ListPosts 查询公共帖子并批量装配媒体与互动信息。
@@ -273,7 +195,7 @@ func (s *DiscoverServiceImpl) ListLikedPosts(ctx context.Context, userId string,
 	for _, post := range posts {
 		mediaList, _ := s.discoverDAO.FindMediaByPostId(post.Id)
 		firstUrl := ""
-		var firstMedia models.DiscoverMedia
+		var firstMedia userdao.DiscoverMediaInfo
 		if len(mediaList) > 0 {
 			firstMedia = mediaList[0]
 			firstUrl = firstMedia.Url
@@ -294,6 +216,7 @@ func (s *DiscoverServiceImpl) ListLikedPosts(ctx context.Context, userId string,
 		}
 
 		result = append(result, PostInfo{
+			Visibility: post.Visibility, Version: post.Version,
 			Uuid:         post.Uuid,
 			UserId:       post.UserId,
 			Nickname:     nickname,
@@ -323,7 +246,7 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 	if err != nil {
 		return nil, err
 	}
-	if post == nil || post.Status != 0 {
+	if !CanViewDiscoverPost(post, userId) {
 		return nil, fmt.Errorf("帖子不存在")
 	}
 
@@ -366,6 +289,7 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 	}
 
 	return &PostDetailInfo{
+		Visibility: post.Visibility, Version: post.Version,
 		Uuid:         post.Uuid,
 		UserId:       post.UserId,
 		Nickname:     nickname,
@@ -405,7 +329,7 @@ func (s *DiscoverServiceImpl) SetLike(ctx context.Context, userId, targetUuid st
 			if err != nil {
 				return fmt.Errorf("查询评论所属帖子失败: %w", err)
 			}
-			if post == nil || post.Status != 0 {
+			if !CanViewDiscoverPost(post, userId) {
 				return fmt.Errorf("评论所属帖子不可用")
 			}
 			targetId, owner = comment.Id, comment.UserId
@@ -414,7 +338,7 @@ func (s *DiscoverServiceImpl) SetLike(ctx context.Context, userId, targetUuid st
 			if err != nil {
 				return fmt.Errorf("查询帖子失败: %w", err)
 			}
-			if post == nil || post.Status != 0 {
+			if !CanViewDiscoverPost(post, userId) {
 				return fmt.Errorf("帖子不存在或已下架")
 			}
 			targetId, owner = post.Id, post.UserId
@@ -473,7 +397,7 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 	if err != nil {
 		return nil, err
 	}
-	if post == nil || post.Status != 0 {
+	if !CanViewDiscoverPost(post, userId) {
 		return nil, fmt.Errorf("帖子不存在")
 	}
 	// 回复顶级评论时客户端不传回复用户，从父评论确定通知接收者。
@@ -583,7 +507,7 @@ func (s *DiscoverServiceImpl) ListComments(ctx context.Context, userId, postUuid
 	if err != nil {
 		return nil, err
 	}
-	if post == nil || post.Status != 0 {
+	if !CanViewDiscoverPost(post, userId) {
 		return nil, fmt.Errorf("帖子不存在或已下架")
 	}
 	comments, err := s.discoverDAO.FindCommentsByPostId(post.Id, page, pageSize)
@@ -599,7 +523,7 @@ func (s *DiscoverServiceImpl) ListCommentThread(ctx context.Context, userId, pos
 	if err != nil {
 		return nil, false, err
 	}
-	if post == nil || post.Status != 0 {
+	if !CanViewDiscoverPost(post, userId) {
 		return nil, false, fmt.Errorf("帖子不存在或已下架")
 	}
 	if parentUuid != "" {
@@ -743,7 +667,8 @@ func (s *DiscoverServiceImpl) DeleteFolder(ctx context.Context, userId, folderUu
 	return s.discoverDAO.DeleteFolder(folderUuid)
 }
 
-func (s *DiscoverServiceImpl) ListFolders(ctx context.Context, userId string) ([]FolderInfo, error) {
+// ListFolders 按查看者权限装配收藏夹封面与列表。
+func (s *DiscoverServiceImpl) ListFolders(ctx context.Context, userId, viewerId string) ([]FolderInfo, error) {
 	folders, err := s.discoverDAO.ListFoldersByUserId(userId)
 	if err != nil {
 		return nil, err
@@ -752,7 +677,7 @@ func (s *DiscoverServiceImpl) ListFolders(ctx context.Context, userId string) ([
 	for _, f := range folders {
 		// 获取收藏夹第一张图片作为封面
 		coverUrl := ""
-		posts, _ := s.discoverDAO.ListCollectedPostsByFolder(f.Id, 1, 1)
+		posts, _ := s.discoverDAO.ListCollectedPostsByFolder(f.Id, viewerId, 1, 1)
 		if len(posts) > 0 {
 			coverUrl = posts[0].CoverUrl
 			if coverUrl == "" && posts[0].MediaType != 1 {
@@ -809,12 +734,12 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 		return nil, 0, fmt.Errorf("无权查看私密收藏夹")
 	}
 
-	posts, err := s.discoverDAO.ListCollectedPostsByFolder(folder.Id, page, pageSize)
+	posts, err := s.discoverDAO.ListCollectedPostsByFolder(folder.Id, userId, page, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	total, err := s.discoverDAO.CountCollectedPostsByFolder(folder.Id)
+	total, err := s.discoverDAO.CountCollectedPostsByFolder(folder.Id, userId)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -845,7 +770,7 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 	for _, post := range posts {
 		mediaList, _ := s.discoverDAO.FindMediaByPostId(post.Id)
 		firstUrl := ""
-		var firstMedia models.DiscoverMedia
+		var firstMedia userdao.DiscoverMediaInfo
 		if len(mediaList) > 0 {
 			firstMedia = mediaList[0]
 			firstUrl = firstMedia.Url
@@ -863,6 +788,7 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 			avatar = user.Avatar
 		}
 		result = append(result, PostInfo{
+			Visibility: post.Visibility, Version: post.Version,
 			Uuid:         post.Uuid,
 			UserId:       post.UserId,
 			Nickname:     nickname,
@@ -894,7 +820,7 @@ func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid,
 	if err != nil {
 		return false, 0, err
 	}
-	if post == nil || post.Status != 0 {
+	if !CanViewDiscoverPost(post, userId) {
 		return false, 0, fmt.Errorf("帖子不存在")
 	}
 
@@ -1004,13 +930,21 @@ func (s *DiscoverServiceImpl) UncollectPost(ctx context.Context, userId, postUui
 	}
 
 	updatedPost, _ := s.discoverDAO.FindPostByUuid(postUuid)
-	if updatedPost != nil {
+	if CanViewDiscoverPost(updatedPost, userId) {
 		return false, updatedPost.CollectCount, nil
 	}
 	return false, 0, nil
 }
 
+// CheckCollected 仅对当前身份可访问的作品查询收藏状态。
 func (s *DiscoverServiceImpl) CheckCollected(ctx context.Context, userId, postUuid string) (bool, string, error) {
+	post, err := s.discoverDAO.FindPostByUuid(postUuid)
+	if err != nil {
+		return false, "", err
+	}
+	if !CanViewDiscoverPost(post, userId) {
+		return false, "", fmt.Errorf("作品不存在或不可见")
+	}
 	col, _ := s.discoverDAO.FindCollectionByUserAndTarget(userId, postUuid)
 	if col == nil {
 		return false, "", nil
@@ -1024,32 +958,18 @@ func (s *DiscoverServiceImpl) CheckCollected(ctx context.Context, userId, postUu
 	return true, folder.Uuid, nil
 }
 
-// SearchPosts 搜索帖子（ES全文搜索，ES不可用时降级到MySQL）
-// SearchPosts 优先全文检索，降级时保留数据库分页与真实总数。
-func (s *DiscoverServiceImpl) SearchPosts(ctx context.Context, userId string, keyword string, page, pageSize int) ([]PostInfo, int64, error) {
+// SearchPosts 从数据库查询公开作品，防止旧 ES 文档泄露已私密或已删除内容。
+func (s *DiscoverServiceImpl) SearchPosts(ctx context.Context, userId, keyword string, page, pageSize int) ([]PostInfo, int64, error) {
 	if page < 1 {
 		page = 1
 	}
-	if pageSize < 1 {
+	if pageSize < 1 || pageSize > 50 {
 		pageSize = 20
 	}
-
-	// 尝试ES搜索
-	if db.ESClient != nil {
-		esDAO := userdao.NewESDiscoverDAO()
-		posts, total, err := esDAO.SearchPosts(keyword, page, pageSize)
-		if err == nil {
-			return s.buildPostInfoList(ctx, userId, posts, total)
-		}
-		zlog.Error("ES搜索帖子失败，降级到MySQL: " + err.Error())
-	}
-
-	// 降级到MySQL LIKE搜索
 	posts, total, err := s.discoverDAO.SearchPostsPage(keyword, page, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
-
 	return s.buildPostInfoList(ctx, userId, posts, total)
 }
 
@@ -1073,7 +993,7 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询帖子媒体失败: %w", err)
 	}
-	mediaMap := make(map[int64]models.DiscoverMedia)
+	mediaMap := make(map[int64]userdao.DiscoverMediaInfo)
 	for _, media := range mediaList {
 		if _, exists := mediaMap[media.PostId]; !exists {
 			mediaMap[media.PostId] = media
@@ -1133,6 +1053,7 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 		}
 
 		result = append(result, PostInfo{
+			Visibility: post.Visibility, Version: post.Version,
 			Uuid:         post.Uuid,
 			UserId:       post.UserId,
 			Nickname:     nickname,
@@ -1186,17 +1107,17 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 	}
 
 	// 查询帖子列表
-	posts, err := s.discoverDAO.ListPostsByUserId(profileUserId, page, pageSize)
+	posts, err := s.discoverDAO.ListPostsByUserId(profileUserId, currentUserId, page, pageSize)
 	if err != nil {
 		return nil, fmt.Errorf("查询帖子列表失败: %v", err)
 	}
 
-	total, err := s.discoverDAO.CountPostsByUserId(profileUserId)
+	total, err := s.discoverDAO.CountPostsByUserId(profileUserId, currentUserId)
 	if err != nil {
 		return nil, fmt.Errorf("查询帖子总数失败: %v", err)
 	}
 
-	totalLikes, err := s.discoverDAO.GetUserTotalLikes(profileUserId)
+	totalLikes, err := s.discoverDAO.GetUserTotalLikes(profileUserId, currentUserId)
 	if err != nil {
 		totalLikes = 0
 	}
@@ -1221,7 +1142,7 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 		}
 
 		mediaList, _ := s.discoverDAO.FindMediaByPostIds(postIds)
-		mediaMap := make(map[int64]models.DiscoverMedia)
+		mediaMap := make(map[int64]userdao.DiscoverMediaInfo)
 		for _, media := range mediaList {
 			if _, exists := mediaMap[media.PostId]; !exists {
 				mediaMap[media.PostId] = media
@@ -1250,6 +1171,7 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 				json.Unmarshal(post.Tags, &tags)
 			}
 			postInfos = append(postInfos, PostInfo{
+				Visibility: post.Visibility, Version: post.Version,
 				Uuid:         post.Uuid,
 				UserId:       post.UserId,
 				Nickname:     user.Nickname,
@@ -1302,9 +1224,297 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 }
 
 // discoverCardSize 返回卡片展示尺寸，视频自定义封面优先，媒体原尺寸仍独立保存。
-func discoverCardSize(post models.DiscoverPost, media models.DiscoverMedia) MediaSize {
+func discoverCardSize(post models.DiscoverPost, media userdao.DiscoverMediaInfo) MediaSize {
 	if post.MediaType == 1 && post.CoverUrl != "" && post.CoverWidth > 0 && post.CoverHeight > 0 {
 		return MediaSize{Width: post.CoverWidth, Height: post.CoverHeight}
 	}
 	return MediaSize{Width: media.Width, Height: media.Height}
+}
+
+// ========== 作品编辑、可见性与幂等 ==========
+
+// ErrDiscoverConflict 表示幂等键内容冲突或编辑版本过期。
+var ErrDiscoverConflict = errors.New("作品已变化，请刷新后重试")
+
+// CanViewDiscoverPost 校验当前身份能否访问正常且未删除的作品。
+func CanViewDiscoverPost(post *models.DiscoverPost, userId string) bool {
+	return post != nil && !post.DeletedAt.Valid && post.Status == 0 && (post.Visibility == 0 || post.UserId == userId)
+}
+
+// validateDiscoverPost 统一校验并规范化标题、正文、标签、媒体和可见性。
+func validateDiscoverPost(input *userreq.CreatePostRequest, creating bool) error {
+	for i, value := range input.Urls {
+		input.Urls[i] = normalizeDiscoverMediaURL(value)
+	}
+	input.CoverUrl = normalizeDiscoverMediaURL(input.CoverUrl)
+	input.Title = strings.TrimSpace(input.Title)
+	input.Content = strings.TrimSpace(input.Content)
+	if utf8.RuneCountInString(input.Title) < 1 || utf8.RuneCountInString(input.Title) > 50 {
+		return fmt.Errorf("标题需为1至50字")
+	}
+	if utf8.RuneCountInString(input.Content) > 5000 {
+		return fmt.Errorf("正文不能超过5000字")
+	}
+	if input.Visibility != 0 && input.Visibility != 1 {
+		return fmt.Errorf("可见性无效")
+	}
+	if input.MediaType != 0 && input.MediaType != 1 {
+		return fmt.Errorf("媒体类型无效")
+	}
+	if len(input.Urls) == 0 || len(input.Urls) > 9 || (input.MediaType == 1 && len(input.Urls) != 1) {
+		return fmt.Errorf("图片需为1至9张，视频仅限1个")
+	}
+	if len(input.Tags) > 10 {
+		return fmt.Errorf("标签最多10个")
+	}
+	seen := map[string]bool{}
+	for i, tag := range input.Tags {
+		tag = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(tag), "#"))
+		if tag == "" || utf8.RuneCountInString(tag) > 20 || seen[tag] {
+			return fmt.Errorf("标签需为1至20字且不能重复")
+		}
+		seen[tag] = true
+		input.Tags[i] = tag
+	}
+	seen = map[string]bool{}
+	for _, fileURL := range input.Urls {
+		if fileURL == "" || len(fileURL) > 500 || seen[fileURL] {
+			return fmt.Errorf("媒体地址为空、过长或重复")
+		}
+		seen[fileURL] = true
+	}
+	if len(input.CoverUrl) > 500 {
+		return fmt.Errorf("封面地址过长")
+	}
+	if input.MediaType == 0 && input.CoverUrl != "" && !seen[input.CoverUrl] {
+		return fmt.Errorf("图片封面必须来自当前图片列表")
+	}
+	if len(input.MediaSizes) != 0 && len(input.MediaSizes) != len(input.Urls) {
+		return fmt.Errorf("媒体尺寸与数量不一致")
+	}
+	sizes := append([]userreq.MediaSizeRequest{}, input.MediaSizes...)
+	if input.CoverSize != nil {
+		sizes = append(sizes, *input.CoverSize)
+	}
+	for i, size := range sizes {
+		// 图片及封面不限制像素宽高，视频原尺寸沿用已有校验。
+		isVideoSize := input.MediaType == 1 && i < len(input.MediaSizes)
+		if size.Width < 0 || size.Height < 0 || (isVideoSize && (size.Width > 65535 || size.Height > 65535)) || (size.Width == 0) != (size.Height == 0) {
+			return fmt.Errorf("媒体尺寸无效")
+		}
+	}
+	if creating && (len(input.RequestKey) < 8 || len(input.RequestKey) > 64) {
+		return fmt.Errorf("请提供8至64字符的发布请求标识")
+	}
+	return nil
+}
+
+// UpdatePost 校验作者与版本后更新作品内容和资源引用。
+func (s *DiscoverServiceImpl) UpdatePost(ctx context.Context, userId, postUuid string, input userreq.CreatePostRequest) (*PostInfo, error) {
+	if postUuid == "" {
+		return nil, fmt.Errorf("请选择需要编辑的作品")
+	}
+	return s.saveDiscoverPost(ctx, userId, postUuid, input)
+}
+
+// saveDiscoverPost 在同一事务中维护作品、媒体关联与帖子内的发布防重字段。
+func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, postUuid string, input userreq.CreatePostRequest) (*PostInfo, error) {
+	if err := validateDiscoverPost(&input, postUuid == ""); err != nil {
+		return nil, err
+	}
+	payload := input
+	payload.RequestKey = ""
+	payload.Version = 0
+	// 保留旧摘要结构中的空post_uuid，避免已保存的发布请求重试发生摘要冲突。
+	raw, err := json.Marshal(struct {
+		PostUuid string `json:"post_uuid"`
+		userreq.CreatePostRequest
+	}{CreatePostRequest: payload})
+	if err != nil {
+		return nil, fmt.Errorf("处理发布参数失败: %w", err)
+	}
+	digest := sha256.Sum256(raw)
+	hash := hex.EncodeToString(digest[:])
+	var saved *models.DiscoverPost
+	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		dao := userdao.NewDiscoverDAO(tx)
+		files := userdao.NewFileDAO(tx)
+		if postUuid == "" {
+			key := input.RequestKey
+			saved = &models.DiscoverPost{Uuid: "D" + util.GetNowAndLenRandomString(11), UserId: userId, Title: input.Title, Version: 1, PublishRequestKey: &key, PublishPayloadHash: hash}
+			created, err := dao.ClaimPublishPost(saved)
+			if err != nil {
+				return fmt.Errorf("创建发布记录失败: %w", err)
+			}
+			if !created {
+				saved, err = dao.FindPostByPublishKeyForUpdate(userId, key)
+				if err != nil {
+					return fmt.Errorf("读取发布记录失败: %w", err)
+				}
+				if saved == nil {
+					return fmt.Errorf("发布标识冲突，请重试")
+				}
+				if saved.PublishPayloadHash != hash {
+					return fmt.Errorf("相同发布标识对应不同内容: %w", ErrDiscoverConflict)
+				}
+				if saved.DeletedAt.Valid {
+					return fmt.Errorf("该请求发布的作品已删除")
+				}
+				return nil
+			}
+
+		} else {
+			var err error
+			saved, err = dao.FindPostByUuidForUpdate(postUuid)
+			if err != nil {
+				return err
+			}
+			if saved == nil || saved.UserId != userId || saved.Status != 0 {
+				return fmt.Errorf("作品不存在或无权编辑")
+			}
+			if input.Version != saved.Version {
+				return fmt.Errorf("编辑版本已过期: %w", ErrDiscoverConflict)
+			}
+			saved.Version++
+		}
+		urls := append([]string{}, input.Urls...)
+		if input.CoverUrl != "" {
+			urls = append(urls, input.CoverUrl)
+		}
+		sort.Strings(urls)
+		assets := map[string]*models.FileAsset{}
+		for _, fileURL := range urls {
+			if assets[fileURL] != nil {
+				continue
+			}
+			asset, err := files.FindAssetForUpdate(fileURL)
+			if err != nil {
+				return fmt.Errorf("查询媒体归属失败: %w", err)
+			}
+			if asset == nil || asset.UserId != userId || asset.State != 1 || !asset.Verified {
+				return fmt.Errorf("媒体未上传完成、已过期或不属于当前用户")
+			}
+			expected := "discover_image"
+			if input.MediaType == 1 && fileURL == input.Urls[0] {
+				expected = "discover_video"
+			}
+			if asset.Category != expected {
+				return fmt.Errorf("媒体类型与上传资源不一致")
+			}
+			// 编辑历史OSS资源时沿用私有ACL保护，外部历史链接只保留展示关联。
+			if postUuid != "" && isDiscoverObjectKey(asset.ObjectKey) && asset.URL == oss.FileURL(asset.ObjectKey) {
+				if err := oss.SetDiscoverPrivateACL(ctx, asset.ObjectKey); err != nil {
+					return err
+				}
+			}
+			if fileURL == input.CoverUrl && asset.Width == 0 && input.CoverSize != nil {
+				asset.Width, asset.Height = input.CoverSize.Width, input.CoverSize.Height
+			}
+			if err := files.SaveAsset(asset); err != nil {
+				return err
+			}
+			assets[fileURL] = asset
+		}
+		tags, err := json.Marshal(input.Tags)
+		if err != nil {
+			return err
+		}
+		saved.Title, saved.Content, saved.Tags = input.Title, input.Content, tags
+		saved.MediaType, saved.Visibility, saved.CoverUrl = input.MediaType, input.Visibility, input.CoverUrl
+		saved.CoverWidth, saved.CoverHeight = 0, 0
+		saved.CoverAssetId = nil
+		if cover := assets[input.CoverUrl]; cover != nil {
+			saved.CoverAssetId = &cover.Id
+			saved.CoverWidth, saved.CoverHeight = cover.Width, cover.Height
+		}
+		if saved.Id == 0 {
+			if err := dao.CreatePost(saved); err != nil {
+				return err
+			}
+		} else {
+			if err := dao.SavePost(saved); err != nil {
+				return err
+			}
+			if err := dao.DeletePostMedia(saved.Id); err != nil {
+				return err
+			}
+		}
+		for i, fileURL := range input.Urls {
+			asset := assets[fileURL]
+			// 未知视频尺寸由前端元数据补齐一次，后续统一从资源读取，不覆盖已验证图片尺寸。
+			if asset.Width == 0 && len(input.MediaSizes) > i {
+				asset.Width, asset.Height = input.MediaSizes[i].Width, input.MediaSizes[i].Height
+				if err := files.SaveAsset(asset); err != nil {
+					return fmt.Errorf("保存媒体尺寸失败: %w", err)
+				}
+			}
+			if err := dao.CreateMedia(&models.DiscoverMedia{PostId: saved.Id, AssetId: asset.Id, Url: fileURL, Type: input.MediaType, SortOrder: i}); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	// 数据库决定权限，ES仅同步公开索引，索引延迟不能影响访问校验。
+	if db.ESClient != nil {
+		if err := userdao.NewESDiscoverDAO().IndexPost(discoverIndexPost(saved)); err != nil {
+			zlog.Warn("同步作品搜索索引失败，作品=" + saved.Uuid + ": " + err.Error())
+		}
+	}
+	posts, _, err := s.buildPostInfoList(ctx, userId, []models.DiscoverPost{*saved}, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(posts) != 1 {
+		return nil, fmt.Errorf("读取已保存作品失败")
+	}
+	return &posts[0], nil
+}
+
+// DeletePost 仅允许作者删除作品并在事务中释放资源引用。
+func (s *DiscoverServiceImpl) DeletePost(ctx context.Context, userId, postUuid string) error {
+	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		dao := userdao.NewDiscoverDAO(tx)
+		post, err := dao.FindPostByUuidForUpdate(postUuid)
+		if err != nil {
+			return err
+		}
+		if post == nil {
+			return nil
+		}
+		if post.UserId != userId {
+			return fmt.Errorf("无权删除此作品")
+		}
+		return dao.DeletePost(post)
+	})
+	if err != nil {
+		return err
+	}
+	if db.ESClient != nil {
+		if err := userdao.NewESDiscoverDAO().UpdatePostStatus(postUuid, 1); err != nil {
+			zlog.Warn("更新已删除作品索引失败，作品=" + postUuid + ": " + err.Error())
+		}
+	}
+	return nil
+}
+
+// discoverIndexPost 将私密作品在搜索索引中标为不可检索，不修改数据库状态。
+func discoverIndexPost(post *models.DiscoverPost) *models.DiscoverPost {
+	indexPost := *post
+	if post.Visibility != 0 {
+		indexPost.Status = 1
+	}
+	return &indexPost
+}
+
+// normalizeDiscoverMediaURL 从受控媒体入口恢复资源原地址，统一发布摘要及资源归属查询。
+func normalizeDiscoverMediaURL(value string) string {
+	parsed, err := url.Parse(value)
+	if err == nil && strings.HasSuffix(parsed.Path, "/user/file/view") {
+		return parsed.Query().Get("url")
+	}
+	return value
 }

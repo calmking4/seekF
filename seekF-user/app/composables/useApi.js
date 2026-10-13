@@ -1,9 +1,12 @@
+import { mapDiscoverMediaResponse } from '~/utils/discoverAccess'
 export const useApi = (url, options = {}) => {
+    const apiBase = useRuntimeConfig().public.apiBase
     options.method = options.method || 'POST';
     return useFetch(url, {
-        baseURL: useRuntimeConfig().public.apiBase,
+        baseURL: apiBase,
         ...options,
         credentials: "include",
+        onResponse: (context) => { mapDiscoverMediaResponse(context.response._data, apiBase); options.onResponse?.(context) },
         onRequestError: (error) => {
             console.error('onRequestError: ', error);
             ElMessage.error('网络请求失败，请检查网络连接');
@@ -16,11 +19,13 @@ export const useApi = (url, options = {}) => {
 }
 
 export const useApi$ = (url, options = {}) => {
+    const apiBase = useRuntimeConfig().public.apiBase
     options.method = options.method || 'POST';
     return $fetch(url, {
-        baseURL: useRuntimeConfig().public.apiBase,
+        baseURL: apiBase,
         ...options,
         credentials: "include",
+        onResponse: (context) => { mapDiscoverMediaResponse(context.response._data, apiBase); options.onResponse?.(context) },
         onRequestError: (error) => {
             console.error('onRequestError: ', error);
             ElMessage.error('网络请求失败，请检查网络连接');

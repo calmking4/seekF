@@ -2,6 +2,9 @@ package userreq
 
 // CreatePostRequest 发布帖子及可选媒体尺寸信息。
 type CreatePostRequest struct {
+	RequestKey string             `json:"request_key"`
+	Visibility int8               `json:"visibility"`
+	Version    uint64             `json:"version"`
 	Title      string             `json:"title" form:"title"`
 	Content    string             `json:"content" form:"content"`
 	MediaType  int8               `json:"media_type" form:"media_type"`
@@ -10,6 +13,12 @@ type CreatePostRequest struct {
 	CoverSize  *MediaSizeRequest  `json:"cover_size"`
 	MediaSizes []MediaSizeRequest `json:"media_sizes"`
 	CoverUrl   string             `json:"cover_url" form:"cover_url"`
+}
+
+// UpdatePostRequest 更新已有帖子，UUID来自帖子详情，创建时由后端生成。
+type UpdatePostRequest struct {
+	CreatePostRequest
+	PostUuid string `json:"post_uuid" binding:"required"` // 需要更新的已有帖子UUID
 }
 
 type ListPostsRequest struct {

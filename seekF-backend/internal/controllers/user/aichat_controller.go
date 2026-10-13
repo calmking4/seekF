@@ -107,7 +107,7 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 
 	// 如果有图片文件，上传到 OSS
 	if file, err := ctx.FormFile("image"); err == nil {
-		result, err := c.fileService.UploadFile(ctx.Request.Context(), file, oss.MessageImage)
+		result, err := c.fileService.UploadFile(ctx.Request.Context(), ctx.GetString("Uuid"), file, oss.MessageImage)
 		if err != nil {
 			zlog.Error("上传图片失败: " + err.Error())
 			resp.Error(ctx, "图片上传失败", http.StatusInternalServerError)

@@ -11,8 +11,25 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// DiscoverMediaInfo 媒体展示查询结果，附带资源和帖子封面的尺寸，不对应数据库表。
+type DiscoverMediaInfo struct {
+	models.DiscoverMedia
+	Width  int // 媒体宽度，单位像素
+	Height int // 媒体高度，单位像素
+}
+
 // DiscoverDAO 发现页帖子、媒体和互动数据访问接口。
 type DiscoverDAO interface {
+	// SavePost 更新作品内容与编辑版本。
+	SavePost(post *models.DiscoverPost) error
+	// DeletePost 软删除指定作品。
+	DeletePost(post *models.DiscoverPost) error
+	// DeletePostMedia 清理编辑前的媒体记录。
+	DeletePostMedia(postId int64) error
+	// ClaimPublishPost 依赖用户请求唯一键占用发布记录，返回是否创建成功。
+	ClaimPublishPost(post *models.DiscoverPost) (bool, error)
+	// FindPostByPublishKeyForUpdate 包含软删除记录地锁定发布请求对应帖子。
+	FindPostByPublishKeyForUpdate(userId, requestKey string) (*models.DiscoverPost, error)
 	// ========== 帖子 ==========
 	// CreatePost 保存帖子。
 	CreatePost(post *models.DiscoverPost) error
@@ -31,11 +48,11 @@ type DiscoverDAO interface {
 	// IncrementViewCount 增加帖子的浏览数。
 	IncrementViewCount(postId int64) error
 	// ListPostsByUserId 分页查询指定用户的正常帖子。
-	ListPostsByUserId(userId string, page, pageSize int) ([]models.DiscoverPost, error)
+	ListPostsByUserId(userId, viewerId string, page, pageSize int) ([]models.DiscoverPost, error)
 	// CountPostsByUserId 统计指定用户的正常帖子数量。
-	CountPostsByUserId(userId string) (int64, error)
+	CountPostsByUserId(userId, viewerId string) (int64, error)
 	// GetUserTotalLikes 统计指定用户正常帖子的总获赞数。
-	GetUserTotalLikes(userId string) (int, error)
+	GetUserTotalLikes(userId, viewerId string) (int, error)
 
 	// ========== 搜索 ==========
 	// SearchPostsByKeyword 兼容工具调用，返回关键词搜索的第一页。
@@ -47,9 +64,9 @@ type DiscoverDAO interface {
 	// CreateMedia 保存帖子媒体信息。
 	CreateMedia(media *models.DiscoverMedia) error
 	// FindMediaByPostId 按展示顺序查询帖子的媒体。
-	FindMediaByPostId(postId int64) ([]models.DiscoverMedia, error)
+	FindMediaByPostId(postId int64) ([]DiscoverMediaInfo, error)
 	// FindMediaByPostIds 批量查询帖子媒体并按帖子及展示顺序排序。
-	FindMediaByPostIds(postIds []int64) ([]models.DiscoverMedia, error)
+	FindMediaByPostIds(postIds []int64) ([]DiscoverMediaInfo, error)
 
 	// ========== 点赞 ==========
 	// CountLikesByTargetUuid 统计指定目标的去重点赞用户数。
@@ -129,9 +146,9 @@ type DiscoverDAO interface {
 	// DecrementCollectCount 减少帖子的收藏数。
 	DecrementCollectCount(postId int64) error
 	// ListCollectedPostsByFolder 分页查询收藏夹中的正常帖子。
-	ListCollectedPostsByFolder(folderId int64, page, pageSize int) ([]models.DiscoverPost, error)
+	ListCollectedPostsByFolder(folderId int64, viewerId string, page, pageSize int) ([]models.DiscoverPost, error)
 	// CountCollectedPostsByFolder 统计收藏夹中的正常帖子数量。
-	CountCollectedPostsByFolder(folderId int64) (int64, error)
+	CountCollectedPostsByFolder(folderId int64, viewerId string) (int64, error)
 }
 
 // DiscoverDAOImpl 发现页数据访问实现。
@@ -185,14 +202,14 @@ func (d *DiscoverDAOImpl) FindPostById(id int64) (*models.DiscoverPost, error) {
 func (d *DiscoverDAOImpl) ListPosts(page, pageSize int) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
-	result := d.db.Where("status = ?", 0).Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&posts)
+	result := d.db.Where("status = ? AND visibility = 0", 0).Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&posts)
 	return posts, result.Error
 }
 
 // CountPosts 统计正常状态的帖子数量。
 func (d *DiscoverDAOImpl) CountPosts() (int64, error) {
 	var count int64
-	result := d.db.Model(&models.DiscoverPost{}).Where("status = ?", 0).Count(&count)
+	result := d.db.Model(&models.DiscoverPost{}).Where("status = ? AND visibility = 0", 0).Count(&count)
 	return count, result.Error
 }
 
@@ -207,24 +224,24 @@ func (d *DiscoverDAOImpl) IncrementViewCount(postId int64) error {
 }
 
 // ListPostsByUserId 分页查询指定用户的正常帖子。
-func (d *DiscoverDAOImpl) ListPostsByUserId(userId string, page, pageSize int) ([]models.DiscoverPost, error) {
+func (d *DiscoverDAOImpl) ListPostsByUserId(userId, viewerId string, page, pageSize int) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
-	result := d.db.Where("user_id = ? AND status = ?", userId, 0).Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&posts)
+	result := d.db.Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&posts)
 	return posts, result.Error
 }
 
 // CountPostsByUserId 统计指定用户的正常帖子数量。
-func (d *DiscoverDAOImpl) CountPostsByUserId(userId string) (int64, error) {
+func (d *DiscoverDAOImpl) CountPostsByUserId(userId, viewerId string) (int64, error) {
 	var count int64
-	result := d.db.Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ?", userId, 0).Count(&count)
+	result := d.db.Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Count(&count)
 	return count, result.Error
 }
 
 // GetUserTotalLikes 统计指定用户正常帖子的总获赞数。
-func (d *DiscoverDAOImpl) GetUserTotalLikes(userId string) (int, error) {
+func (d *DiscoverDAOImpl) GetUserTotalLikes(userId, viewerId string) (int, error) {
 	var total int
-	result := d.db.Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ?", userId, 0).Select("COALESCE(SUM(like_count), 0)").Scan(&total)
+	result := d.db.Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Select("COALESCE(SUM(like_count), 0)").Scan(&total)
 	return total, result.Error
 }
 
@@ -238,7 +255,7 @@ func (d *DiscoverDAOImpl) SearchPostsByKeyword(keyword string, limit int) ([]mod
 
 // SearchPostsPage 在全文检索不可用时按关键词分页查询并返回真实总数。
 func (d *DiscoverDAOImpl) SearchPostsPage(keyword string, page, pageSize int) ([]models.DiscoverPost, int64, error) {
-	query := d.db.Model(&models.DiscoverPost{}).Where("status = 0")
+	query := d.db.Model(&models.DiscoverPost{}).Where("status = 0 AND visibility = 0")
 	keyword = strings.TrimSpace(keyword)
 	if keyword != "" {
 		tag, err := json.Marshal(keyword)
@@ -266,19 +283,19 @@ func (d *DiscoverDAOImpl) CreateMedia(media *models.DiscoverMedia) error {
 }
 
 // FindMediaByPostId 按展示顺序查询帖子的媒体。
-func (d *DiscoverDAOImpl) FindMediaByPostId(postId int64) ([]models.DiscoverMedia, error) {
-	var mediaList []models.DiscoverMedia
-	result := d.db.Where("post_id = ?", postId).Order("sort_order ASC").Find(&mediaList)
+func (d *DiscoverDAOImpl) FindMediaByPostId(postId int64) ([]DiscoverMediaInfo, error) {
+	var mediaList []DiscoverMediaInfo
+	result := d.mediaWithAssets().Where("discover_media.post_id = ?", postId).Order("discover_media.sort_order ASC").Find(&mediaList)
 	return mediaList, result.Error
 }
 
 // FindMediaByPostIds 批量查询帖子媒体并按帖子及展示顺序排序。
-func (d *DiscoverDAOImpl) FindMediaByPostIds(postIds []int64) ([]models.DiscoverMedia, error) {
+func (d *DiscoverDAOImpl) FindMediaByPostIds(postIds []int64) ([]DiscoverMediaInfo, error) {
 	if len(postIds) == 0 {
 		return nil, nil
 	}
-	var mediaList []models.DiscoverMedia
-	result := d.db.Where("post_id IN ?", postIds).Order("post_id ASC, sort_order ASC").Find(&mediaList)
+	var mediaList []DiscoverMediaInfo
+	result := d.mediaWithAssets().Where("discover_media.post_id IN ?", postIds).Order("discover_media.post_id ASC, discover_media.sort_order ASC").Find(&mediaList)
 	return mediaList, result.Error
 }
 
@@ -343,7 +360,7 @@ func (d *DiscoverDAOImpl) ListLikedPosts(userId string, page, pageSize int) ([]m
 		Where("user_id = ?", userId).
 		Select("target_uuid")
 	// 查询帖子
-	result := d.db.Where("status = ? AND uuid IN (?)", 0, likedUuids).
+	result := d.db.Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, userId, likedUuids).
 		Order("created_at DESC").
 		Offset(offset).Limit(pageSize).
 		Find(&posts)
@@ -358,7 +375,7 @@ func (d *DiscoverDAOImpl) CountLikedPosts(userId string) (int64, error) {
 		Where("user_id = ?", userId).
 		Select("target_uuid")
 	result := d.db.Model(&models.DiscoverPost{}).
-		Where("status = ? AND uuid IN (?)", 0, likedUuids).
+		Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, userId, likedUuids).
 		Count(&count)
 	return count, result.Error
 }
@@ -582,14 +599,14 @@ func (d *DiscoverDAOImpl) DecrementCollectCount(postId int64) error {
 }
 
 // ListCollectedPostsByFolder 分页查询收藏夹中的正常帖子。
-func (d *DiscoverDAOImpl) ListCollectedPostsByFolder(folderId int64, page, pageSize int) ([]models.DiscoverPost, error) {
+func (d *DiscoverDAOImpl) ListCollectedPostsByFolder(folderId int64, viewerId string, page, pageSize int) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
 	// 子查询：获取该收藏夹中的帖子 UUID
 	collectedUuids := d.db.Model(&models.DiscoverCollection{}).
 		Where("folder_id = ?", folderId).
 		Select("target_uuid")
-	result := d.db.Where("status = ? AND uuid IN (?)", 0, collectedUuids).
+	result := d.db.Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, viewerId, collectedUuids).
 		Order("created_at DESC").
 		Offset(offset).Limit(pageSize).
 		Find(&posts)
@@ -597,13 +614,47 @@ func (d *DiscoverDAOImpl) ListCollectedPostsByFolder(folderId int64, page, pageS
 }
 
 // CountCollectedPostsByFolder 统计收藏夹中的正常帖子数量。
-func (d *DiscoverDAOImpl) CountCollectedPostsByFolder(folderId int64) (int64, error) {
+func (d *DiscoverDAOImpl) CountCollectedPostsByFolder(folderId int64, viewerId string) (int64, error) {
 	var count int64
 	collectedUuids := d.db.Model(&models.DiscoverCollection{}).
 		Where("folder_id = ?", folderId).
 		Select("target_uuid")
 	result := d.db.Model(&models.DiscoverPost{}).
-		Where("status = ? AND uuid IN (?)", 0, collectedUuids).
+		Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, viewerId, collectedUuids).
 		Count(&count)
 	return count, result.Error
+}
+
+// ========== 作品管理与发布幂等 ==========
+
+// SavePost 更新作品内容与编辑版本。
+func (d *DiscoverDAOImpl) SavePost(post *models.DiscoverPost) error { return d.db.Save(post).Error }
+
+// DeletePost 软删除指定作品，保留业务记录供审计和幂等重试识别。
+func (d *DiscoverDAOImpl) DeletePost(post *models.DiscoverPost) error { return d.db.Delete(post).Error }
+
+// DeletePostMedia 清理编辑前的媒体记录。
+func (d *DiscoverDAOImpl) DeletePostMedia(postId int64) error {
+	return d.db.Where("post_id = ?", postId).Delete(&models.DiscoverMedia{}).Error
+}
+
+// ClaimPublishPost 依赖唯一键占用发布记录，冲突时不覆盖原帖子。
+func (d *DiscoverDAOImpl) ClaimPublishPost(post *models.DiscoverPost) (bool, error) {
+	result := d.db.Clauses(clause.OnConflict{DoNothing: true}).Create(post)
+	return result.RowsAffected == 1, result.Error
+}
+
+// FindPostByPublishKeyForUpdate 查询并锁定发布对应帖子，软删除记录也用于防重。
+func (d *DiscoverDAOImpl) FindPostByPublishKeyForUpdate(userId, requestKey string) (*models.DiscoverPost, error) {
+	var post models.DiscoverPost
+	err := d.db.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ? AND publish_request_key = ?", userId, requestKey).First(&post).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &post, err
+}
+
+// mediaWithAssets 从资源表读取媒体原尺寸，帖子封面尺寸由帖子字段提供。
+func (d *DiscoverDAOImpl) mediaWithAssets() *gorm.DB {
+	return d.db.Model(&models.DiscoverMedia{}).Select("discover_media.*, COALESCE(a.width, 0) AS width, COALESCE(a.height, 0) AS height").Joins("LEFT JOIN file_asset a ON a.id = discover_media.asset_id")
 }

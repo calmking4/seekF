@@ -48,7 +48,7 @@
               <p class="text-sm text-gray-500">{{ ownPostsError || '你还没有发布帖子' }}</p>
               <el-button v-if="ownPostsError" class="mt-4" @click="loadOwnPosts">重试加载</el-button>
             </div>
-            <ProfilePostGrid v-else-if="ownPosts.length" :posts="ownPosts" @open="handleOwnPostClick" @like="toggleOwnPostLike" />
+            <ProfilePostGrid v-else-if="ownPosts.length" :posts="ownPosts" manageable :pending="postManagementPending" @open="handleOwnPostClick" @like="toggleOwnPostLike" @edit="editOwnPost" @delete="deleteOwnPost" @visibility="changeOwnPostVisibility" />
             <div v-if="ownPostsLoading" class="py-8 flex justify-center items-center text-gray-500">
               <Icon name="uil:spinner" class="animate-spin text-xl mr-2" /><span>加载中...</span>
             </div>
@@ -369,7 +369,7 @@
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { useApi$ } from '~/composables/useApi'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 // 页面级 SEO
 useSeoMeta({
@@ -390,6 +390,7 @@ const folderPostsGridRef = ref(null)
 
 // 自己发布的帖子，独立保存分页和加载状态。
 const ownPosts = ref([])
+const postManagementPending = ref({})
 const ownPostsLoading = ref(false)
 const ownPostsError = ref('')
 const ownPostsLoaded = ref(false)
@@ -597,6 +598,38 @@ const handleOwnPostCollectUpdated = ({ postId, collectCount, isCollected }) => {
     folderPosts.value = folderPosts.value.filter(post => post.uuid !== postId)
     if (removed && currentFolder.value) currentFolder.value.post_count = Math.max(0, (currentFolder.value.post_count || 1) - 1)
   }
+}
+
+const editOwnPost = post => navigateTo('/discover/create?edit=' + encodeURIComponent(post.uuid))
+const deleteOwnPost = async post => {
+  if (postManagementPending.value[post.uuid]) return
+  try { await ElMessageBox.confirm('删除后该作品将无法访问，确定删除吗？', '删除作品', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }) } catch { return }
+  postManagementPending.value[post.uuid] = true
+  try {
+    const response = await useApi$('/user/discover/delete', { body: { post_uuid: post.uuid }, retry: 0 })
+    if (response.code !== 200) throw new Error(response.message || '删除失败')
+    ownPosts.value = ownPosts.value.filter(item => item.uuid !== post.uuid)
+    likedPosts.value = likedPosts.value.filter(item => item.uuid !== post.uuid)
+    folderPosts.value = folderPosts.value.filter(item => item.uuid !== post.uuid)
+    if (selectedOwnPost.value?.id === post.uuid) selectedOwnPost.value = null
+    ElMessage.success('作品已删除')
+  } catch (error) { ElMessage.error(error?.data?.message || error.message || '删除失败') }
+  finally { postManagementPending.value[post.uuid] = false }
+}
+const changeOwnPostVisibility = async post => {
+  if (postManagementPending.value[post.uuid]) return
+  postManagementPending.value[post.uuid] = true
+  try {
+    const detailResponse = await useApi$('/user/discover/detail', { body: { uuid: post.uuid }, retry: 0 })
+    if (detailResponse.code !== 200) throw new Error(detailResponse.message || '读取作品失败')
+    const detail = detailResponse.data
+    const visibility = detail.visibility === 1 ? 0 : 1
+    const response = await useApi$('/user/discover/update', { body: { post_uuid: post.uuid, title: detail.title, content: detail.content, tags: detail.tags, urls: detail.urls, cover_url: detail.cover_url, media_type: detail.media_type, visibility, version: detail.version }, retry: 0 })
+    if (response.code !== 200) throw new Error(response.message || '更新失败')
+    post.visibility = visibility; post.version = response.data.version
+    ElMessage.success(visibility === 1 ? '已设为仅自己可见' : '已设为公开')
+  } catch (error) { ElMessage.error(error?.data?.message || error.message || '更新失败') }
+  finally { postManagementPending.value[post.uuid] = false }
 }
 
 const toggleOwnPostLike = async (post) => {

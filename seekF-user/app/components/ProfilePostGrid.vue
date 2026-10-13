@@ -4,6 +4,7 @@
       class="profile-card overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm cursor-pointer transition-shadow hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
       @click="$emit('open', post)" @keydown.enter.self.prevent="$emit('open', post)" @keydown.space.self.prevent="$emit('open', post)">
       <div class="relative aspect-[4/3] bg-gray-100">
+        <span v-if="post.visibility === 1" class="absolute left-2 top-2 z-10 rounded bg-black/40 px-2 py-1 text-xs text-white">仅自己可见</span>
         <img v-if="post.cover_url || (post.media_type !== 1 && post.first_url)" :src="post.cover_url || post.first_url" :alt="post.title" class="h-full w-full object-cover" loading="lazy" />
         <div v-else class="flex h-full items-center justify-center text-gray-300"><Icon :name="post.media_type === 1 ? 'uil:video' : 'uil:image'" class="text-4xl" /></div>
         <span v-if="post.media_type === 1" class="absolute right-2 top-2 rounded-full bg-black/40 p-1 text-white"><Icon name="mdi:play" class="block text-lg" /></span>
@@ -19,12 +20,17 @@
             <Icon :name="post.is_liked ? 'mdi:heart' : 'mdi:heart-outline'" class="text-base" /><span>{{ post.like_count || 0 }}</span>
           </button>
         </div>
+        <div v-if="manageable" class="mt-3 flex flex-wrap items-center gap-3 text-xs text-gray-400">
+          <button type="button" :disabled="pending[post.uuid]" class="hover:text-blue-500 disabled:opacity-40" @click.stop="$emit('edit', post)">编辑</button>
+          <button type="button" :disabled="pending[post.uuid]" class="hover:text-blue-500 disabled:opacity-40" @click.stop="$emit('visibility', post)">{{ post.visibility === 1 ? '设为公开' : '仅自己可见' }}</button>
+          <button type="button" :disabled="pending[post.uuid]" class="hover:text-red-400 disabled:opacity-40" @click.stop="$emit('delete', post)">删除</button>
+        </div>
       </div>
     </article>
   </div>
 </template>
 
 <script setup>
-defineProps({ posts: { type: Array, default: () => [] } })
-defineEmits(['open', 'like'])
+defineProps({ posts: { type: Array, default: () => [] }, manageable: Boolean, pending: { type: Object, default: () => ({}) } })
+defineEmits(['open', 'like', 'edit', 'delete', 'visibility'])
 </script>

@@ -14,13 +14,13 @@
       <div
         v-for="post in posts"
         :key="post.id"
-        @click="$emit('post-click', post)"
+        @click="$emit('post-click', { ...post, src: discoverMediaURL(post.src, apiBase), cover_url: discoverMediaURL(post.cover_url, apiBase) })"
         class="flex items-start gap-3 p-2 rounded hover:bg-white cursor-pointer transition-colors group"
       >
         <!-- 缩略图 -->
         <img
           v-if="post.src"
-          :src="post.src"
+          :src="discoverMediaURL(post.src, apiBase)"
           class="w-16 h-16 rounded object-cover flex-shrink-0"
         />
         <div
@@ -67,6 +67,8 @@
 </template>
 
 <script setup>
+import { discoverMediaURL } from '~/utils/discoverAccess'
+const apiBase = useRuntimeConfig().public.apiBase
 defineProps({
   posts: { type: Array, default: () => [] }
 })

@@ -15,7 +15,8 @@ func CORSMiddleware() gin.HandlerFunc {
 	}
 	config.AllowCredentials = true // 允许携带凭证
 	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"}
-	config.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
+	config.ExposeHeaders = []string{"Content-Range", "Accept-Ranges"}
+	config.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization", "Range"}
 
 	return cors.New(config)
 }

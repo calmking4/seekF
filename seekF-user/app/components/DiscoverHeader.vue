@@ -8,9 +8,8 @@
         </form>
         <DiscoverSearchPanel v-if="showPanel" ref="panel" :keyword="keyword" @select="search" />
       </div>
-      <div class="flex items-center gap-4 text-gray-600 text-xl absolute right-4">
-        <NuxtLink to="/notification" aria-label="查看通知" class="text-[#60a5fa] focus-visible:outline-blue-500"><Icon name="mdi:message-outline" /></NuxtLink>
-        <NuxtLink to="/discover/create" aria-label="发布动态" class="text-[#60a5fa] cursor-pointer focus-visible:outline-blue-500"><Icon name="mdi:plus-circle-outline" /></NuxtLink>
+      <div class="absolute right-4 flex items-center">
+        <NuxtLink to="/discover/create" aria-label="发布动态" title="发布动态" class="flex h-8 w-8 items-center justify-center rounded-full bg-[#60a5fa] text-white shadow-sm hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><Icon name="mdi:plus" class="text-2xl" /></NuxtLink>
       </div>
     </div>
   </header>

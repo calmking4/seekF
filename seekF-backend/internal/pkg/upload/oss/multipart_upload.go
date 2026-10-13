@@ -176,14 +176,19 @@ func MultipartComplete(ctx context.Context, objectKey, uploadId string, parts []
 		}
 	}
 
-	_, err = client.CompleteMultipartUpload(ctx, &oss.CompleteMultipartUploadRequest{
-		Bucket:   oss.Ptr(ossBucketName),
-		Key:      oss.Ptr(objectKey),
-		UploadId: oss.Ptr(uploadId),
+	request := &oss.CompleteMultipartUploadRequest{
+		Bucket:          oss.Ptr(ossBucketName),
+		Key:             oss.Ptr(objectKey),
+		UploadId:        oss.Ptr(uploadId),
+		ForbidOverwrite: oss.Ptr("true"),
 		CompleteMultipartUpload: &oss.CompleteMultipartUpload{
 			Parts: uploadParts,
 		},
-	})
+	}
+	if strings.HasPrefix(objectKey, "discover/") {
+		request.Acl = oss.ObjectACLPrivate
+	}
+	_, err = client.CompleteMultipartUpload(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("合并分片失败: %w", err)
 	}

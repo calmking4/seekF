@@ -42,12 +42,12 @@ const (
 
 // OSS 路径前缀（不以 / 结尾，后面会再拼子目录和文件名）
 const (
-	avatarDirPrefix       = "common/user_avatars"
-	groupAvatarDirPrefix  = "common/group_avatars"
-	messageImageDirPrefix = "messages/images"
-	messageVideoDirPrefix = "messages/videos"
-	messageAudioDirPrefix = "messages/audios"
-	knowledgeDirPrefix    = "knowledge"
+	avatarDirPrefix        = "common/user_avatars"
+	groupAvatarDirPrefix   = "common/group_avatars"
+	messageImageDirPrefix  = "messages/images"
+	messageVideoDirPrefix  = "messages/videos"
+	messageAudioDirPrefix  = "messages/audios"
+	knowledgeDirPrefix     = "knowledge"
 	discoverImageDirPrefix = "discover/images"
 	discoverVideoDirPrefix = "discover/videos"
 )
@@ -151,35 +151,55 @@ func buildFileURL(objectKey string) string {
 	return objectKey
 }
 
+// UploadReader 分配唯一对象标识并上传文件。
 func UploadReader(ctx context.Context, r io.Reader, filename string, category FileCategory) (*UploadResult, error) {
-	if r == nil {
-		return nil, fmt.Errorf("读取器为空")
-	}
-
-	client, err := getClient()
+	result, err := PrepareUpload(filename, category)
 	if err != nil {
 		return nil, err
 	}
+	if err := UploadReaderAtKey(ctx, r, result.ObjectKey, category); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
 
-	objectKey := buildObjectKey(category, filename)
+// PrepareUpload 分配对象标识，供资源归属记录先于远程上传保存。
+func PrepareUpload(filename string, category FileCategory) (*UploadResult, error) {
+	if _, err := getClient(); err != nil {
+		return nil, err
+	}
+	key := buildObjectKey(category, filename)
+	return &UploadResult{ObjectKey: key, URL: buildFileURL(key)}, nil
+}
 
+// UploadReaderAtKey 上传到已分配的对象标识并禁止覆盖已有对象。
+func UploadReaderAtKey(ctx context.Context, r io.Reader, objectKey string, category FileCategory) error {
+	if r == nil {
+		return fmt.Errorf("读取器为空")
+	}
+	client, err := getClient()
+	if err != nil {
+		return err
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	_, err = client.PutObject(ctx, &oss.PutObjectRequest{
-		Bucket: oss.Ptr(ossBucketName),
-		Key:    oss.Ptr(objectKey),
-		Body:   r,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("上传文件到OSS失败: %w", err)
+	request := &oss.PutObjectRequest{Bucket: oss.Ptr(ossBucketName), Key: oss.Ptr(objectKey), Body: r, ForbidOverwrite: oss.Ptr("true")}
+	if category == DiscoverImage || category == DiscoverVideo {
+		request.Acl = oss.ObjectACLPrivate
 	}
-
-	return &UploadResult{
-		ObjectKey: objectKey,
-		URL:       buildFileURL(objectKey),
-	}, nil
+	if category == DiscoverImage {
+		// 发现页图片后缀已按真实格式规范化，同步写入OSS的MIME类型。
+		contentType := "image/png"
+		if strings.EqualFold(path.Ext(objectKey), ".jpg") || strings.EqualFold(path.Ext(objectKey), ".jpeg") {
+			contentType = "image/jpeg"
+		}
+		request.ContentType = oss.Ptr(contentType)
+	}
+	if _, err := client.PutObject(ctx, request); err != nil {
+		return fmt.Errorf("上传文件到OSS失败: %w", err)
+	}
+	return nil
 }
 
 func UploadMultipartFile(ctx context.Context, fileHeader *multipart.FileHeader, category FileCategory) (*UploadResult, error) {
@@ -247,4 +267,65 @@ func DeleteFileByURL(ctx context.Context, fileURL string) error {
 		return fmt.Errorf("无法从URL解析对象键")
 	}
 	return DeleteFile(ctx, objectKey)
+}
+
+// FileURL 根据已配置的OSS基址返回资源地址。
+func FileURL(objectKey string) string { clientOnce.Do(initOSSClient); return buildFileURL(objectKey) }
+
+// SetDiscoverPrivateACL 将历史发现页对象改为私有，后续通过业务鉴权读取。
+func SetDiscoverPrivateACL(ctx context.Context, objectKey string) error {
+	client, err := getClient()
+	if err != nil {
+		return err
+	}
+	_, err = client.PutObjectAcl(ctx, &oss.PutObjectAclRequest{Bucket: oss.Ptr(ossBucketName), Key: oss.Ptr(objectKey), Acl: oss.ObjectACLPrivate})
+	if err != nil {
+		return fmt.Errorf("设置发现页媒体私有权限失败: %w", err)
+	}
+	return nil
+}
+
+// ResourceStream 是受权限控制的媒体流，支持范围读取。
+type ResourceStream struct {
+	Body                      io.ReadCloser
+	Length                    int64
+	ContentType, ContentRange string
+}
+
+// OpenResource 使用服务端凭据读取对象，不向客户端暴露凭据或长期可访问的签名。
+func OpenResource(ctx context.Context, objectKey, rangeHeader string) (*ResourceStream, error) {
+	client, err := getClient()
+	if err != nil {
+		return nil, err
+	}
+	request := &oss.GetObjectRequest{Bucket: oss.Ptr(ossBucketName), Key: oss.Ptr(objectKey)}
+	if rangeHeader != "" {
+		request.Range = oss.Ptr(rangeHeader)
+		request.RangeBehavior = oss.Ptr("standard")
+	}
+	result, err := client.GetObject(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("读取发现页媒体失败: %w", err)
+	}
+	stream := &ResourceStream{Body: result.Body, Length: result.ContentLength, ContentType: "application/octet-stream"}
+	if result.ContentType != nil {
+		stream.ContentType = *result.ContentType
+	}
+	if result.ContentRange != nil {
+		stream.ContentRange = *result.ContentRange
+	}
+	return stream, nil
+}
+
+// ResourceSize 查询对象实际大小，供分片完成响应丢失后的恢复登记使用。
+func ResourceSize(ctx context.Context, objectKey string) (int64, error) {
+	client, err := getClient()
+	if err != nil {
+		return 0, err
+	}
+	result, err := client.HeadObject(ctx, &oss.HeadObjectRequest{Bucket: oss.Ptr(ossBucketName), Key: oss.Ptr(objectKey)})
+	if err != nil {
+		return 0, fmt.Errorf("查询云端资源大小失败: %w", err)
+	}
+	return result.ContentLength, nil
 }

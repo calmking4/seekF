@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"seekF-backend/internal/pkg/ai"
 	"seekF-backend/internal/pkg/ai/rag"
 	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/kafka"
 	"seekF-backend/internal/pkg/websocket"
+	userservice "seekF-backend/internal/services/user_service"
 )
 
+// main 初始化依赖与后台任务并启动HTTP服务。
 func main() {
 	// 使用 Wire 生成的注入器初始化 DAO/Service/Controller/Router
 	app := initApp(db.GormDB)
@@ -40,6 +43,9 @@ func main() {
 
 	// 初始化RAG
 	rag.GetRAG()
+
+	// 定期清理未被作品引用的过期上传资源。
+	userservice.StartDiscoverAssetCleanup(context.Background())
 
 	// 启动服务，监听 8080 端口
 	app.Router.Run()

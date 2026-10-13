@@ -114,6 +114,8 @@ func SetupRouter(
 			protectedGroup.POST("/message/search", messageController.SearchMessages)
 			protectedGroup.POST("/message/searchSuggestions", messageController.SearchMessageSuggestions)
 			// 文件上传
+			protectedGroup.GET("/file/view", fileController.ViewDiscoverFile)
+			protectedGroup.POST("/file/assets/status", fileController.DiscoverAssetStates)
 			protectedGroup.POST("/file/upload", fileController.UploadFile)
 			protectedGroup.POST("/file/upload/init", fileController.InitMultipartUpload)
 			protectedGroup.POST("/file/upload/chunk", fileController.UploadPart)
@@ -139,6 +141,8 @@ func SetupRouter(
 			protectedGroup.POST("/knowledge/content", knowledgeController.GetDocumentContent)
 			// Discover
 			protectedGroup.POST("/discover/create", discoverController.CreatePost)
+			protectedGroup.POST("/discover/update", discoverController.UpdatePost)
+			protectedGroup.POST("/discover/delete", discoverController.DeletePost)
 			protectedGroup.POST("/discover/list", discoverController.ListPosts)
 			protectedGroup.POST("/discover/search", discoverController.SearchPosts)
 			protectedGroup.POST("/discover/profile", discoverController.GetUserProfile)
