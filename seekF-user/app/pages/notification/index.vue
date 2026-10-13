@@ -1,12 +1,12 @@
 <template>
-  <div class="notification-page" :style="{ '--switch-offset': `${switchDirection * 16}px` }">
-    <div class="notification-shell">
-      <header class="page-heading">
+  <div class="notification-page !h-full !min-h-0 overflow-hidden" :style="{ '--switch-offset': `${switchDirection * 16}px` }">
+    <div class="notification-shell flex h-full min-h-0 w-full flex-col">
+      <header class="page-heading shrink-0">
         <div>
           <h1>消息通知<span v-if="unreadCount" class="heading-count">{{ badge(unreadCount) }} 条未读</span></h1>
         </div>
       </header>
-      <div class="overflow-x-auto px-1 pt-1">
+      <div class="shrink-0 overflow-x-auto px-1 pt-1">
       <div class="category-grid min-w-[520px] lg:min-w-0" role="tablist" aria-label="通知分类" :style="{ '--active-index': activeIndex, '--category-count': categories.length }">
         <span class="category-indicator" aria-hidden="true" />
         <button v-for="category in categories" :id="`tab-${category.key}`" :key="category.key"
@@ -19,15 +19,16 @@
       </div>
       </div>
       <Transition name="notification-panel" mode="out-in">
-      <section :key="activeCategory" id="notification-list" class="list-panel" role="tabpanel" :aria-labelledby="`tab-${activeCategory}`" :aria-busy="!isContactCategory && loading">
+      <section :key="activeCategory" id="notification-list" class="list-panel flex min-h-0 flex-1 flex-col" role="tabpanel" :aria-labelledby="`tab-${activeCategory}`" :aria-busy="!isContactCategory && loading">
         <ContactNotifications v-if="isContactCategory" />
         <template v-else>
-        <div class="list-toolbar">
+        <div class="list-toolbar shrink-0">
           <h2>{{ currentCategory.label }}<span v-if="total > 0">{{ total }}</span></h2>
           <div class="toolbar-actions">
             <button class="refresh-button" aria-label="刷新通知" :disabled="loading" @click="refresh"><Icon name="uil:sync" :class="{ spinning: loading }" /></button>
           </div>
         </div>
+        <div ref="notificationScroller" class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <Transition name="notification-content" mode="out-in">
         <div :key="contentState" class="list-content">
         <div v-if="loading && !list.length" class="skeleton-list" aria-label="正在加载通知">
@@ -75,17 +76,18 @@
         </div>
         </div>
         </Transition>
+        <div ref="loadTrigger" class="load-trigger" aria-hidden="true" />
+        </div>
         </template>
       </section>
       </Transition>
-      <div ref="loadTrigger" class="load-trigger" aria-hidden="true" />
     </div>
     <DiscoverDetail v-if="selectedPost" :key="selectedPost.id" :item="selectedPost" @close="selectedPost = null" />
   </div>
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 
 useSeoMeta({ title: '消息通知', description: '查看评论、赞和收藏以及新增关注，与 seekF 社区保持连接。' })
 const categories = [
@@ -111,6 +113,7 @@ const selectedPost = ref(null)
 const failedImages = ref({})
 const followPending = ref({})
 const loadTrigger = ref(null)
+const notificationScroller = ref(null)
 const pendingReads = new Set()
 const readIds = new Set()
 let requestVersion = 0
@@ -238,13 +241,16 @@ async function toggleFollow(item) {
   } catch (cause) { ElMessage.error(cause.data?.message || cause.message || '关注操作失败') }
   finally { followPending.value[item.actor_id] = false }
 }
-onMounted(() => {
-  refresh()
+// 切换分类会替换面板，重新绑定到当前内容滚动容器，避免观察外层页面。
+watch([notificationScroller, loadTrigger], ([root, trigger]) => {
+  observer?.disconnect()
+  if (disposed || !root || !trigger) return
   observer = new IntersectionObserver(entries => {
     if (entries.some(entry => entry.isIntersecting) && list.value.length && !error.value) loadList()
-  }, { root: loadTrigger.value?.closest('main'), rootMargin: '0px 0px 160px 0px' })
-  if (loadTrigger.value) observer.observe(loadTrigger.value)
-})
+  }, { root, rootMargin: '0px 0px 160px 0px' })
+  observer.observe(trigger)
+}, { flush: 'post' })
+onMounted(() => { refresh() })
 onBeforeUnmount(() => { disposed = true; selectionVersion++; requestVersion++; observer?.disconnect() })
 </script>
 

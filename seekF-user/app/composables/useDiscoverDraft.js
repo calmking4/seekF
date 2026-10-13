@@ -13,9 +13,16 @@ export function emptyDraft() {
  return { id: newId(), mediaType: 'image', title: '', content: '', tags: [], coverUrl: '', visibility: 0, requestKey: '', publishPayload: '', video: null, images: [] }
 }
 
+// 空白工作台不算草稿，兼容过滤旧版本自动生成的空记录。
+export function hasDiscoverDraftContent(draft) {
+ if (!draft || typeof draft !== 'object') return false
+ const mediaHasContent = media => !!(media && (media.uploadedUrl || media.fileName || media.fingerprint))
+ return !!(String(draft.title || '').trim() || String(draft.content || '').trim() || draft.coverUrl || draft.postUuid || (Array.isArray(draft.tags) && draft.tags.some(tag => String(tag).trim())) || (Array.isArray(draft.images) && draft.images.some(mediaHasContent)) || mediaHasContent(draft.video))
+}
+
 export function listDiscoverDrafts() {
  if (typeof localStorage === 'undefined' || !draftStorageKey()) return []
- try { const saved = JSON.parse(localStorage.getItem(draftStorageKey()) || '[]'); return Array.isArray(saved) ? saved : [] } catch { return [] }
+ try { const saved = JSON.parse(localStorage.getItem(draftStorageKey()) || '[]'); return Array.isArray(saved) ? saved.filter(hasDiscoverDraftContent) : [] } catch { return [] }
 }
 
 export function setActiveDiscoverDraft(id) {
@@ -30,6 +37,11 @@ export function loadDiscoverDraft(id) {
 
 export function saveDiscoverDraft(draft) {
  if (typeof localStorage === 'undefined' || !draftStorageKey()) throw new Error('请登录后保存草稿')
+ if (!hasDiscoverDraftContent(draft)) {
+  // 清空已有草稿时移除自己的空记录，避免恢复出清空前的旧内容。
+  if (draft?.id && listDiscoverDrafts().some(item => item.id === draft.id)) clearDiscoverDraft(draft.id)
+  return null
+ }
  const saved = { ...draft, id: draft.id || newId(), updatedAt: Date.now() }
  const list = listDiscoverDrafts().filter(item => item.id !== saved.id)
  localStorage.setItem(draftStorageKey(), JSON.stringify([saved, ...list]))

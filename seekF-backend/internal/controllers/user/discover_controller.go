@@ -94,7 +94,7 @@ func (c *DiscoverController) ListPosts(ctx *gin.Context) {
 		req.PageSize = 12
 	}
 
-	posts, total, err := c.discoverService.ListPosts(ctx.Request.Context(), userId, req.Page, req.PageSize)
+	posts, total, err := c.discoverService.ListPosts(ctx.Request.Context(), userId, req.Page, req.PageSize, req.MediaType)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -892,4 +892,38 @@ func respondDiscoverError(ctx *gin.Context, err error) {
 		status = http.StatusConflict
 	}
 	resp.Error(ctx, err.Error(), status)
+}
+
+// ListOwnWorks 返回当前登录作者的作品及筛选分页总数。
+func (c *DiscoverController) ListOwnWorks(ctx *gin.Context) {
+	var req userreq.ListOwnWorksRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.Error(ctx, "作品筛选参数错误", http.StatusBadRequest)
+		return
+	}
+	posts, total, counts, err := c.discoverService.ListOwnWorks(ctx.Request.Context(), ctx.GetString("Uuid"), req)
+	if err != nil {
+		respondDiscoverError(ctx, err)
+		return
+	}
+	items := make([]userresp.PostItem, 0, len(posts))
+	for _, p := range posts {
+		items = append(items, userresp.PostItem{Status: p.Status, Uuid: p.Uuid, UserId: p.UserId, Nickname: p.Nickname, Avatar: p.Avatar, Title: p.Title, Content: p.Content, MediaType: p.MediaType, CoverUrl: p.CoverUrl, Tags: p.Tags, FirstUrl: p.FirstUrl, Width: p.Width, Height: p.Height, ViewCount: p.ViewCount, LikeCount: p.LikeCount, CommentCount: p.CommentCount, CollectCount: p.CollectCount, IsLiked: p.IsLiked, IsCollected: p.IsCollected, Visibility: p.Visibility, Version: p.Version, CreatedAt: p.CreatedAt})
+	}
+	resp.Success(ctx, "获取作品成功", gin.H{"list": items, "total": total, "counts": counts})
+}
+
+// SetPostVisibility 修改作者作品的公开范围，版本冲突返回409。
+func (c *DiscoverController) SetPostVisibility(ctx *gin.Context) {
+	var req userreq.SetPostVisibilityRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.Error(ctx, "作品可见性参数错误", http.StatusBadRequest)
+		return
+	}
+	version, err := c.discoverService.SetPostVisibility(ctx.Request.Context(), ctx.GetString("Uuid"), req)
+	if err != nil {
+		respondDiscoverError(ctx, err)
+		return
+	}
+	resp.Success(ctx, "可见性已更新", gin.H{"visibility": *req.Visibility, "version": version})
 }

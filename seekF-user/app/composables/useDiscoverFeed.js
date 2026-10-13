@@ -2,7 +2,7 @@ import { ref, computed, onScopeDispose } from 'vue'
 import { normalizeDiscoverPost, mergeDiscoverPage } from '~/utils/discover'
 
 // 首页和搜索页共用分页、失败重试与过期响应保护。
-export function useDiscoverFeed(getKeyword) {
+export function useDiscoverFeed(getKeyword, getChannel) {
   const items = ref([])
   const loading = ref(false)
   const error = ref('')
@@ -24,7 +24,7 @@ export function useDiscoverFeed(getKeyword) {
     error.value = ''
     try {
       const response = await useApi$(getKeyword ? '/user/discover/search' : '/user/discover/list', {
-        body: { page: page.value, page_size: pageSize, ...(getKeyword ? { keyword } : {}) },
+        body: { page: page.value, page_size: pageSize, ...(getKeyword ? { keyword } : getChannel?.() === 'image' ? { media_type: 0 } : getChannel?.() === 'video' ? { media_type: 1 } : {}) },
         signal: controller.signal,
         retry: 0,
       })

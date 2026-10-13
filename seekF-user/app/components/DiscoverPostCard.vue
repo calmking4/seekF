@@ -4,6 +4,7 @@
       <img v-if="imageSrc && !mediaFailed" :src="imageSrc" :alt="post.title" class="h-full w-full object-cover" loading="lazy" decoding="async" @error="mediaFailed = true" />
       <video v-else-if="post.type === 'video' && post.src && !mediaFailed" :src="post.src" class="h-full w-full object-cover" preload="metadata" muted playsinline @error="mediaFailed = true" />
       <div v-else class="flex h-full items-center justify-center text-gray-400"><Icon name="mdi:image-outline" class="text-3xl" /><span class="sr-only">媒体暂时无法显示</span></div>
+      <span v-if="post.type === 'video'" aria-hidden="true" class="pointer-events-none absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/40 text-white"><Icon name="mdi:play" class="text-base" /></span>
     </button>
     <div class="p-3">
       <button type="button" class="text-sm font-medium line-clamp-2 mb-2 block w-full text-left focus-visible:outline-blue-500" @click.stop="$emit('open', post)"><span class="line-clamp-2">{{ post.title }}</span></button>

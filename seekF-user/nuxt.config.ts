@@ -18,6 +18,8 @@ export default defineNuxtConfig({
   },
   // SEO 全局配置
   app: {
+    // 默认缓存沿用 5 页，创作中心通过页面元信息关闭缓存。
+    keepalive: { max: 5 },
     head: {
       titleTemplate: '%s - seekF',
       // 默认标题

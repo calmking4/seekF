@@ -1,41 +1,26 @@
 <template>
-  <div class="min-h-screen bg-gray-50 flex flex-col">
+  <div class="flex min-h-[calc(100vh-112px)] flex-col overflow-hidden rounded-2xl bg-white">
+    <div v-if="editorLoading" class="flex min-h-[380px] items-center justify-center gap-2 text-sm text-gray-400" role="status"><Icon name="mdi:loading" class="animate-spin text-xl" />加载作品...</div>
     <!-- 内容区 -->
-    <div class="flex-1 max-w-4xl w-full mx-auto mt-4 mb-4 bg-white rounded-xl shadow-sm px-5 py-5 overflow-y-auto">
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div><h1 class="text-lg font-medium text-gray-700">{{ editingId ? '编辑作品' : '创作工作台' }}</h1><p class="mt-1 text-xs text-gray-400" role="status">{{ draftSaveStatus }}</p></div>
-        <div class="flex gap-2"><el-button :disabled="publishing || hasActiveUpload" @click="showDraftList">草稿箱</el-button><el-button :disabled="publishing || hasActiveUpload" @click="newDraft">新草稿</el-button><el-button :disabled="publishing" @click="persistDraft">保存草稿</el-button></div>
-      </div>
-      <!-- 类型选择 -->
-      <div class="flex gap-3 mb-5">
-        <div
-          class="flex-1 py-3 rounded-xl border-2 text-center cursor-pointer transition-colors"
-          :class="mediaType === 'image' ? 'border-[#60a5fa] bg-blue-50 text-[#60a5fa]' : 'border-gray-200 text-gray-400'"
-          @click="switchType('image')"
-        >
-          <Icon name="mdi:image-outline" class="text-2xl mb-1" />
-          <div class="text-sm font-medium">图片</div>
+    <div v-show="!editorLoading" class="mx-auto w-full max-w-6xl flex-1 px-5 py-5 sm:px-8">
+      <div class="mb-5 flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-2" aria-label="作品类型">
+          <h1 v-if="isEditing" class="rounded-full bg-gray-100 px-5 py-2.5 text-sm font-medium text-gray-800">{{ mediaType === 'video' ? '视频编辑' : '图文编辑' }}</h1>
+          <template v-else>
+            <button type="button" class="rounded-full px-5 py-2.5 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500" :class="mediaType === 'video' ? 'bg-gray-100 text-gray-800' : 'text-gray-400 hover:text-gray-600'" :aria-pressed="mediaType === 'video'" :disabled="hasActiveUpload" @click="switchType('video')">上传视频</button>
+            <button type="button" class="rounded-full px-5 py-2.5 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500" :class="mediaType === 'image' ? 'bg-gray-100 text-gray-800' : 'text-gray-400 hover:text-gray-600'" :aria-pressed="mediaType === 'image'" :disabled="hasActiveUpload" @click="switchType('image')">上传图文</button>
+          </template>
         </div>
-        <div
-          class="flex-1 py-3 rounded-xl border-2 text-center cursor-pointer transition-colors"
-          :class="mediaType === 'video' ? 'border-[#60a5fa] bg-blue-50 text-[#60a5fa]' : 'border-gray-200 text-gray-400'"
-          @click="switchType('video')"
-        >
-          <Icon name="mdi:video-outline" class="text-2xl mb-1" />
-          <div class="text-sm font-medium">视频</div>
-        </div>
+        <div v-if="!isEditing" class="flex items-center gap-2"><button type="button" class="flex items-center gap-2 rounded-full bg-gray-100 px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-200 disabled:opacity-50" :disabled="hasActiveUpload" @click="showDraftList"><Icon name="mdi:inbox-outline" />草稿箱<span>({{ draftCount }})</span></button></div>
       </div>
-
+      <p v-if="!isEditing" class="mb-4 text-xs text-gray-400" role="status">{{ draftSaveStatus }}</p>
       <!-- 上传区域 -->
       <div class="mb-5">
-        <div
-          v-if="mediaList.length === 0"
-          class="border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center py-14 cursor-pointer hover:border-[#60a5fa] transition-colors"
-          @click="triggerUpload"
-        >
-          <Icon :name="mediaType === 'video' ? 'mdi:video-plus-outline' : 'mdi:image-plus-outline'" class="text-4xl text-gray-300 mb-2" />
-          <span class="text-sm text-gray-400">{{ mediaType === 'video' ? '上传视频' : '上传图片' }}</span>
-          <span class="text-xs text-gray-300 mt-1">{{ mediaType === 'video' ? '支持 mp4，支持断点续传' : '支持 jpg、png' }}</span>
+        <div v-if="mediaList.length === 0" class="flex min-h-[380px] cursor-pointer flex-col items-center justify-center rounded-2xl bg-gray-50 px-4 py-14 sm:min-h-[55vh]" :class="dragging ? 'ring-2 ring-blue-400' : ''" role="button" tabindex="0" :aria-label="mediaType === 'video' ? '上传视频' : '上传图片'" @click="triggerUpload" @keydown.enter="triggerUpload" @keydown.space.prevent="triggerUpload" @dragover.prevent="dragging = true" @dragleave.prevent="dragging = false" @drop.prevent="handleDrop">
+          <Icon name="mdi:cloud-upload" class="mb-4 text-8xl text-gray-200" />
+          <p class="text-sm text-gray-600">{{ mediaType === 'video' ? '拖拽视频到此或点击上传' : '拖拽图片到此或点击上传' }}</p>
+          <span class="mt-5 rounded-full bg-[#60a5fa] px-8 py-3 text-sm text-white">{{ mediaType === 'video' ? '上传视频' : '上传图片' }}</span>
+          <span class="mt-4 text-xs text-gray-400">{{ mediaType === 'video' ? 'MP4 · 最大500MB · 支持暂停与断点续传' : 'JPG / PNG · 每张最大10MB · 最多9张 · 不限制像素尺寸' }}</span>
         </div>
 
         <!-- 视频模式：大预览 + 下方横条进度 -->
@@ -251,6 +236,7 @@
         />
       </div>
 
+      <div v-if="mediaList.length > 0">
       <!-- 标题 -->
       <div class="mb-4">
         <el-input
@@ -304,23 +290,24 @@
           + 新标签
         </el-button>
       </div>
+      </div>
     </div>
 
     <!-- 底部按钮 -->
-    <div class="sticky bottom-0 bg-white border-t border-gray-100 px-4 py-3">
-      <div class="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-3">
-        <el-button round @click="navigateTo('/discover')" class="">返回</el-button>
-        <div class="flex max-w-full flex-wrap items-center gap-2"><el-button round :disabled="!canPublish || publishing" @click="showPublishPreview = true">发布预览</el-button>
+    <div v-if="!editorLoading && (isEditing || mediaList.length > 0)" class="sticky bottom-0 bg-white border-t border-gray-100 px-4 py-3">
+      <div class="max-w-4xl mx-auto flex flex-wrap items-center justify-center gap-3">
+        <el-button v-if="isEditing" round :disabled="hasActiveUpload || savingDraft" @click="returnToManagement">返回</el-button>
+        <el-button v-if="!isEditing" round :disabled="hasActiveUpload" :loading="savingDraft" @click="persistDraft">保存草稿</el-button>
         <el-button
           type="primary"
           round
-          :disabled="!canPublish"
+          :disabled="!canPublish || savingDraft"
           :loading="publishing"
           :style="{ backgroundColor: '#60a5fa', borderColor: '#60a5fa' }"
           @click="handlePublish"
         >
-          {{ editingId ? '保存修改' : '发布' }}
-        </el-button></div>
+          发布
+        </el-button>
       </div>
     </div>
     <el-dialog v-model="showDrafts" title="本地草稿" width="min(560px, calc(100vw - 24px))" append-to-body>
@@ -331,15 +318,18 @@
         <div class="flex shrink-0 gap-2"><el-button size="small" @click="openDraft(draft)">继续编辑</el-button><el-button size="small" @click="deleteDraft(draft.id)">删除</el-button></div>
       </div>
     </el-dialog>
-    <el-dialog v-model="showPublishPreview" title="发布预览" width="min(760px, calc(100vw - 24px))" append-to-body>
-      <div class="space-y-4"><img v-if="mediaType === 'image'" :src="mediaList[0]?.uploadedUrl" class="mx-auto max-h-[45vh] max-w-full rounded-lg object-contain" alt="作品封面" /><video v-else :src="mediaList[0]?.uploadedUrl" :poster="coverUrl || mediaList[0]?.posterUrl" controls class="max-h-[45vh] w-full rounded-lg" /><h2 class="text-lg font-medium text-gray-700">{{ title }}</h2><p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-600">{{ content }}</p><div class="flex flex-wrap gap-2"><span v-for="tag in tags" :key="tag" class="text-sm text-blue-400">#{{ tag }}</span></div><p class="text-xs text-gray-400">{{ visibility === 1 ? '仅自己可见' : '公开' }} · {{ mediaList.length }} 个媒体</p></div>
-      <template #footer><el-button @click="showPublishPreview = false">继续编辑</el-button><el-button type="primary" :disabled="!canPublish" :loading="publishing" @click="handlePublish">{{ editingId ? '保存修改' : '确认发布' }}</el-button></template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
+definePageMeta({
+  layout: 'creator',
+  keepalive: false,
+  // 编辑目标或草稿变化时使用新实例，确保每次跳转都执行初始化。
+  key: route => [route.path, route.query.edit || '', route.query.draft || ''].join(':'),
+  pageTransition: { name: 'creator-page', mode: 'out-in' },
+})
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { discoverMediaURL } from '~/utils/discoverAccess'
 import { readDiscoverMediaSize } from '~/utils/discoverMedia'
 import {
@@ -376,13 +366,17 @@ const editorAuth = useAuthState()
 const editorUserId = editorAuth.getUser()?.uuid || editorAuth.getUser()?.Uuid || ''
 let editorDisposed = false
 const editingId = ref('')
+const isEditing = computed(() => !!route.query.edit || !!editingId.value)
+const editorLoading = ref(true)
 const editingVersion = ref(0)
 const visibility = ref(0)
 const draftId = ref('')
 const draftSaveStatus = ref('尚未保存')
 const draftList = ref([])
+const draftCount = ref(0)
+const dragging = ref(false)
+const handleDrop = event => { dragging.value = false; if (!hasActiveUpload.value) void handleFileChange({ target: { files: event.dataTransfer.files, value: '' } }) }
 const showDrafts = ref(false)
-const showPublishPreview = ref(false)
 const selectedImageIndex = ref(null)
 const editingTagIndex = ref(null)
 const requestKey = ref('')
@@ -395,7 +389,9 @@ const mediaList = ref([])
 const title = ref('')
 const content = ref('')
 const publishing = ref(false)
-const skipPersist = ref(true)
+const savingDraft = ref(false)
+// 类型切换仅保留内存中的媒体，不写入草稿箱。
+let mediaByType = { image: null, video: null }
 
 // 封面相关
 const coverFile = ref(null)
@@ -422,21 +418,44 @@ const canPublish = computed(() => {
   return mediaList.value.length <= 9 && mediaList.value.every(m => m.uploadStatus === 'done' && m.uploadedUrl)
 })
 
-/** 持久化草稿（保留图片/视频各自的数据） */
+// 保存成功后重置工作台并释放本地预览，已保存的草稿仍保留在草稿箱。
+const resetPublishWorkspace = () => {
+  const media = [...mediaList.value, ...(mediaByType.image || []), ...(mediaByType.video || [])]
+  const localURLs = new Set([...media.flatMap(item => [item.url, item.posterUrl]), coverPreview.value].filter(url => typeof url === 'string' && url.startsWith('blob:')))
+  localURLs.forEach(url => URL.revokeObjectURL(url))
+  mediaList.value = []; mediaByType = { image: null, video: null }
+  title.value = ''; content.value = ''; tags.value = []; visibility.value = 0
+  coverFile.value = null; coverUrl.value = ''; coverPreview.value = ''
+  draftId.value = ''; draftSaveStatus.value = '尚未保存'
+  requestKey.value = ''; publishPayload.value = ''
+  selectedImageIndex.value = null; editingTagIndex.value = null
+  tagInputValue.value = ''; tagInputVisible.value = false; showDrafts.value = false
+  if (fileInput.value) fileInput.value.value = ''
+  if (coverInput.value) coverInput.value.value = ''
+}
+
+/** 点击保存草稿时持久化当前内容，成功后回到上传工作台。 */
 const persistDraft = async () => {
-  if (skipPersist.value || editorDisposed || (editorAuth.getUser()?.uuid || editorAuth.getUser()?.Uuid || '') !== editorUserId) return
+  if (editorLoading.value || savingDraft.value || hasActiveUpload.value || editorDisposed || (editorAuth.getUser()?.uuid || editorAuth.getUser()?.Uuid || '') !== editorUserId) return
   const patch = buildDiscoverDraft({ mediaType: mediaType.value, title: title.value, content: content.value, tags: tags.value, coverUrl: coverUrl.value, mediaList: mediaList.value, visibility: visibility.value, requestKey: requestKey.value, publishPayload: publishPayload.value })
-  const previous = loadDiscoverDraft(draftId.value) || emptyDraft()
+  const previous = (draftId.value ? loadDiscoverDraft(draftId.value) : null) || emptyDraft()
   const saved = { ...previous, ...patch, id: draftId.value || previous.id, postUuid: editingId.value, version: editingVersion.value }
-  // 保留切换类型前已保存的另一类媒体，避免恢复时丢失上传记录。
-  if (mediaType.value === 'image') saved.video = previous.video
-  else saved.images = previous.images
+  const otherType = mediaType.value === 'image' ? 'video' : 'image'
+  const otherMedia = mediaByType[otherType]
+  const other = otherMedia ? buildDiscoverDraft({ mediaType: otherType, title: '', content: '', tags: [], coverUrl: coverUrl.value, mediaList: otherMedia }) : previous
+  if (mediaType.value === 'image') saved.video = other.video
+  else saved.images = other.images
+  savingDraft.value = true
   try {
     if (saved.video?.posterUrl?.startsWith('blob:')) saved.video.posterUrl = await posterUrlToDataUrl(saved.video.posterUrl)
     const result = saveDiscoverDraft(saved)
-    draftId.value = result.id
-    draftSaveStatus.value = '已保存 ' + new Date(result.updatedAt).toLocaleTimeString()
+    if (!result) { draftCount.value = listDiscoverDrafts().length; draftSaveStatus.value = '尚未填写内容'; return }
+    draftCount.value = listDiscoverDrafts().length
+    ElMessage.success('草稿已保存')
+    resetPublishWorkspace()
+    await navigateTo('/discover/create', { replace: true })
   } catch (error) { draftSaveStatus.value = '保存失败：' + (error.message || '本地存储不可用') }
+  finally { savingDraft.value = false }
 }
 
 /** 补全视频首帧封面（草稿恢复或 OSS 地址） */
@@ -454,7 +473,7 @@ const ensureVideoPoster = async (media, index) => {
 
 /** 从草稿恢复当前类型的媒体列表 */
 const restoreMediaFromDraft = (type) => {
-  const draft = loadDiscoverDraft(draftId.value)
+  const draft = draftId.value ? loadDiscoverDraft(draftId.value) : null
   if (!draft) {
     mediaList.value = []
     return
@@ -468,9 +487,10 @@ const restoreMediaFromDraft = (type) => {
 }
 
 const restoreDraftOnMount = () => {
-  const draft = loadDiscoverDraft()
+  const draft = loadDiscoverDraft(draftId.value)
   if (!draft) return
 
+  mediaByType = { image: null, video: null }
   draftId.value = draft.id
   editingId.value = draft.postUuid || ''
   editingVersion.value = draft.version || 0
@@ -503,9 +523,10 @@ const restoreDraftOnMount = () => {
 const switchType = async (type) => {
   if (hasActiveUpload.value) { ElMessage.info('请先暂停或完成上传'); return }
   if (mediaType.value === type) return
-  await persistDraft()
+  mediaByType[mediaType.value] = mediaList.value
   mediaType.value = type
-  restoreMediaFromDraft(type)
+  if (mediaByType[type]) mediaList.value = mediaByType[type]
+  else restoreMediaFromDraft(type)
 }
 
 const triggerUpload = () => {
@@ -514,10 +535,10 @@ const triggerUpload = () => {
 }
 
 const updateMediaUpload = (index, patch) => {
+  if (editorDisposed) return
   const item = mediaList.value[index]
   if (!item) return
   Object.assign(item, patch)
-  void persistDraft()
 }
 
 const startVideoUpload = async (media, index) => {
@@ -692,7 +713,6 @@ const handleFileChange = async (e) => {
       if (selectedImageIndex.value != null) { const old = mediaList.value[selectedImageIndex.value]; if (old?.url?.startsWith('blob:')) URL.revokeObjectURL(old.url); mediaList.value.splice(selectedImageIndex.value, 1, media); selectedImageIndex.value = null }
       else mediaList.value.push(media)
       await retryImageUpload(mediaList.value.find(item => item.file === file))
-      await persistDraft()
     }
   }
   e.target.value = ''
@@ -728,7 +748,6 @@ const removeMedia = async (index) => {
     revokePosterUrl(media.posterUrl)
   }
   mediaList.value.splice(index, 1)
-  persistDraft()
 }
 
 // 封面上传失败时保留本地文件，可以独立重试。
@@ -740,7 +759,7 @@ const retryCoverUpload = async () => {
     const url = await uploadImage(file, 'discover_image')
     if (coverFile.value !== file) return
     if (coverPreview.value?.startsWith('blob:')) URL.revokeObjectURL(coverPreview.value)
-    coverUrl.value = url; coverPreview.value = url; coverFile.value = null; await persistDraft()
+    coverUrl.value = url; coverPreview.value = url; coverFile.value = null;
   } catch (error) { ElMessage.error(error.message || '封面上传失败，请重试') }
   finally { coverUploading.value = false }
 }
@@ -759,7 +778,6 @@ const removeCover = async () => {
   coverFile.value = null
   coverPreview.value = ''
   coverUrl.value = ''
-  persistDraft()
 }
 
 // 标签操作
@@ -812,42 +830,38 @@ const retryImageUpload = async media => {
   media.uploadStatus = 'uploading'; media.uploadProgress = 0
   try { media.uploadedUrl = await uploadImage(media.file, 'discover_image', progress => { media.uploadProgress = progress }); media.uploadStatus = 'done'; media.uploadProgress = 100 }
   catch (error) { media.uploadStatus = 'error'; ElMessage.error(error.message || '图片上传失败') }
-  await persistDraft()
 }
 const reselectImage = index => { selectedImageIndex.value = index; fileInput.value?.click() }
-const moveImage = (index, direction) => { const target = index + direction; if (target < 0 || target >= mediaList.value.length) return; const [media] = mediaList.value.splice(index, 1); mediaList.value.splice(target, 0, media); void persistDraft() }
-const setImageCover = index => { const [media] = mediaList.value.splice(index, 1); mediaList.value.unshift(media); void persistDraft() }
+const moveImage = (index, direction) => { const target = index + direction; if (target < 0 || target >= mediaList.value.length) return; const [media] = mediaList.value.splice(index, 1); mediaList.value.splice(target, 0, media); }
+const setImageCover = index => { const [media] = mediaList.value.splice(index, 1); mediaList.value.unshift(media); }
 const editTag = index => { editingTagIndex.value = index; tagInputValue.value = tags.value[index]; showTagInput() }
-const showDraftList = async () => { await persistDraft(); draftList.value = listDiscoverDrafts(); showDrafts.value = true }
-const newDraft = async () => {
-  if (hasActiveUpload.value) { ElMessage.info('请先完成或暂停上传'); return }
-  await persistDraft(); skipPersist.value = true
-  const draft = emptyDraft(); saveDiscoverDraft(draft); draftId.value = draft.id; editingId.value = ''; editingVersion.value = 0
-  coverFile.value = null
-  mediaList.value = []; title.value = ''; content.value = ''; tags.value = []; coverUrl.value = ''; coverPreview.value = ''; visibility.value = 0; requestKey.value = ''; publishPayload.value = ''
-  await nextTick(); skipPersist.value = false; await persistDraft(); await navigateTo('/discover/create?draft=' + encodeURIComponent(draftId.value), { replace: true })
-}
+const showDraftList = () => { draftList.value = listDiscoverDrafts(); draftCount.value = draftList.value.length; showDrafts.value = true }
 const openDraft = async draft => {
-  if (hasActiveUpload.value) { ElMessage.info('请先完成或暂停上传'); return }
-  await persistDraft(); skipPersist.value = true; setActiveDiscoverDraft(draft.id); draftId.value = draft.id; restoreDraftOnMount(); await refreshDraftResources(); showDrafts.value = false
-  await nextTick(); skipPersist.value = false; await navigateTo('/discover/create?draft=' + encodeURIComponent(draftId.value), { replace: true })
+  if (hasActiveUpload.value || savingDraft.value) { ElMessage.info('请先完成或暂停上传及保存'); return }
+  setActiveDiscoverDraft(draft.id); draftId.value = draft.id; restoreDraftOnMount(); await refreshDraftResources(); showDrafts.value = false
+  await nextTick(); await navigateTo('/discover/create?draft=' + encodeURIComponent(draftId.value), { replace: true })
 }
-const deleteDraft = async id => { clearDiscoverDraft(id); draftList.value = listDiscoverDrafts(); if (draftId.value === id) { draftId.value = ''; draftSaveStatus.value = '草稿已删除，当前输入仍保留'; } }
+const deleteDraft = async id => { clearDiscoverDraft(id); draftList.value = listDiscoverDrafts(); draftCount.value = draftList.value.length; if (draftId.value === id) { draftId.value = ''; draftSaveStatus.value = '草稿已删除，当前输入仍保留'; } }
+
+// 返回作品管理，草稿仅通过保存按钮写入。
+const returnToManagement = async () => {
+  if (hasActiveUpload.value) return
+  await navigateTo('/discover/manage')
+}
 
 const handlePublish = async () => {
-  if (publishing.value || !canPublish.value) return
+  if (publishing.value || savingDraft.value || !canPublish.value) return
   publishing.value = true
   try {
     const urls = mediaList.value.map(media => media.uploadedUrl)
     const body = { title: title.value.trim(), content: content.value.trim(), media_type: mediaType.value === 'video' ? 1 : 0, tags: [...tags.value], urls, media_sizes: mediaList.value.map(media => ({ width: media.width || 0, height: media.height || 0 })), cover_url: mediaType.value === 'image' ? urls[0] : coverUrl.value, visibility: visibility.value }
     const payload = JSON.stringify(body)
     if (!requestKey.value || publishPayload.value !== payload) { requestKey.value = crypto.randomUUID(); publishPayload.value = payload }
-    await persistDraft()
     const response = await useApi$(editingId.value ? '/user/discover/update' : '/user/discover/create', { body: { ...body, request_key: requestKey.value, ...(editingId.value ? { post_uuid: editingId.value } : {}), version: editingVersion.value }, retry: 0 })
     if (response.code !== 200) throw new Error(response.message || '保存失败')
-    skipPersist.value = true; clearDiscoverDraft(draftId.value); showPublishPreview.value = false
+    if (draftId.value) clearDiscoverDraft(draftId.value)
     ElMessage.success(editingId.value ? '作品已更新' : '发布成功')
-    await navigateTo('/my')
+    await navigateTo('/discover/manage')
   } catch (error) { ElMessage.error(error?.data?.message || error.message || '保存失败，输入已保留') }
   finally { publishing.value = false }
 }
@@ -857,6 +871,7 @@ const refreshDraftResources = async () => {
  if (!urls.length) return
  try {
   const response = await useApi$('/user/file/assets/status', { body: { urls }, retry: 0 })
+  if (editorDisposed) return
   if (response.code !== 200) return
   let missing = false
   for (const media of mediaList.value) if (media.uploadedUrl && response.data?.[media.uploadedUrl] === false) { media.uploadedUrl = ''; media.url = ''; media.posterUrl = ''; media.uploadStatus = 'pending_reselect'; media.uploadStatusText = '云端文件已过期，请重新选择'; media.uploadProgress = 0; missing = true }
@@ -867,13 +882,20 @@ const refreshDraftResources = async () => {
 
 const loadEditingPost = async id => {
   const response = await useApi$('/user/discover/detail', { body: { uuid: id }, retry: 0 })
+  if (editorDisposed) return
   if (response.code !== 200 || !response.data) throw new Error(response.message || '作品无法编辑')
   const post = response.data
-  if (post.user_id !== (useAuthState().getUser()?.uuid || useAuthState().getUser()?.Uuid)) throw new Error('只能编辑自己的作品')
+  if (post.user_id !== (editorAuth.getUser()?.uuid || editorAuth.getUser()?.Uuid)) throw new Error('只能编辑自己的作品')
   editingId.value = id; editingVersion.value = post.version; visibility.value = post.visibility || 0
   draftId.value = emptyDraft().id; title.value = post.title; content.value = post.content || ''; tags.value = post.tags || []; mediaType.value = post.media_type === 1 ? 'video' : 'image'; coverUrl.value = post.cover_url || ''; coverPreview.value = coverUrl.value
-  mediaList.value = await Promise.all((post.urls || []).map(async url => ({ url, uploadedUrl: url, file: null, type: mediaType.value, uploadStatus: 'done', uploadProgress: 100, ...(await readDiscoverMediaSize(url, mediaType.value)) })))
-  if (mediaType.value === 'video' && mediaList.value[0]) await ensureVideoPoster(mediaList.value[0], 0)
+  // 先展示服务端返回的作品，尺寸与视频首帧后台补全，避免等待媒体加载导致空白。
+  mediaList.value = (post.urls || []).map(url => ({ url, uploadedUrl: url, file: null, type: mediaType.value, uploadStatus: 'done', uploadProgress: 100, width: 0, height: 0 }))
+  mediaList.value.forEach((media, index) => {
+    void readDiscoverMediaSize(media.url, media.type).then(size => {
+      if (!editorDisposed && mediaList.value[index] === media) Object.assign(media, size)
+    })
+  })
+  if (mediaType.value === 'video' && mediaList.value[0]) void ensureVideoPoster(mediaList.value[0], 0)
 }
 
 // 刷新/关闭页面时提示未保存的视频上传
@@ -887,17 +909,22 @@ const beforeUnloadHandler = (e) => {
 }
 
 onMounted(async () => {
+  draftCount.value = listDiscoverDrafts().length
   try {
     if (route.query.draft) { draftId.value = String(route.query.draft); restoreDraftOnMount() }
-    else if (route.query.edit) {
-      const saved = listDiscoverDrafts().find(draft => draft.postUuid === String(route.query.edit))
-      if (saved) { draftId.value = saved.id; restoreDraftOnMount() }
-      else await loadEditingPost(String(route.query.edit))
-    } else restoreDraftOnMount()
+    else if (route.query.edit) await loadEditingPost(String(route.query.edit))
   }
-  catch (error) { ElMessage.error(error?.data?.message || error.message || '加载作品失败'); await navigateTo('/my'); return }
+  catch (error) {
+    if (!editorDisposed) {
+      ElMessage.error(error?.data?.message || error.message || '加载作品失败')
+      await navigateTo('/discover/manage')
+    }
+    return
+  }
+  if (editorDisposed) return
+  editorLoading.value = false
   await refreshDraftResources()
-  skipPersist.value = false
+  if (editorDisposed) return
   window.addEventListener('beforeunload', beforeUnloadHandler)
 })
 
@@ -907,11 +934,6 @@ onUnmounted(() => {
   window.removeEventListener('beforeunload', beforeUnloadHandler)
 })
 
-watch([title, content, tags, mediaType, visibility], () => {
-  if (!skipPersist.value) {
-    void persistDraft()
-  }
-}, { deep: true })
 </script>
 
 <style scoped>

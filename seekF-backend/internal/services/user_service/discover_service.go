@@ -26,12 +26,16 @@ import (
 
 // DiscoverService 发现页内容与互动业务接口。
 type DiscoverService interface {
+	// ListOwnWorks 查询当前作者的筛选分页作品。
+	ListOwnWorks(ctx context.Context, userId string, input userreq.ListOwnWorksRequest) ([]PostInfo, int64, map[int8]int64, error)
+	// SetPostVisibility 仅修改作者作品可见性及版本。
+	SetPostVisibility(ctx context.Context, userId string, input userreq.SetPostVisibilityRequest) (uint64, error)
 	SetLike(ctx context.Context, userId, targetUuid string, liked bool, isComment bool) (bool, int, error)
 	ListCommentThread(ctx context.Context, userId, postUuid, parentUuid string, page, pageSize int) ([]CommentInfo, bool, error)
 	CreatePost(ctx context.Context, userId string, input userreq.CreatePostRequest) (*PostInfo, error)
 	UpdatePost(ctx context.Context, userId, postUuid string, input userreq.CreatePostRequest) (*PostInfo, error)
 	DeletePost(ctx context.Context, userId, postUuid string) error
-	ListPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error)
+	ListPosts(ctx context.Context, userId string, page, pageSize int, mediaType *int8) ([]PostInfo, int64, error)
 	ListLikedPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error)
 	GetPostDetail(ctx context.Context, userId, uuid string) (*PostDetailInfo, error)
 	AddComment(ctx context.Context, userId, postUuid string, parentUuid, replyToUserId, content string) (*CommentInfo, error)
@@ -72,6 +76,8 @@ type MediaSize struct {
 
 // PostInfo 帖子列表展示信息。
 type PostInfo struct {
+	Status       int8
+	ViewCount    int
 	Visibility   int8
 	Version      uint64
 	Width        int
@@ -167,12 +173,12 @@ func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId string, inp
 }
 
 // ListPosts 查询公共帖子并批量装配媒体与互动信息。
-func (s *DiscoverServiceImpl) ListPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error) {
-	posts, err := s.discoverDAO.ListPosts(page, pageSize)
+func (s *DiscoverServiceImpl) ListPosts(ctx context.Context, userId string, page, pageSize int, mediaType *int8) ([]PostInfo, int64, error) {
+	posts, err := s.discoverDAO.ListPosts(page, pageSize, mediaType)
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := s.discoverDAO.CountPosts()
+	total, err := s.discoverDAO.CountPosts(mediaType)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -216,7 +222,7 @@ func (s *DiscoverServiceImpl) ListLikedPosts(ctx context.Context, userId string,
 		}
 
 		result = append(result, PostInfo{
-			Visibility: post.Visibility, Version: post.Version,
+			Visibility: post.Visibility, Version: post.Version, ViewCount: post.ViewCount,
 			Uuid:         post.Uuid,
 			UserId:       post.UserId,
 			Nickname:     nickname,
@@ -246,7 +252,8 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 	if err != nil {
 		return nil, err
 	}
-	if !CanViewDiscoverPost(post, userId) {
+	// 作者可以在管理页查看待审、驳回或下架作品，其他用户仍仅能查看正常公开作品。
+	if !CanViewDiscoverPost(post, userId) && (post == nil || post.UserId != userId || post.DeletedAt.Valid) {
 		return nil, fmt.Errorf("帖子不存在")
 	}
 
@@ -788,7 +795,7 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 			avatar = user.Avatar
 		}
 		result = append(result, PostInfo{
-			Visibility: post.Visibility, Version: post.Version,
+			Visibility: post.Visibility, Version: post.Version, ViewCount: post.ViewCount,
 			Uuid:         post.Uuid,
 			UserId:       post.UserId,
 			Nickname:     nickname,
@@ -1053,7 +1060,7 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 		}
 
 		result = append(result, PostInfo{
-			Visibility: post.Visibility, Version: post.Version,
+			Visibility: post.Visibility, Version: post.Version, ViewCount: post.ViewCount, Status: post.Status,
 			Uuid:         post.Uuid,
 			UserId:       post.UserId,
 			Nickname:     nickname,
@@ -1171,7 +1178,7 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 				json.Unmarshal(post.Tags, &tags)
 			}
 			postInfos = append(postInfos, PostInfo{
-				Visibility: post.Visibility, Version: post.Version,
+				Visibility: post.Visibility, Version: post.Version, ViewCount: post.ViewCount,
 				Uuid:         post.Uuid,
 				UserId:       post.UserId,
 				Nickname:     user.Nickname,
@@ -1369,7 +1376,7 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 			if err != nil {
 				return err
 			}
-			if saved == nil || saved.UserId != userId || saved.Status != 0 {
+			if saved == nil || saved.UserId != userId {
 				return fmt.Errorf("作品不存在或无权编辑")
 			}
 			if input.Version != saved.Version {
@@ -1517,4 +1524,73 @@ func normalizeDiscoverMediaURL(value string) string {
 		return parsed.Query().Get("url")
 	}
 	return value
+}
+
+// ListOwnWorks 校验作者作品筛选参数并装配展示信息。
+func (s *DiscoverServiceImpl) ListOwnWorks(ctx context.Context, userId string, input userreq.ListOwnWorksRequest) ([]PostInfo, int64, map[int8]int64, error) {
+	if input.Page < 1 {
+		input.Page = 1
+	}
+	if input.PageSize < 1 || input.PageSize > 50 {
+		input.PageSize = 20
+	}
+	input.Keyword = strings.TrimSpace(input.Keyword)
+	if utf8.RuneCountInString(input.Keyword) > 100 {
+		return nil, 0, nil, fmt.Errorf("搜索关键词不能超过100字")
+	}
+	if input.Status != nil && (*input.Status < 0 || *input.Status > 3) {
+		return nil, 0, nil, fmt.Errorf("作品状态无效")
+	}
+	if input.Visibility != nil && *input.Visibility != 0 && *input.Visibility != 1 {
+		return nil, 0, nil, fmt.Errorf("可见性无效")
+	}
+	posts, total, err := s.discoverDAO.ListOwnWorks(userId, input.Keyword, input.Status, input.Visibility, input.Page, input.PageSize)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	counts, err := s.discoverDAO.CountOwnWorksByStatus(userId, input.Keyword, input.Visibility)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	items, total, err := s.buildPostInfoList(ctx, userId, posts, total)
+	return items, total, counts, err
+}
+
+// SetPostVisibility 在事务中只更新作者作品可见性和版本，不重写媒体或上传文件。
+func (s *DiscoverServiceImpl) SetPostVisibility(ctx context.Context, userId string, input userreq.SetPostVisibilityRequest) (uint64, error) {
+	if input.Visibility == nil || (*input.Visibility != 0 && *input.Visibility != 1) {
+		return 0, fmt.Errorf("可见性无效")
+	}
+	var saved *models.DiscoverPost
+	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		dao := userdao.NewDiscoverDAO(tx)
+		post, err := dao.FindPostByUuidForUpdate(input.PostUuid)
+		if err != nil {
+			return err
+		}
+		if post == nil || post.UserId != userId {
+			return fmt.Errorf("作品不存在或无权修改")
+		}
+		if post.Version != input.Version {
+			return fmt.Errorf("编辑版本已过期: %w", ErrDiscoverConflict)
+		}
+		if post.Visibility != *input.Visibility {
+			post.Visibility = *input.Visibility
+			post.Version++
+			if err := dao.SavePost(post); err != nil {
+				return err
+			}
+		}
+		saved = post
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if db.ESClient != nil {
+		if err := userdao.NewESDiscoverDAO().IndexPost(discoverIndexPost(saved)); err != nil {
+			zlog.Warn("同步作品可见性索引失败，作品=" + saved.Uuid + ": " + err.Error())
+		}
+	}
+	return saved.Version, nil
 }

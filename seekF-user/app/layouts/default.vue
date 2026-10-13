@@ -19,6 +19,8 @@
           v-for="item in navItems"
           :key="item.path"
           :to="item.path"
+          :target="item.newTab ? '_blank' : undefined"
+          :rel="item.newTab ? 'noopener' : undefined"
           class="flex items-center gap-3 px-3 py-3 rounded-lg mb-1 hover:bg-gray-50 relative z-10"
           :class="{ 'text-[#0073ff]': isActiveRoute(item.path) }"
           :data-path="item.path"
@@ -50,7 +52,7 @@
     </aside>
 
     <!-- 右侧主内容区 -->
-    <main class="flex-1 h-full overflow-y-auto">
+    <main class="flex-1 h-full min-w-0" :class="route.path === '/notification' ? 'overflow-hidden' : 'overflow-y-auto'">
       <slot />
     </main>
 
@@ -104,10 +106,11 @@ const isActiveRoute = (path) => {
 
 // 侧边栏导航数据
 const navItems = [
+  { path: '/discover', label: '发现', icon: 'uil:compass' },
+  { path: '/discover/create', label: '发布', icon: 'uil:plus-square', newTab: true },
+  { path: '/notification', label: '通知', icon: 'uil:bell', showBadge: true },
   { path: '/chat', label: '消息', icon: 'uil:comment-alt' },
   { path: '/contact', label: '联系人', icon: 'uil:users-alt' },
-  { path: '/discover', label: '发现', icon: 'uil:plus-square' },
-  { path: '/notification', label: '通知', icon: 'uil:bell', showBadge: true },
   { path: '/aichat', label: 'AIChat', icon: 'uil:robot' },
   { path: '/my', label: '我', icon: 'uil:user' }
 ]

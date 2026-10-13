@@ -142,6 +142,8 @@ func SetupRouter(
 			// Discover
 			protectedGroup.POST("/discover/create", discoverController.CreatePost)
 			protectedGroup.POST("/discover/update", discoverController.UpdatePost)
+			protectedGroup.POST("/discover/works", discoverController.ListOwnWorks)
+			protectedGroup.POST("/discover/visibility", discoverController.SetPostVisibility)
 			protectedGroup.POST("/discover/delete", discoverController.DeletePost)
 			protectedGroup.POST("/discover/list", discoverController.ListPosts)
 			protectedGroup.POST("/discover/search", discoverController.SearchPosts)

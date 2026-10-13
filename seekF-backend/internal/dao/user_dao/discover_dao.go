@@ -20,6 +20,10 @@ type DiscoverMediaInfo struct {
 
 // DiscoverDAO 发现页帖子、媒体和互动数据访问接口。
 type DiscoverDAO interface {
+	// CountOwnWorksByStatus 返回作者各状态作品数量，不受当前选中状态限制。
+	CountOwnWorksByStatus(userId, keyword string, visibility *int8) (map[int8]int64, error)
+	// ListOwnWorks 按作者、状态及标题筛选作品并返回真实总数。
+	ListOwnWorks(userId, keyword string, status, visibility *int8, page, pageSize int) ([]models.DiscoverPost, int64, error)
 	// SavePost 更新作品内容与编辑版本。
 	SavePost(post *models.DiscoverPost) error
 	// DeletePost 软删除指定作品。
@@ -39,10 +43,10 @@ type DiscoverDAO interface {
 	FindPostByUuidForUpdate(uuid string) (*models.DiscoverPost, error)
 	// FindPostById 按主键查询帖子，不存在时返回空。
 	FindPostById(id int64) (*models.DiscoverPost, error)
-	// ListPosts 分页查询正常状态的帖子。
-	ListPosts(page, pageSize int) ([]models.DiscoverPost, error)
-	// CountPosts 统计正常状态的帖子数量。
-	CountPosts() (int64, error)
+	// ListPosts 按媒体类型分页查询正常状态的公开帖子。
+	ListPosts(page, pageSize int, mediaType *int8) ([]models.DiscoverPost, error)
+	// CountPosts 按媒体类型统计正常状态的公开帖子数量。
+	CountPosts(mediaType *int8) (int64, error)
 	// IncrementCommentCount 增加帖子的评论数。
 	IncrementCommentCount(postId int64) error
 	// IncrementViewCount 增加帖子的浏览数。
@@ -198,18 +202,26 @@ func (d *DiscoverDAOImpl) FindPostById(id int64) (*models.DiscoverPost, error) {
 	return &post, result.Error
 }
 
-// ListPosts 分页查询正常状态的帖子。
-func (d *DiscoverDAOImpl) ListPosts(page, pageSize int) ([]models.DiscoverPost, error) {
+// ListPosts 按媒体类型分页查询正常状态的公开帖子。
+func (d *DiscoverDAOImpl) ListPosts(page, pageSize int, mediaType *int8) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
-	result := d.db.Where("status = ? AND visibility = 0", 0).Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&posts)
+	query := d.db.Where("status = ? AND visibility = 0", 0)
+	if mediaType != nil {
+		query = query.Where("media_type = ?", *mediaType)
+	}
+	result := query.Order("created_at DESC").Order("id DESC").Offset(offset).Limit(pageSize).Find(&posts)
 	return posts, result.Error
 }
 
-// CountPosts 统计正常状态的帖子数量。
-func (d *DiscoverDAOImpl) CountPosts() (int64, error) {
+// CountPosts 按媒体类型统计正常状态的公开帖子数量。
+func (d *DiscoverDAOImpl) CountPosts(mediaType *int8) (int64, error) {
 	var count int64
-	result := d.db.Model(&models.DiscoverPost{}).Where("status = ? AND visibility = 0", 0).Count(&count)
+	query := d.db.Model(&models.DiscoverPost{}).Where("status = ? AND visibility = 0", 0)
+	if mediaType != nil {
+		query = query.Where("media_type = ?", *mediaType)
+	}
+	result := query.Count(&count)
 	return count, result.Error
 }
 
@@ -657,4 +669,50 @@ func (d *DiscoverDAOImpl) FindPostByPublishKeyForUpdate(userId, requestKey strin
 // mediaWithAssets 从资源表读取媒体原尺寸，帖子封面尺寸由帖子字段提供。
 func (d *DiscoverDAOImpl) mediaWithAssets() *gorm.DB {
 	return d.db.Model(&models.DiscoverMedia{}).Select("discover_media.*, COALESCE(a.width, 0) AS width, COALESCE(a.height, 0) AS height").Joins("LEFT JOIN file_asset a ON a.id = discover_media.asset_id")
+}
+
+// ListOwnWorks 按作者、作品状态及搜索条件分页查询，软删除记录由GORM排除。
+func (d *DiscoverDAOImpl) ListOwnWorks(userId, keyword string, status, visibility *int8, page, pageSize int) ([]models.DiscoverPost, int64, error) {
+	query := d.db.Model(&models.DiscoverPost{}).Where("user_id = ?", userId)
+	state := int8(0)
+	if status != nil {
+		state = *status
+	}
+	query = query.Where("status = ?", state)
+	if visibility != nil {
+		query = query.Where("visibility = ?", *visibility)
+	}
+	if keyword != "" {
+		query = query.Where("title LIKE ?", "%"+keyword+"%")
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("统计作者作品失败: %w", err)
+	}
+	var posts []models.DiscoverPost
+	err := query.Order("created_at DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&posts).Error
+	return posts, total, err
+}
+
+// CountOwnWorksByStatus 按作者、标题和公开范围统计所有状态，补齐无记录状态的零值。
+func (d *DiscoverDAOImpl) CountOwnWorksByStatus(userId, keyword string, visibility *int8) (map[int8]int64, error) {
+	query := d.db.Model(&models.DiscoverPost{}).Where("user_id = ? AND status IN (0,1,2,3)", userId)
+	if keyword != "" {
+		query = query.Where("title LIKE ?", "%"+keyword+"%")
+	}
+	if visibility != nil {
+		query = query.Where("visibility = ?", *visibility)
+	}
+	var rows []struct {
+		Status int8
+		Total  int64
+	}
+	if err := query.Select("status, COUNT(*) AS total").Group("status").Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("统计作品状态数量失败: %w", err)
+	}
+	counts := map[int8]int64{0: 0, 1: 0, 2: 0, 3: 0}
+	for _, row := range rows {
+		counts[row.Status] = row.Total
+	}
+	return counts, nil
 }

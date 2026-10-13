@@ -29,8 +29,8 @@
 
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from 'vue'
-const props = defineProps({ search: { type: Boolean, default: false }, keyword: { type: String, default: '' } })
-const { items, loading, initialLoading, error, noMore, total, loadMore, reset, updateLike } = useDiscoverFeed(props.search ? () => props.keyword : undefined)
+const props = defineProps({ search: { type: Boolean, default: false }, keyword: { type: String, default: '' }, channel: { type: String, default: 'recommended' } })
+const { items, loading, initialLoading, error, noMore, total, loadMore, reset, updateLike } = useDiscoverFeed(props.search ? () => props.keyword : undefined, () => props.channel)
 const mounted = ref(false)
 const selectedItem = ref(null)
 const sentinel = ref(null)

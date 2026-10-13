@@ -1,5 +1,5 @@
 <template>
   <NuxtLayout>
-    <NuxtPage :keepalive="{ max: 5 }"/>
+    <NuxtPage />
   </NuxtLayout>
 </template>

@@ -1,17 +1,18 @@
 <template>
-  <div :aria-busy="loading">
-    <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-5 py-5 sm:px-7">
+  <div class="flex min-h-0 flex-1 flex-col" :aria-busy="loading">
+    <div class="flex shrink-0 items-center justify-between gap-3 border-b border-gray-100 px-5 py-5 sm:px-7">
       <h2 class="flex items-center gap-2 text-base font-semibold text-gray-800">好友和群<span v-if="filteredItems.length" class="text-xs font-normal text-gray-400">{{ filteredItems.length }}</span></h2>
       <button type="button" aria-label="刷新申请通知" :disabled="loading" class="grid h-8 w-8 place-items-center rounded-full text-gray-400 transition-colors hover:bg-gray-50 hover:text-blue-400 disabled:opacity-50" @click="load">
         <Icon name="uil:sync" class="text-lg" :class="{ 'animate-spin': loading }" />
       </button>
     </div>
-    <div class="flex flex-wrap gap-2 px-5 pt-5 sm:px-7" role="group" aria-label="筛选好友和群通知">
+    <div class="flex shrink-0 flex-wrap gap-2 px-5 pt-5 sm:px-7" role="group" aria-label="筛选好友和群通知">
       <button v-for="filter in filters" :key="filter.key" type="button" :aria-pressed="activeFilter === filter.key"
         class="rounded-full border px-4 py-2 text-xs font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
         :class="activeFilter === filter.key ? 'border-blue-100 bg-blue-50 text-blue-500' : 'border-transparent bg-gray-50 text-gray-500 hover:bg-gray-100'"
         @click="activeFilter = filter.key">{{ filter.label }}</button>
     </div>
+    <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
     <div v-if="loading && !items.length" class="flex min-h-60 items-center justify-center gap-2 text-sm text-gray-400"><Icon name="uil:spinner" class="animate-spin text-xl" />正在加载通知…</div>
     <div v-else-if="error && !items.length" role="alert" class="flex min-h-60 flex-col items-center justify-center gap-4 px-5 text-center text-sm text-gray-500">
       <Icon name="uil:cloud-slash" class="text-3xl text-gray-300" /><p>{{ error }}</p><button type="button" class="rounded-full bg-blue-50 px-5 py-2 text-blue-500 hover:bg-blue-100" @click="load">重新加载</button>
@@ -38,6 +39,7 @@
           </article>
         </div>
       </section>
+    </div>
     </div>
   </div>
 </template>

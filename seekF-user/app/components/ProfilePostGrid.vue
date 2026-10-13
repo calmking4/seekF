@@ -20,17 +20,12 @@
             <Icon :name="post.is_liked ? 'mdi:heart' : 'mdi:heart-outline'" class="text-base" /><span>{{ post.like_count || 0 }}</span>
           </button>
         </div>
-        <div v-if="manageable" class="mt-3 flex flex-wrap items-center gap-3 text-xs text-gray-400">
-          <button type="button" :disabled="pending[post.uuid]" class="hover:text-blue-500 disabled:opacity-40" @click.stop="$emit('edit', post)">编辑</button>
-          <button type="button" :disabled="pending[post.uuid]" class="hover:text-blue-500 disabled:opacity-40" @click.stop="$emit('visibility', post)">{{ post.visibility === 1 ? '设为公开' : '仅自己可见' }}</button>
-          <button type="button" :disabled="pending[post.uuid]" class="hover:text-red-400 disabled:opacity-40" @click.stop="$emit('delete', post)">删除</button>
-        </div>
       </div>
     </article>
   </div>
 </template>
 
 <script setup>
-defineProps({ posts: { type: Array, default: () => [] }, manageable: Boolean, pending: { type: Object, default: () => ({}) } })
-defineEmits(['open', 'like', 'edit', 'delete', 'visibility'])
+defineProps({ posts: { type: Array, default: () => [] } })
+defineEmits(['open', 'like'])
 </script>

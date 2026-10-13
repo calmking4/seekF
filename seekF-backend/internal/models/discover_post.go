@@ -23,7 +23,7 @@ type DiscoverPost struct {
 	CommentCount       int             `gorm:"column:comment_count;not null;default:0;comment:评论数"`
 	CollectCount       int             `gorm:"column:collect_count;not null;default:0;comment:收藏数"`
 	ViewCount          int             `gorm:"column:view_count;not null;default:0;comment:浏览量"`
-	Status             int8            `gorm:"column:status;not null;default:0;comment:状态，0.正常，1.下架"`
+	Status             int8            `gorm:"column:status;not null;default:0;comment:状态，0.已发布，1.已下架，2.审核中，3.未通过"`
 	CreatedAt          time.Time       `gorm:"column:created_at;type:datetime;not null;comment:创建时间"`
 	UpdatedAt          time.Time       `gorm:"column:updated_at;type:datetime;not null;comment:更新时间"`
 	DeletedAt          gorm.DeletedAt  `gorm:"column:deleted_at;index;type:datetime(3);comment:删除时间"`

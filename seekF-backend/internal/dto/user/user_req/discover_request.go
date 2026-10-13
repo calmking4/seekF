@@ -21,9 +21,11 @@ type UpdatePostRequest struct {
 	PostUuid string `json:"post_uuid" binding:"required"` // 需要更新的已有帖子UUID
 }
 
+// ListPostsRequest 公共帖子分页及媒体筛选，媒体类型为空时查询全部。
 type ListPostsRequest struct {
-	Page     int `json:"page" form:"page"`
-	PageSize int `json:"page_size" form:"page_size"`
+	MediaType *int8 `json:"media_type" form:"media_type" binding:"omitempty,oneof=0 1"` // 0图文、1视频
+	Page      int   `json:"page" form:"page"`
+	PageSize  int   `json:"page_size" form:"page_size"`
 }
 
 type GetPostDetailRequest struct {
@@ -129,4 +131,20 @@ type CommentThreadRequest struct {
 	ParentUuid string `json:"parent_id"`
 	Page       int    `json:"page"`
 	PageSize   int    `json:"page_size"`
+}
+
+// ListOwnWorksRequest 作者作品分页与筛选参数。
+type ListOwnWorksRequest struct {
+	Status     *int8  `json:"status"` // 0已发布、1已下架、2审核中、3未通过
+	Page       int    `json:"page"`
+	PageSize   int    `json:"page_size"`
+	Keyword    string `json:"keyword"`
+	Visibility *int8  `json:"visibility"`
+}
+
+// SetPostVisibilityRequest 仅修改作品可见性，并校验编辑版本。
+type SetPostVisibilityRequest struct {
+	PostUuid   string `json:"post_uuid" binding:"required"`
+	Visibility *int8  `json:"visibility" binding:"required"`
+	Version    uint64 `json:"version" binding:"required"`
 }
