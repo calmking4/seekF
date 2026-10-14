@@ -1,11 +1,13 @@
 package userdao
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"seekF-backend/internal/models"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -43,10 +45,10 @@ type DiscoverDAO interface {
 	FindPostByUuidForUpdate(uuid string) (*models.DiscoverPost, error)
 	// FindPostById 按主键查询帖子，不存在时返回空。
 	FindPostById(id int64) (*models.DiscoverPost, error)
-	// ListPosts 按媒体类型分页查询正常状态的公开帖子。
-	ListPosts(page, pageSize int, mediaType *int8) ([]models.DiscoverPost, error)
-	// CountPosts 按媒体类型统计正常状态的公开帖子数量。
-	CountPosts(mediaType *int8) (int64, error)
+	// ListFeed 查询当前可见的时间流，关注子查询避免重复关系产生重复帖子。
+	ListFeed(ctx context.Context, userId string, following bool, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
+	// HasFollowing 判断当前用户是否关注过博主。
+	HasFollowing(ctx context.Context, userId string) (bool, error)
 	// IncrementCommentCount 增加帖子的评论数。
 	IncrementCommentCount(postId int64) error
 	// IncrementViewCount 增加帖子的浏览数。
@@ -202,27 +204,29 @@ func (d *DiscoverDAOImpl) FindPostById(id int64) (*models.DiscoverPost, error) {
 	return &post, result.Error
 }
 
-// ListPosts 按媒体类型分页查询正常状态的公开帖子。
-func (d *DiscoverDAOImpl) ListPosts(page, pageSize int, mediaType *int8) ([]models.DiscoverPost, error) {
-	var posts []models.DiscoverPost
-	offset := (page - 1) * pageSize
-	query := d.db.Where("status = ? AND visibility = 0", 0)
+// ListFeed 使用时间和主键作为边界读取公开已发布帖子，额外取一条判断是否还有内容。
+func (d *DiscoverDAOImpl) ListFeed(ctx context.Context, userId string, following bool, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error) {
+	posts := make([]models.DiscoverPost, 0)
+	query := d.db.WithContext(ctx).Where("status = 0 AND visibility = 0")
+	if following {
+		follows := d.db.WithContext(ctx).Model(&models.UserFollow{}).Select("follow_user_id").Where("user_id = ?", userId)
+		query = query.Where("user_id IN (?)", follows)
+	}
 	if mediaType != nil {
 		query = query.Where("media_type = ?", *mediaType)
 	}
-	result := query.Order("created_at DESC").Order("id DESC").Offset(offset).Limit(pageSize).Find(&posts)
-	return posts, result.Error
+	if !before.IsZero() {
+		query = query.Where("created_at < ? OR (created_at = ? AND id < ?)", before, before, beforeId)
+	}
+	err := query.Order("created_at DESC, id DESC").Limit(limit).Find(&posts).Error
+	return posts, err
 }
 
-// CountPosts 按媒体类型统计正常状态的公开帖子数量。
-func (d *DiscoverDAOImpl) CountPosts(mediaType *int8) (int64, error) {
-	var count int64
-	query := d.db.Model(&models.DiscoverPost{}).Where("status = ? AND visibility = 0", 0)
-	if mediaType != nil {
-		query = query.Where("media_type = ?", *mediaType)
-	}
-	result := query.Count(&count)
-	return count, result.Error
+// HasFollowing 只读取一条关注关系，区分尚未关注与关注作者暂无公开作品。
+func (d *DiscoverDAOImpl) HasFollowing(ctx context.Context, userId string) (bool, error) {
+	var follows []models.UserFollow
+	err := d.db.WithContext(ctx).Select("id").Where("user_id = ?", userId).Limit(1).Find(&follows).Error
+	return len(follows) > 0, err
 }
 
 // IncrementCommentCount 增加帖子的评论数。

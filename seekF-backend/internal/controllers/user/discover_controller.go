@@ -78,30 +78,20 @@ func (c *DiscoverController) CreatePost(ctx *gin.Context) {
 	})
 }
 
-// ListPosts 获取帖子列表
-func (c *DiscoverController) ListPosts(ctx *gin.Context) {
-	userId := ctx.GetString("Uuid")
-
-	var req userreq.ListPostsRequest
-	if err := ctx.ShouldBind(&req); err != nil {
-		resp.Error(ctx, "参数错误", http.StatusBadRequest)
+// ListFeed 返回公开时间流或当前登录用户的关注流。
+func (c *DiscoverController) ListFeed(ctx *gin.Context) {
+	var req userreq.FeedRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.Error(ctx, "信息流参数错误", http.StatusBadRequest)
 		return
 	}
-	if req.Page <= 0 {
-		req.Page = 1
-	}
-	if req.PageSize <= 0 || req.PageSize > 20 {
-		req.PageSize = 12
-	}
-
-	posts, total, err := c.discoverService.ListPosts(ctx.Request.Context(), userId, req.Page, req.PageSize, req.MediaType)
+	result, err := c.discoverService.ListFeed(ctx.Request.Context(), ctx.GetString("Uuid"), req)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
 	}
-
-	var items []userresp.PostItem
-	for _, p := range posts {
+	items := make([]userresp.PostItem, 0, len(result.List))
+	for _, p := range result.List {
 		items = append(items, userresp.PostItem{
 			Visibility: p.Visibility, Version: p.Version,
 			Uuid:         p.Uuid,
@@ -124,11 +114,7 @@ func (c *DiscoverController) ListPosts(ctx *gin.Context) {
 			CreatedAt:    p.CreatedAt,
 		})
 	}
-
-	resp.Success(ctx, "获取成功", userresp.ListPostsRespond{
-		List:  items,
-		Total: total,
-	})
+	resp.Success(ctx, "获取成功", userresp.FeedRespond{List: items, NextCursor: result.NextCursor, HasMore: result.HasMore, HasFollowing: result.HasFollowing})
 }
 
 // SearchPosts 搜索帖子

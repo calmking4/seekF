@@ -145,7 +145,7 @@ func SetupRouter(
 			protectedGroup.POST("/discover/works", discoverController.ListOwnWorks)
 			protectedGroup.POST("/discover/visibility", discoverController.SetPostVisibility)
 			protectedGroup.POST("/discover/delete", discoverController.DeletePost)
-			protectedGroup.POST("/discover/list", discoverController.ListPosts)
+			protectedGroup.POST("/discover/feed", discoverController.ListFeed)
 			protectedGroup.POST("/discover/search", discoverController.SearchPosts)
 			protectedGroup.POST("/discover/profile", discoverController.GetUserProfile)
 			protectedGroup.POST("/discover/liked-list", discoverController.ListLikedPosts)

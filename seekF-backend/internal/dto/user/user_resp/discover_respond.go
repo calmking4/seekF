@@ -111,3 +111,11 @@ type CommentThreadRespond struct {
 	List    []CommentItem `json:"list"`
 	HasMore bool          `json:"has_more"`
 }
+
+// FeedRespond 游标分页结果，关注关系标识用于展示不同空状态。
+type FeedRespond struct {
+	List         []PostItem `json:"list"`
+	NextCursor   string     `json:"next_cursor"`
+	HasMore      bool       `json:"has_more"`
+	HasFollowing bool       `json:"has_following"`
+}

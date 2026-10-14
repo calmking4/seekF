@@ -21,11 +21,18 @@ type UpdatePostRequest struct {
 	PostUuid string `json:"post_uuid" binding:"required"` // 需要更新的已有帖子UUID
 }
 
-// ListPostsRequest 公共帖子分页及媒体筛选，媒体类型为空时查询全部。
+// FeedRequest 发现页游标分页，数据源为全部公开帖子或当前用户关注的作品。
+type FeedRequest struct {
+	Source    string `json:"source" binding:"omitempty,oneof=all following"`
+	MediaType *int8  `json:"media_type" binding:"omitempty,oneof=0 1"`
+	Cursor    string `json:"cursor" binding:"max=2048"`
+	PageSize  int    `json:"page_size" binding:"min=0,max=20"`
+}
+
+// ListPostsRequest 点赞作品的页码分页参数。
 type ListPostsRequest struct {
-	MediaType *int8 `json:"media_type" form:"media_type" binding:"omitempty,oneof=0 1"` // 0图文、1视频
-	Page      int   `json:"page" form:"page"`
-	PageSize  int   `json:"page_size" form:"page_size"`
+	Page     int `json:"page" form:"page"`
+	PageSize int `json:"page_size" form:"page_size"`
 }
 
 type GetPostDetailRequest struct {

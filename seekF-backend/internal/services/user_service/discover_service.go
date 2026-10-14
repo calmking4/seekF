@@ -35,7 +35,8 @@ type DiscoverService interface {
 	CreatePost(ctx context.Context, userId string, input userreq.CreatePostRequest) (*PostInfo, error)
 	UpdatePost(ctx context.Context, userId, postUuid string, input userreq.CreatePostRequest) (*PostInfo, error)
 	DeletePost(ctx context.Context, userId, postUuid string) error
-	ListPosts(ctx context.Context, userId string, page, pageSize int, mediaType *int8) ([]PostInfo, int64, error)
+	// ListFeed 查询当前用户的公开时间流或关注流并生成下一页游标。
+	ListFeed(ctx context.Context, userId string, input userreq.FeedRequest) (*FeedInfo, error)
 	ListLikedPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error)
 	GetPostDetail(ctx context.Context, userId, uuid string) (*PostDetailInfo, error)
 	AddComment(ctx context.Context, userId, postUuid string, parentUuid, replyToUserId, content string) (*CommentInfo, error)
@@ -170,19 +171,6 @@ func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.Use
 // CreatePost 在事务中校验资源归属并幂等发布作品。
 func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId string, input userreq.CreatePostRequest) (*PostInfo, error) {
 	return s.saveDiscoverPost(ctx, userId, "", input)
-}
-
-// ListPosts 查询公共帖子并批量装配媒体与互动信息。
-func (s *DiscoverServiceImpl) ListPosts(ctx context.Context, userId string, page, pageSize int, mediaType *int8) ([]PostInfo, int64, error) {
-	posts, err := s.discoverDAO.ListPosts(page, pageSize, mediaType)
-	if err != nil {
-		return nil, 0, err
-	}
-	total, err := s.discoverDAO.CountPosts(mediaType)
-	if err != nil {
-		return nil, 0, err
-	}
-	return s.buildPostInfoList(ctx, userId, posts, total)
 }
 
 // ListLikedPosts 查询用户点赞的帖子及媒体信息。

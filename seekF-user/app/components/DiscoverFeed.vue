@@ -11,8 +11,8 @@
     </div>
     <div v-else-if="mounted && !loading && !items.length" class="py-20 text-center text-gray-400">
       <Icon :name="search ? 'mdi:magnify' : 'mdi:compass-outline'" class="mb-3 text-4xl" />
-      <p class="text-sm">{{ search ? (keyword ? '未找到相关动态，试试其他关键词' : '搜索你感兴趣的内容') : '社区暂无动态，分享第一条内容吧' }}</p>
-      <NuxtLink v-if="!search" to="/discover/create" class="mt-4 inline-block rounded-full bg-blue-500 px-5 py-2 text-sm text-white hover:bg-blue-600">发布动态</NuxtLink>
+      <p class="text-sm">{{ search ? (keyword ? '未找到相关动态，试试其他关键词' : '搜索你感兴趣的内容') : channel === 'following' ? (hasFollowing ? '关注的博主暂无公开作品' : '还没有关注博主，去推荐页发现感兴趣的人吧') : '社区暂无动态，分享第一条内容吧' }}</p>
+      <NuxtLink v-if="!search && channel !== 'following'" to="/discover/create" class="mt-4 inline-block rounded-full bg-blue-500 px-5 py-2 text-sm text-white hover:bg-blue-600">发布动态</NuxtLink>
     </div>
     <div v-if="(!mounted || loading) && (!search || items.length)" class="py-8 flex justify-center items-center text-gray-500" role="status">
       <Icon name="uil:spinner" class="animate-spin text-xl mr-2" />
@@ -30,7 +30,7 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 const props = defineProps({ search: { type: Boolean, default: false }, keyword: { type: String, default: '' }, channel: { type: String, default: 'recommended' } })
-const { items, loading, initialLoading, error, noMore, total, loadMore, reset, updateLike } = useDiscoverFeed(props.search ? () => props.keyword : undefined, () => props.channel)
+const { items, loading, initialLoading, error, noMore, total, hasFollowing, loadMore, reset, updateLike } = useDiscoverFeed(props.search ? () => props.keyword : undefined, () => props.channel)
 const mounted = ref(false)
 const selectedItem = ref(null)
 const sentinel = ref(null)

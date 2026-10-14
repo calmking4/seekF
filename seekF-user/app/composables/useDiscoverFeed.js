@@ -9,6 +9,8 @@ export function useDiscoverFeed(getKeyword, getChannel) {
   const noMore = ref(false)
   const page = ref(1)
   const total = ref(0)
+  const cursor = ref('')
+  const hasFollowing = ref(false)
   const pageSize = 12
   let generation = 0
   let controller = null
@@ -23,8 +25,8 @@ export function useDiscoverFeed(getKeyword, getChannel) {
     loading.value = true
     error.value = ''
     try {
-      const response = await useApi$(getKeyword ? '/user/discover/search' : '/user/discover/list', {
-        body: { page: page.value, page_size: pageSize, ...(getKeyword ? { keyword } : getChannel?.() === 'image' ? { media_type: 0 } : getChannel?.() === 'video' ? { media_type: 1 } : {}) },
+      const response = await useApi$(getKeyword ? '/user/discover/search' : '/user/discover/feed', {
+        body: getKeyword ? { page: page.value, page_size: pageSize, keyword } : { cursor: cursor.value, page_size: pageSize, source: getChannel?.() === 'following' ? 'following' : 'all', ...(getChannel?.() === 'image' ? { media_type: 0 } : getChannel?.() === 'video' ? { media_type: 1 } : {}) },
         signal: controller.signal,
         retry: 0,
       })
@@ -32,11 +34,20 @@ export function useDiscoverFeed(getKeyword, getChannel) {
       if (response.code !== 200 || !response.data || (response.data.list != null && !Array.isArray(response.data.list))) {
         throw new Error(response.message || '获取内容失败，请稍后重试')
       }
+      if (!getKeyword && (!Array.isArray(response.data.list) || typeof response.data.has_more !== 'boolean' || typeof response.data.next_cursor !== 'string' || typeof response.data.has_following !== 'boolean' || (response.data.has_more && (!response.data.next_cursor || response.data.next_cursor === cursor.value || !response.data.list?.length)))) {
+        throw new Error('获取内容失败，请稍后重试')
+      }
       const list = (response.data.list || []).map(normalizeDiscoverPost)
       items.value = mergeDiscoverPage(items.value, list)
       total.value = Number(response.data.total) || 0
-      page.value++
-      noMore.value = list.length === 0 || list.length < pageSize || items.value.length >= total.value
+      if (getKeyword) {
+        page.value++
+        noMore.value = list.length === 0 || list.length < pageSize || items.value.length >= total.value
+      } else {
+        cursor.value = response.data.next_cursor
+        noMore.value = !response.data.has_more
+        hasFollowing.value = response.data.has_following
+      }
     } catch (err) {
       if (requestGeneration !== generation) return
       error.value = err?.data?.message || (err.message === '获取内容失败，请稍后重试' ? err.message : '获取内容失败，请稍后重试')
@@ -50,6 +61,8 @@ export function useDiscoverFeed(getKeyword, getChannel) {
     controller?.abort()
     items.value = []
     page.value = 1
+    cursor.value = ''
+    hasFollowing.value = false
     total.value = 0
     noMore.value = false
     error.value = ''
@@ -62,5 +75,5 @@ export function useDiscoverFeed(getKeyword, getChannel) {
     if (item) { item.likeCount = likeCount; item.isLiked = isLiked }
   }
   onScopeDispose(() => { generation++; controller?.abort() })
-  return { items, loading, initialLoading, error, noMore, total, loadMore, reset, updateLike }
+  return { items, loading, initialLoading, error, noMore, total, hasFollowing, loadMore, reset, updateLike }
 }

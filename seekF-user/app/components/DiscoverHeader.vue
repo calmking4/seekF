@@ -13,9 +13,9 @@
     </div>
     <div v-if="immersive" class="grid transition-[grid-template-rows,opacity,margin] duration-300 ease-out motion-reduce:transition-none" :class="tabsCollapsed ? 'mt-0 grid-rows-[0fr] opacity-0' : 'mt-5 grid-rows-[1fr] opacity-100'" :inert="tabsCollapsed">
       <div class="min-h-0 overflow-hidden">
-        <nav class="relative mx-auto grid w-full max-w-md grid-cols-4" aria-label="发现内容分类">
+        <nav class="relative mx-auto grid w-full max-w-md grid-cols-5" aria-label="发现内容分类">
           <button v-for="tab in tabs" :key="tab.key" type="button" class="min-w-0 px-2 py-3 text-sm transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 sm:text-base" :class="channel === tab.key ? 'font-medium text-gray-900' : 'text-gray-500 hover:text-gray-800'" :aria-pressed="channel === tab.key" @click="$emit('update:channel', tab.key)">{{ tab.label }}</button>
-          <span aria-hidden="true" class="pointer-events-none absolute bottom-0 left-0 flex w-1/4 justify-center transition-transform duration-300 ease-out motion-reduce:transition-none" :style="{ transform: 'translateX(' + activeTabIndex * 100 + '%)' }"><span class="h-0.5 w-8 rounded-full bg-[#60a5fa]" /></span>
+          <span aria-hidden="true" class="pointer-events-none absolute bottom-0 left-0 flex w-1/5 justify-center transition-transform duration-300 ease-out motion-reduce:transition-none" :style="{ transform: 'translateX(' + activeTabIndex * 100 + '%)' }"><span class="h-0.5 w-8 rounded-full bg-[#60a5fa]" /></span>
         </nav>
       </div>
     </div>
@@ -27,7 +27,7 @@ import { computed, ref, watch, onMounted, onUnmounted, onActivated, onDeactivate
 const props = defineProps({ initialKeyword: { type: String, default: '' }, immersive: { type: Boolean, default: false }, channel: { type: String, default: 'recommended' } })
 defineEmits(['update:channel'])
 const header = ref(null)
-const tabs = [{ key: 'recommended', label: '推荐' }, { key: 'image', label: '图文' }, { key: 'video', label: '视频' }, { key: 'hot', label: '热榜' }]
+const tabs = [{ key: 'recommended', label: '推荐' }, { key: 'image', label: '图文' }, { key: 'video', label: '视频' }, { key: 'hot', label: '热榜' }, { key: 'following', label: '关注' }]
 const activeTabIndex = computed(() => Math.max(0, tabs.findIndex(tab => tab.key === props.channel)))
 const tabsCollapsed = ref(false)
 let scrollTarget
