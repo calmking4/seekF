@@ -11,6 +11,7 @@ import (
 	userreq "seekF-backend/internal/dto/user/user_req"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	userdao "seekF-backend/internal/dao/user_dao"
@@ -953,7 +954,7 @@ func (s *DiscoverServiceImpl) CheckCollected(ctx context.Context, userId, postUu
 	return true, folder.Uuid, nil
 }
 
-// SearchPosts 从数据库查询公开作品，防止旧 ES 文档泄露已私密或已删除内容。
+// SearchPosts 优先全文搜索并回数据库核对权限；同步积压或ES故障时回退数据库。
 func (s *DiscoverServiceImpl) SearchPosts(ctx context.Context, userId, keyword string, page, pageSize int) ([]PostInfo, int64, error) {
 	if page < 1 {
 		page = 1
@@ -961,11 +962,68 @@ func (s *DiscoverServiceImpl) SearchPosts(ctx context.Context, userId, keyword s
 	if pageSize < 1 || pageSize > 50 {
 		pageSize = 20
 	}
+	keyword = strings.TrimSpace(keyword)
+	if keyword != "" {
+		pending, pendingErr := userdao.NewDiscoverOutboxDAO(db.GormDB.WithContext(ctx)).HasIncomplete()
+		if pendingErr == nil && !pending {
+			searchCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			ids, searchErr := userdao.NewESDiscoverDAO().SearchPostIDs(searchCtx, keyword)
+			cancel()
+			if searchErr == nil && len(ids) > 0 {
+				posts, total, verifyErr := s.filterDiscoverSearch(ctx, ids, page, pageSize)
+				if verifyErr != nil {
+					return nil, 0, verifyErr
+				}
+				return s.buildPostInfoList(ctx, userId, posts, total)
+			}
+			if searchErr != nil && ctx.Err() == nil {
+				zlog.Warn("全文搜索降级为数据库查询: " + searchErr.Error())
+			}
+		}
+	}
 	posts, total, err := s.discoverDAO.SearchPostsPage(keyword, page, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
 	return s.buildPostInfoList(ctx, userId, posts, total)
+}
+
+// filterDiscoverSearch 对候选先核对当前权限再分页，避免私密候选占位导致短页或错误总数。
+func (s *DiscoverServiceImpl) filterDiscoverSearch(ctx context.Context, ids []string, page, pageSize int) ([]models.DiscoverPost, int64, error) {
+	visible := make(map[string]models.DiscoverPost, len(ids))
+	for start := 0; start < len(ids); start += 500 {
+		end := start + 500
+		if end > len(ids) {
+			end = len(ids)
+		}
+		posts, err := s.discoverDAO.FindPublicPostsByUuids(ctx, ids[start:end])
+		if err != nil {
+			return nil, 0, fmt.Errorf("核对搜索作品公开范围失败: %w", err)
+		}
+		for _, post := range posts {
+			visible[post.Uuid] = post
+		}
+	}
+	ordered := make([]models.DiscoverPost, 0, len(visible))
+	for _, id := range ids {
+		if post, ok := visible[id]; ok {
+			ordered = append(ordered, post)
+			delete(visible, id)
+		}
+	}
+	total := int64(len(ordered))
+	if int64(page) > total/int64(pageSize)+1 {
+		return []models.DiscoverPost{}, total, nil
+	}
+	offset := (int64(page) - 1) * int64(pageSize)
+	if offset >= total {
+		return []models.DiscoverPost{}, total, nil
+	}
+	end := offset + int64(pageSize)
+	if end > total {
+		end = total
+	}
+	return ordered[offset:end], total, nil
 }
 
 // buildPostInfoList 将帖子模型列表转换为PostInfo列表
@@ -1448,16 +1506,10 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 			}
 		}
 
-		return nil
+		return userdao.NewDiscoverOutboxDAO(tx).Create(saved)
 	})
 	if err != nil {
 		return nil, err
-	}
-	// 数据库决定权限，ES仅同步公开索引，索引延迟不能影响访问校验。
-	if db.ESClient != nil {
-		if err := userdao.NewESDiscoverDAO().IndexPost(discoverIndexPost(saved)); err != nil {
-			zlog.Warn("同步作品搜索索引失败，作品=" + saved.Uuid + ": " + err.Error())
-		}
 	}
 	posts, _, err := s.buildPostInfoList(ctx, userId, []models.DiscoverPost{*saved}, 1)
 	if err != nil {
@@ -1469,9 +1521,9 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 	return &posts[0], nil
 }
 
-// DeletePost 仅允许作者删除作品并在事务中释放资源引用。
+// DeletePost 仅允许作者软删除作品，并在同一事务中记录搜索同步事件。
 func (s *DiscoverServiceImpl) DeletePost(ctx context.Context, userId, postUuid string) error {
-	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewDiscoverDAO(tx)
 		post, err := dao.FindPostByUuidForUpdate(postUuid)
 		if err != nil {
@@ -1483,26 +1535,15 @@ func (s *DiscoverServiceImpl) DeletePost(ctx context.Context, userId, postUuid s
 		if post.UserId != userId {
 			return fmt.Errorf("无权删除此作品")
 		}
-		return dao.DeletePost(post)
-	})
-	if err != nil {
-		return err
-	}
-	if db.ESClient != nil {
-		if err := userdao.NewESDiscoverDAO().UpdatePostStatus(postUuid, 1); err != nil {
-			zlog.Warn("更新已删除作品索引失败，作品=" + postUuid + ": " + err.Error())
+		post.Version++
+		if err := dao.SavePost(post); err != nil {
+			return err
 		}
-	}
-	return nil
-}
-
-// discoverIndexPost 将私密作品在搜索索引中标为不可检索，不修改数据库状态。
-func discoverIndexPost(post *models.DiscoverPost) *models.DiscoverPost {
-	indexPost := *post
-	if post.Visibility != 0 {
-		indexPost.Status = 1
-	}
-	return &indexPost
+		if err := dao.DeletePost(post); err != nil {
+			return err
+		}
+		return userdao.NewDiscoverOutboxDAO(tx).Create(post)
+	})
 }
 
 // normalizeDiscoverMediaURL 从受控媒体入口恢复资源原地址，统一发布摘要及资源归属查询。
@@ -1568,17 +1609,15 @@ func (s *DiscoverServiceImpl) SetPostVisibility(ctx context.Context, userId stri
 			if err := dao.SavePost(post); err != nil {
 				return err
 			}
+			if err := userdao.NewDiscoverOutboxDAO(tx).Create(post); err != nil {
+				return err
+			}
 		}
 		saved = post
 		return nil
 	})
 	if err != nil {
 		return 0, err
-	}
-	if db.ESClient != nil {
-		if err := userdao.NewESDiscoverDAO().IndexPost(discoverIndexPost(saved)); err != nil {
-			zlog.Warn("同步作品可见性索引失败，作品=" + saved.Uuid + ": " + err.Error())
-		}
 	}
 	return saved.Version, nil
 }

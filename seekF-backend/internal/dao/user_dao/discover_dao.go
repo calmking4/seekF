@@ -22,6 +22,8 @@ type DiscoverMediaInfo struct {
 
 // DiscoverDAO 发现页帖子、媒体和互动数据访问接口。
 type DiscoverDAO interface {
+	// FindPublicPostsByUuids 批量读取候选作品的当前公开状态，不能使用ES中的旧正文。
+	FindPublicPostsByUuids(ctx context.Context, uuids []string) ([]models.DiscoverPost, error)
 	// CountOwnWorksByStatus 返回作者各状态作品数量，不受当前选中状态限制。
 	CountOwnWorksByStatus(userId, keyword string, visibility *int8) (map[int8]int64, error)
 	// ListOwnWorks 按作者、状态及标题筛选作品并返回真实总数。
@@ -719,4 +721,14 @@ func (d *DiscoverDAOImpl) CountOwnWorksByStatus(userId, keyword string, visibili
 		counts[row.Status] = row.Total
 	}
 	return counts, nil
+}
+
+// FindPublicPostsByUuids 统一过滤已下架、私密及软删除作品，返回当前数据库内容。
+func (d *DiscoverDAOImpl) FindPublicPostsByUuids(ctx context.Context, uuids []string) ([]models.DiscoverPost, error) {
+	var posts []models.DiscoverPost
+	if len(uuids) == 0 {
+		return posts, nil
+	}
+	err := d.db.WithContext(ctx).Where("uuid IN ? AND status=0 AND visibility=0", uuids).Find(&posts).Error
+	return posts, err
 }

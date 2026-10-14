@@ -11,3 +11,12 @@ const (
 	AIAssistantName   = "AI助手"
 	AIAssistantAvatar = "https://seekf.oss-cn-shenzhen.aliyuncs.com/common/ai_avatar/AI%E5%8A%A9%E6%89%8B%E5%A4%B4%E5%83%8F.png"
 )
+
+const (
+	// DiscoverEventPending 表示事件尚待投递Kafka。
+	DiscoverEventPending int8 = 0
+	// DiscoverEventPublished 表示事件已投递Kafka，尚待搜索同步完成。
+	DiscoverEventPublished int8 = 1
+	// DiscoverEventCompleted 表示搜索同步已完成，重复消费直接跳过。
+	DiscoverEventCompleted int8 = 2
+)

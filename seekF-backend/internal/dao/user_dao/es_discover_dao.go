@@ -5,227 +5,168 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
+	"math"
+	"net/http"
+
+	"seekF-backend/internal/models"
+	"seekF-backend/internal/pkg/db"
 
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/elastic/go-elasticsearch/v8/esapi"
-	"seekF-backend/internal/models"
-	"seekF-backend/internal/pkg/db"
-	"seekF-backend/internal/pkg/zlog"
 )
 
-// ESDiscoverDAO ES帖子搜索DAO接口
+// ESDiscoverDAO 同步当前作品状态并返回搜索候选ID，业务内容与权限必须回数据库核对。
 type ESDiscoverDAO interface {
-	// IndexPost 索引一篇帖子到ES
-	IndexPost(post *models.DiscoverPost) error
-	// SearchPosts 按关键词搜索帖子（分页 + 高亮）
-	SearchPosts(keyword string, page, pageSize int) ([]models.DiscoverPost, int64, error)
-	// UpdatePostStatus 更新帖子状态
-	UpdatePostStatus(postUuid string, status int8) error
+	SyncPost(context.Context, *models.DiscoverPost) error
+	SearchPostIDs(context.Context, string) ([]string, error)
 }
 
-// ESDiscoverDAOImpl ES帖子搜索DAO实现
+// ESDiscoverDAOImpl 发现页搜索索引的数据访问实现。
 type ESDiscoverDAOImpl struct {
 	client *elasticsearch.Client
 }
 
-// NewESDiscoverDAO 创建ES帖子搜索DAO实例
+// NewESDiscoverDAO 复用已初始化的ES连接，失败时交由持久化事件重试。
 func NewESDiscoverDAO() ESDiscoverDAO {
-	return &ESDiscoverDAOImpl{
-		client: db.ESClient,
-	}
+	return &ESDiscoverDAOImpl{client: db.ESClient}
 }
 
-// esPostDoc ES帖子文档结构
+// esPostDoc 只保存检索字段，互动数量与媒体等展示信息从当前数据库装配。
 type esPostDoc struct {
-	Id           int64    `json:"id"`
-	PostId       string   `json:"post_id"`
-	UserId       string   `json:"user_id"`
-	Title        string   `json:"title"`
-	Content      string   `json:"content"`
-	Tags         []string `json:"tags"`
-	LikeCount    int      `json:"like_count"`
-	CommentCount int      `json:"comment_count"`
-	CollectCount int      `json:"collect_count"`
-	Status       int8     `json:"status"`
-	CreatedAt    string   `json:"created_at"`
+	Id        int64    `json:"id"`
+	Status    int8     `json:"status"`
+	Title     string   `json:"title,omitempty"`
+	Content   string   `json:"content,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	CreatedAt string   `json:"created_at,omitempty"`
 }
 
-// IndexPost 索引一篇帖子到ES
-func (d *ESDiscoverDAOImpl) IndexPost(post *models.DiscoverPost) error {
-	var tags []string
-	if len(post.Tags) > 0 {
-		json.Unmarshal(post.Tags, &tags)
+// SyncPost 使用作品版本写入索引，隐藏或删除作品保留无正文的墓碑以阻止旧消息复活。
+func (d *ESDiscoverDAOImpl) SyncPost(ctx context.Context, post *models.DiscoverPost) error {
+	if d.client == nil {
+		return fmt.Errorf("ES客户端未初始化")
 	}
-
-	doc := esPostDoc{
-		Id:           post.Id,
-		PostId:       post.Uuid,
-		UserId:       post.UserId,
-		Title:        post.Title,
-		Content:      post.Content,
-		Tags:         tags,
-		LikeCount:    post.LikeCount,
-		CommentCount: post.CommentCount,
-		CollectCount: post.CollectCount,
-		Status:       post.Status,
-		CreatedAt:    post.CreatedAt.Format("2006-01-02 15:04:05"),
+	if post.Version == 0 || post.Version > math.MaxInt64 {
+		return fmt.Errorf("作品搜索版本无效，postUuid=%s", post.Uuid)
 	}
-
-	data, err := json.Marshal(doc)
-	if err != nil {
-		return fmt.Errorf("序列化帖子文档失败: %w", err)
-	}
-
-	req := esapi.IndexRequest{
-		Index:      db.ESIndexDiscoverPosts,
-		DocumentID: post.Uuid,
-		Body:       bytes.NewReader(data),
-		Refresh:    "false",
-	}
-
-	res, err := req.Do(context.Background(), d.client)
-	if err != nil {
-		zlog.Error("索引帖子到ES失败: " + err.Error())
+	if err := db.EnsureDiscoverSearchIndex(ctx); err != nil {
 		return err
 	}
-	defer res.Body.Close()
-
-	if res.IsError() {
-		zlog.Error("ES索引帖子返回错误: " + res.String())
-		return fmt.Errorf("ES索引帖子返回错误: %s", res.Status())
+	doc := esPostDoc{Id: post.Id, Status: 1}
+	if !post.DeletedAt.Valid && post.Visibility == 0 && post.Status == 0 {
+		doc.Status = 0
+		doc.Title = post.Title
+		doc.Content = post.Content
+		doc.CreatedAt = post.CreatedAt.Format("2006-01-02 15:04:05")
+		if len(post.Tags) > 0 {
+			if err := json.Unmarshal(post.Tags, &doc.Tags); err != nil {
+				return fmt.Errorf("解析作品标签失败: %w", err)
+			}
+		}
 	}
-
+	data, err := json.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("编码搜索文档失败: %w", err)
+	}
+	version := int(post.Version)
+	request := esapi.IndexRequest{
+		Index:       db.ESIndexDiscoverPosts,
+		DocumentID:  post.Uuid,
+		Body:        bytes.NewReader(data),
+		Version:     &version,
+		VersionType: "external",
+		Refresh:     "wait_for",
+	}
+	response, err := request.Do(ctx, d.client)
+	if err != nil {
+		return fmt.Errorf("同步作品搜索索引失败: %w", err)
+	}
+	defer response.Body.Close()
+	// 同版本重复写入或旧版本写入均不能覆盖索引中的较新状态。
+	if response.StatusCode == http.StatusConflict {
+		return nil
+	}
+	if response.IsError() {
+		return fmt.Errorf("同步作品搜索索引返回错误: %s", response.String())
+	}
 	return nil
 }
 
-// SearchPosts 按关键词搜索帖子（分页 + 高亮）
-func (d *ESDiscoverDAOImpl) SearchPosts(keyword string, page, pageSize int) ([]models.DiscoverPost, int64, error) {
-	if page < 1 {
-		page = 1
+// SearchPostIDs 获取有界的全文候选集合，超过10000条或不完整响应时回退MySQL。
+func (d *ESDiscoverDAOImpl) SearchPostIDs(ctx context.Context, keyword string) ([]string, error) {
+	if d.client == nil {
+		return nil, fmt.Errorf("ES客户端未初始化")
 	}
-	if pageSize < 1 {
-		pageSize = 20
-	}
-	from := (page - 1) * pageSize
-
-	// 构建查询：status过滤 + title/content/tags 多字段搜索
 	query := map[string]interface{}{
+		"_source":          false,
+		"size":             10000,
+		"track_total_hits": true,
 		"query": map[string]interface{}{
 			"bool": map[string]interface{}{
-				"must": []map[string]interface{}{
-					{
-						"term": map[string]interface{}{
-							"status": 0,
-						},
+				"filter": []interface{}{
+					map[string]interface{}{
+						"term": map[string]interface{}{"status": 0},
 					},
-					{
+				},
+				"must": []interface{}{
+					map[string]interface{}{
 						"multi_match": map[string]interface{}{
 							"query":  keyword,
 							"fields": []string{"title^2", "content", "tags"},
-							"type":   "best_fields",
 						},
 					},
 				},
 			},
 		},
-		"sort": []map[string]interface{}{
-			{"_score": "desc"},
-			{"created_at": "desc"},
+		"sort": []interface{}{
+			map[string]string{"_score": "desc"},
+			map[string]string{"created_at": "desc"},
+			map[string]string{"id": "desc"},
 		},
-		"from": from,
-		"size": pageSize,
 	}
-
-	data, err := json.Marshal(query)
+	raw, err := json.Marshal(query)
 	if err != nil {
-		return nil, 0, fmt.Errorf("序列化查询失败: %w", err)
+		return nil, fmt.Errorf("编码搜索请求失败: %w", err)
 	}
-
-	res, err := d.client.Search(
+	response, err := d.client.Search(
+		d.client.Search.WithContext(ctx),
 		d.client.Search.WithIndex(db.ESIndexDiscoverPosts),
-		d.client.Search.WithBody(bytes.NewReader(data)),
-		d.client.Search.WithTrackTotalHits(true),
+		d.client.Search.WithBody(bytes.NewReader(raw)),
 	)
 	if err != nil {
-		return nil, 0, fmt.Errorf("ES搜索帖子失败: %w", err)
+		return nil, fmt.Errorf("查询作品搜索索引失败: %w", err)
 	}
-	defer res.Body.Close()
-
-	if res.IsError() {
-		return nil, 0, fmt.Errorf("ES搜索帖子返回错误: %s", res.String())
+	defer response.Body.Close()
+	if response.IsError() {
+		return nil, fmt.Errorf("查询作品搜索索引返回错误: %s", response.String())
 	}
-
 	var result struct {
+		TimedOut bool `json:"timed_out"`
+		Shards   struct {
+			Failed int `json:"failed"`
+		} `json:"_shards"`
 		Hits struct {
 			Total struct {
-				Value int64 `json:"value"`
+				Value    int64  `json:"value"`
+				Relation string `json:"relation"`
 			} `json:"total"`
 			Hits []struct {
-				Source    esPostDoc            `json:"_source"`
-				Highlight map[string][]string   `json:"highlight,omitempty"`
+				Id string `json:"_id"`
 			} `json:"hits"`
 		} `json:"hits"`
 	}
-
-	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
-		return nil, 0, fmt.Errorf("解析ES搜索结果失败: %w", err)
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("解析作品搜索结果失败: %w", err)
 	}
-
-	var posts []models.DiscoverPost
+	if result.TimedOut || result.Shards.Failed > 0 || result.Hits.Total.Relation != "eq" || result.Hits.Total.Value > 10000 || int64(len(result.Hits.Hits)) != result.Hits.Total.Value {
+		return nil, fmt.Errorf("ES候选过多或结果不完整，改用数据库搜索")
+	}
+	ids := make([]string, 0, len(result.Hits.Hits))
 	for _, hit := range result.Hits.Hits {
-		tagsJSON, _ := json.Marshal(hit.Source.Tags)
-		post := models.DiscoverPost{
-			Id:           hit.Source.Id,
-			Uuid:         hit.Source.PostId,
-			UserId:       hit.Source.UserId,
-			Title:        hit.Source.Title,
-			Content:      hit.Source.Content,
-			Tags:         tagsJSON,
-			LikeCount:    hit.Source.LikeCount,
-			CommentCount: hit.Source.CommentCount,
-			CollectCount: hit.Source.CollectCount,
-			Status:       hit.Source.Status,
+		if hit.Id == "" {
+			return nil, fmt.Errorf("ES候选缺少作品ID")
 		}
-		if t, err := time.Parse("2006-01-02 15:04:05", hit.Source.CreatedAt); err == nil {
-			post.CreatedAt = t
-		}
-		posts = append(posts, post)
+		ids = append(ids, hit.Id)
 	}
-
-	return posts, result.Hits.Total.Value, nil
-}
-
-// UpdatePostStatus 更新帖子状态
-func (d *ESDiscoverDAOImpl) UpdatePostStatus(postUuid string, status int8) error {
-	query := map[string]interface{}{
-		"doc": map[string]interface{}{
-			"status": status,
-		},
-	}
-
-	data, err := json.Marshal(query)
-	if err != nil {
-		return fmt.Errorf("序列化更新请求失败: %w", err)
-	}
-
-	req := esapi.UpdateRequest{
-		Index:      db.ESIndexDiscoverPosts,
-		DocumentID: postUuid,
-		Body:       bytes.NewReader(data),
-	}
-
-	res, err := req.Do(context.Background(), d.client)
-	if err != nil {
-		zlog.Error("ES更新帖子状态失败: " + err.Error())
-		return err
-	}
-	defer res.Body.Close()
-
-	if res.IsError() {
-		zlog.Error("ES更新帖子状态返回错误: " + res.String())
-		return fmt.Errorf("ES更新帖子状态返回错误: %s", res.Status())
-	}
-
-	return nil
+	return ids, nil
 }

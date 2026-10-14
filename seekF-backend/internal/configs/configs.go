@@ -68,6 +68,7 @@ type KafkaConfig struct {
 	ChatTopic      string        `toml:"chatTopic"`
 	AIChatTopic    string        `toml:"aiChatTopic"`
 	AICommentTopic string        `toml:"aiCommentTopic"`
+	DiscoverTopic  string        `toml:"discoverTopic"`
 	LogoutTopic    string        `toml:"logoutTopic"`
 	Partition      int           `toml:"partition"`
 	Timeout        time.Duration `toml:"timeout"`

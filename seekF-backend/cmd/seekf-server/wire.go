@@ -29,6 +29,7 @@ var daoProviderSet = wire.NewSet(
 	userdao.NewKnowledgeDAO,
 	userdao.NewKnowledgeChunkDAO,
 	userdao.NewDiscoverDAO,
+	userdao.NewESDiscoverDAO,
 	userdao.NewFollowDAO,
 	userdao.NewNotificationDAO,
 )
@@ -78,6 +79,7 @@ type App struct {
 	GroupDAO       userdao.GroupDAO
 	ContactDAO     userdao.ContactDAO
 	DiscoverDAO    userdao.DiscoverDAO
+	ESDiscoverDAO  userdao.ESDiscoverDAO
 	UserInfoDAO    userdao.UserInfoDAO
 }
 

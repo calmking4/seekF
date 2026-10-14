@@ -64,6 +64,7 @@ func initApp(db *gorm.DB) App {
 	adminService := adminservice.NewAdminService(adminDAO)
 	adminController := admin.NewAdminController(adminService, authService)
 	engine := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController, wsController, aiChatController, knowledgeController, discoverController, followController, notificationController, adminController)
+	esDiscoverDAO := userdao.NewESDiscoverDAO()
 	app := App{
 		Router:         engine,
 		SessionService: sessionService,
@@ -72,6 +73,7 @@ func initApp(db *gorm.DB) App {
 		GroupDAO:       groupDAO,
 		ContactDAO:     contactDAO,
 		DiscoverDAO:    discoverDAO,
+		ESDiscoverDAO:  esDiscoverDAO,
 		UserInfoDAO:    userInfoDAO,
 	}
 	return app
@@ -80,7 +82,7 @@ func initApp(db *gorm.DB) App {
 // wire.go:
 
 // DAO ProviderSet — 所有数据访问层依赖
-var daoProviderSet = wire.NewSet(admindao.NewAdminDAO, userdao.NewUserInfoDAO, userdao.NewContactDAO, userdao.NewSessionDAO, userdao.NewGroupDAO, userdao.NewContactApplyDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO, userdao.NewFollowDAO, userdao.NewNotificationDAO)
+var daoProviderSet = wire.NewSet(admindao.NewAdminDAO, userdao.NewUserInfoDAO, userdao.NewContactDAO, userdao.NewSessionDAO, userdao.NewGroupDAO, userdao.NewContactApplyDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO, userdao.NewESDiscoverDAO, userdao.NewFollowDAO, userdao.NewNotificationDAO)
 
 // ServiceProviderSet — 所有业务逻辑层依赖
 var serviceProviderSet = wire.NewSet(adminservice.NewAdminService, userservice.NewAuthService, userservice.NewUserInfoService, userservice.NewContactService, userservice.NewGroupService, userservice.NewSessionService, userservice.NewMessageService, userservice.NewFileService, userservice.NewAIChatService, userservice.NewKnowledgeService, userservice.NewDiscoverService, userservice.NewFollowService, userservice.NewNotificationService)
@@ -98,5 +100,6 @@ type App struct {
 	GroupDAO       userdao.GroupDAO
 	ContactDAO     userdao.ContactDAO
 	DiscoverDAO    userdao.DiscoverDAO
+	ESDiscoverDAO  userdao.ESDiscoverDAO
 	UserInfoDAO    userdao.UserInfoDAO
 }

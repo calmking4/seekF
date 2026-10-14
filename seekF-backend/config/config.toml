@@ -54,6 +54,7 @@ maxAge = 30             # 保留旧日志的最大天数
 rotationTime = 24       # 轮转间隔（小时）
 
 [kafkaConfig]
+discoverTopic = "discover_post_events"
 hostPort = "127.0.0.1:9092" # "127.0.0.1:9092,127.0.0.1:9093,127.0.0.1:9094" 多个kafka服务器
 loginTopic = "login"
 chatTopic = "chat_message"

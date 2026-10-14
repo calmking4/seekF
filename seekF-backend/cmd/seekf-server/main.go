@@ -38,6 +38,13 @@ func main() {
 	ai.InitAICommentConsumer(app.DiscoverDAO, app.UserInfoDAO)
 	ai.StartAICommentConsumer()
 
+	// 初始化并启动发现页Kafka消费者
+	userservice.InitDiscoverConsumer(app.ESDiscoverDAO)
+	userservice.StartDiscoverConsumer()
+
+	// 启动发现页Outbox投递器
+	userservice.StartDiscoverPublisher()
+
 	// 初始化Qdrant
 	db.InitQdrant()
 

@@ -7,7 +7,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "time": {
     "from": "now-1h",
@@ -749,6 +749,212 @@
         "tooltip": {
           "mode": "multi"
         }
+      }
+    },
+    {
+      "id": 16,
+      "title": "发现页 Outbox 事件积压",
+      "type": "timeseries",
+      "description": "状态0待投递Kafka，状态1已投递但尚未完成ES同步。按实例和状态展示；同一数据库被多个实例采集时不要将各实例相加。采集失败显示暂无数据，结合采集状态查看。",
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "seekf_discover_outbox_pending_events{job=~\"$job\",instance=~\"$instance\",state=\"pending\"}",
+          "legendFormat": "待投递 {{instance}}",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "seekf_discover_outbox_pending_events{job=~\"$job\",instance=~\"$instance\",state=\"published\"}",
+          "legendFormat": "待同步 {{instance}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "title": "发现页 Outbox 最长未完成事件等待时长",
+      "type": "timeseries",
+      "description": "当前未完成事件从创建到采集时刻的最大等待时长，单位秒；没有积压时为0。",
+      "gridPos": {
+        "x": 12,
+        "y": 53,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "seekf_discover_outbox_oldest_age_seconds{job=~\"$job\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "暂无数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "title": "发现页 Outbox 未完成事件累计失败次数",
+      "type": "timeseries",
+      "description": "当前未完成事件的投递与消费失败次数之和，是Gauge；事件完成后会下降，不使用rate或increase，也不代表历史失败总数。",
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "seekf_discover_outbox_retry_failures{job=~\"$job\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "title": "发现页 Outbox 积压采集状态",
+      "type": "stat",
+      "description": "1表示Outbox数据库查询成功，0表示查询失败。多实例选择时显示最低值；缺少指标时显示暂无数据。后端是否可抓取另看后端采集状态。",
+      "gridPos": {
+        "x": 12,
+        "y": 61,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(seekf_discover_outbox_collect_success{job=~\"$job\",instance=~\"$instance\"})",
+          "legendFormat": "采集状态",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "max": 1,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "查询失败",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "查询正常",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
       }
     }
   ]

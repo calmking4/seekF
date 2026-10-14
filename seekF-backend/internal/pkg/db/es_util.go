@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/elastic/go-elasticsearch/v8"
 	"seekF-backend/internal/configs"
 	"seekF-backend/internal/pkg/zlog"
+
+	"github.com/elastic/go-elasticsearch/v8"
 )
 
 // ESClient Elasticsearch客户端单例
@@ -30,6 +31,8 @@ func init() {
 		return
 	}
 
+	ESClient = client
+
 	// 测试连接
 	res, err := client.Info()
 	if err != nil {
@@ -43,7 +46,6 @@ func init() {
 		return
 	}
 
-	ESClient = client
 	zlog.Info(fmt.Sprintf("已连接到Elasticsearch: %s", cfg.ESConfig.Addresses))
 
 	// 自动创建索引
