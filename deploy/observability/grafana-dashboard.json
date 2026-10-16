@@ -7,7 +7,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "30s",
   "time": {
     "from": "now-1h",
@@ -956,6 +956,33 @@
         "graphMode": "none",
         "textMode": "auto"
       }
+    },
+    {
+      "id": 30,
+      "title": "发现页近7天真实互动（用户与帖子去重）",
+      "description": "只统计当前公开已发布帖子，排除作者自身互动及AI评论；取消点赞和收藏后退出统计。统计窗口实时变化，热榜排名仍每两小时更新。",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 69, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "refId": "A", "expr": "max by (action) (seekf_discover_interactions_window{job=~\"$job\",instance=~\"$instance\"})", "legendFormat": "{{action}}" }],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] }
+    },{
+      "id": 31,
+      "title": "推荐与热榜降级次数",
+      "description": "首屏冷启动或依赖故障降级为时间流的次数，按来源区分；非异步事件积压。",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 69, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "refId": "A", "expr": "sum by (source) (increase(seekf_discover_feed_fallbacks_total{job=~\"$job\",instance=~\"$instance\"}[5m]))", "legendFormat": "{{source}}" }],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] }
+    },{
+      "id": 32,
+      "title": "发现页真实互动采集状态",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 77, "w": 12, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "refId": "A", "expr": "min(seekf_discover_interactions_collect_success{job=~\"$job\",instance=~\"$instance\"})", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "max": 1 }, "overrides": [] }
     }
   ]
 }

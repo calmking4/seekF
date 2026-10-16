@@ -1,7 +1,7 @@
 <template>
   <div ref="container" class="flex gap-4">
     <div v-for="(column, index) in columns" :key="index" class="flex-1 min-w-0 flex flex-col space-y-4">
-      <DiscoverPostCard v-for="post in column" :key="post.id" :post="post" @open="$emit('open', $event)" @like-updated="$emit('like-updated', $event)" />
+      <DiscoverPostCard v-for="post in column" :key="post.id" :post="post" :feedback-enabled="feedbackEnabled" :source="source" @open="$emit('open', $event)" @like-updated="$emit('like-updated', $event)" @feedback="$emit('feedback', $event)" />
     </div>
   </div>
 </template>
@@ -9,8 +9,8 @@
 <script setup>
 import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { discoverAspectRatio } from '~/utils/discover'
-const props = defineProps({ posts: { type: Array, default: () => [] } })
-defineEmits(['open', 'like-updated'])
+const props = defineProps({ posts: { type: Array, default: () => [] }, feedbackEnabled: { type: Boolean, default: false }, source: { type: String, default: 'profile' } })
+defineEmits(['open', 'like-updated', 'feedback'])
 const container = ref(null)
 const width = ref(0)
 const viewportWidth = ref(0)

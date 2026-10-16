@@ -6,6 +6,7 @@ import (
 	"seekF-backend/internal/middlewares"
 	"seekF-backend/internal/pkg/observability"
 	businessmetrics "seekF-backend/internal/pkg/observability/metrics"
+	"seekF-backend/internal/pkg/websocket"
 
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
@@ -32,8 +33,16 @@ func SetupRouter(
 	metrics := observability.NewMetrics(
 		httpMetrics.RequestsCollector(),
 		httpMetrics.DurationCollector(),
-		businessmetrics.NewOnlineUsersCollector(),
+		businessmetrics.NewOnlineUsersCollector(func() int {
+			if websocket.ChatServer == nil {
+				return 0
+			}
+			return websocket.ChatServer.OnlineCount()
+		}),
 		businessmetrics.NewDiscoverOutboxCollector(),
+		businessmetrics.NewDiscoverActionsCollector(),
+		businessmetrics.NewDiscoverFeedFallbacksCollector(),
+		businessmetrics.NewDiscoverActivityCollector(),
 	)
 	r := gin.New()
 	// 指标包围Recovery，确保异常恢复后的500响应也被记录。
@@ -147,6 +156,8 @@ func SetupRouter(
 			protectedGroup.POST("/discover/visibility", discoverController.SetPostVisibility)
 			protectedGroup.POST("/discover/delete", discoverController.DeletePost)
 			protectedGroup.POST("/discover/feed", discoverController.ListFeed)
+			protectedGroup.POST("/discover/click", discoverController.RecordClick)
+			protectedGroup.POST("/discover/feedback", discoverController.SetFeedback)
 			protectedGroup.POST("/discover/search", discoverController.SearchPosts)
 			protectedGroup.POST("/discover/profile", discoverController.GetUserProfile)
 			protectedGroup.POST("/discover/liked-list", discoverController.ListLikedPosts)

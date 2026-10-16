@@ -13,10 +13,10 @@ const (
 )
 
 const (
-	// DiscoverEventPending 表示事件尚待投递Kafka。
+	// 表示事件尚待投递Kafka。
 	DiscoverEventPending int8 = 0
-	// DiscoverEventPublished 表示事件已投递Kafka，尚待搜索同步完成。
+	// 表示事件已投递Kafka，尚待搜索同步完成。
 	DiscoverEventPublished int8 = 1
-	// DiscoverEventCompleted 表示搜索同步已完成，重复消费直接跳过。
+	// 表示搜索同步已完成，重复消费直接跳过。
 	DiscoverEventCompleted int8 = 2
 )

@@ -871,13 +871,45 @@ func (c *DiscoverController) DeletePost(ctx *gin.Context) {
 	resp.Success(ctx, "作品已删除", nil)
 }
 
-// respondDiscoverError 区分参数错误与幂等或编辑版本冲突。
+// respondDiscoverError 区分参数错误、编辑冲突和推荐会话过期。
 func respondDiscoverError(ctx *gin.Context, err error) {
 	status := http.StatusBadRequest
 	if errors.Is(err, userservice.ErrDiscoverConflict) {
 		status = http.StatusConflict
 	}
+	if errors.Is(err, userservice.ErrDiscoverSessionExpired) {
+		status = http.StatusGone
+	}
 	resp.Error(ctx, err.Error(), status)
+}
+
+// RecordClick 记录用户主动打开帖子详情的点击，详情读取不自动产生该行为。
+func (c *DiscoverController) RecordClick(ctx *gin.Context) {
+	var input userreq.DiscoverClickRequest
+	if err := ctx.ShouldBindJSON(&input); err != nil {
+		resp.Error(ctx, "帖子点击参数错误", http.StatusBadRequest)
+		return
+	}
+	if err := c.discoverService.RecordDiscoverClick(ctx.Request.Context(), ctx.GetString("Uuid"), input); err != nil {
+		respondDiscoverError(ctx, err)
+		return
+	}
+	resp.Success(ctx, "点击已记录", nil)
+}
+
+// SetFeedback 设置或撤销当前用户对帖子或作者的不感兴趣。
+func (c *DiscoverController) SetFeedback(ctx *gin.Context) {
+	var input userreq.DiscoverFeedbackRequest
+	if err := ctx.ShouldBindJSON(&input); err != nil {
+		resp.Error(ctx, "不感兴趣参数错误", http.StatusBadRequest)
+		return
+	}
+	authorId, err := c.discoverService.SetDiscoverFeedback(ctx.Request.Context(), ctx.GetString("Uuid"), input)
+	if err != nil {
+		respondDiscoverError(ctx, err)
+		return
+	}
+	resp.Success(ctx, "推荐偏好已更新", gin.H{"post_uuid": input.PostUuid, "author_uuid": authorId, "target_type": input.TargetType, "active": *input.Active})
 }
 
 // ListOwnWorks 返回当前登录作者的作品及筛选分页总数。

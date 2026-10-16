@@ -21,12 +21,25 @@ type UpdatePostRequest struct {
 	PostUuid string `json:"post_uuid" binding:"required"` // 需要更新的已有帖子UUID
 }
 
-// FeedRequest 发现页游标分页，数据源为全部公开帖子或当前用户关注的作品。
+// FeedRequest 发现页游标分页，区分时间流、关注流、推荐与热榜。
 type FeedRequest struct {
-	Source    string `json:"source" binding:"omitempty,oneof=all following"`
+	Source    string `json:"source" binding:"omitempty,oneof=all following recommended hot"`
 	MediaType *int8  `json:"media_type" binding:"omitempty,oneof=0 1"`
 	Cursor    string `json:"cursor" binding:"max=2048"`
 	PageSize  int    `json:"page_size" binding:"min=0,max=20"`
+}
+
+// DiscoverClickRequest 只用于用户主动打开详情，不由详情查询自动触发。
+type DiscoverClickRequest struct {
+	PostUuid string `json:"post_uuid" binding:"required,max=20"`
+	Source   string `json:"source" binding:"required,oneof=recommended hot following image video search profile collection liked"`
+}
+
+// DiscoverFeedbackRequest 根据帖子确定目标作者，明确设置不感兴趣状态。
+type DiscoverFeedbackRequest struct {
+	PostUuid   string `json:"post_uuid" binding:"required,max=20"`
+	TargetType string `json:"target_type" binding:"required,oneof=post author"`
+	Active     *bool  `json:"active" binding:"required"`
 }
 
 // ListPostsRequest 点赞作品的页码分页参数。

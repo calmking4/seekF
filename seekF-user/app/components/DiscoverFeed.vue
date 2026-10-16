@@ -5,9 +5,9 @@
       <Icon name="uil:spinner" class="animate-spin text-3xl mb-3" />
       <span class="text-sm">搜索中...</span>
     </div>
-    <DiscoverPostGrid v-if="items.length" :posts="items" @open="selectedItem = $event" @like-updated="updateLike" />
+    <DiscoverPostGrid v-if="items.length" :posts="items" :feedback-enabled="!search && channel === 'recommended'" :source="search ? 'search' : channel" @open="selectedItem = $event" @like-updated="updateLike" @feedback="applyFeedback" />
     <div v-if="error" class="my-8 rounded-xl border border-red-100 bg-white p-6 text-center" role="alert">
-      <p class="mb-3 text-sm text-gray-600">{{ error }}</p><button type="button" class="rounded-full bg-blue-500 px-5 py-2 text-sm text-white hover:bg-blue-600 focus-visible:outline-blue-500" :disabled="loading" @click="loadMore">重新加载</button>
+      <p class="mb-3 text-sm text-gray-600">{{ error }}</p><button type="button" class="rounded-full bg-blue-500 px-5 py-2 text-sm text-white hover:bg-blue-600 focus-visible:outline-blue-500" :disabled="loading" @click="resetRequired ? reset() : loadMore()">重新加载</button>
     </div>
     <div v-else-if="mounted && !loading && !items.length" class="py-20 text-center text-gray-400">
       <Icon :name="search ? 'mdi:magnify' : 'mdi:compass-outline'" class="mb-3 text-4xl" />
@@ -30,7 +30,7 @@
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 const props = defineProps({ search: { type: Boolean, default: false }, keyword: { type: String, default: '' }, channel: { type: String, default: 'recommended' } })
-const { items, loading, initialLoading, error, noMore, total, hasFollowing, loadMore, reset, updateLike } = useDiscoverFeed(props.search ? () => props.keyword : undefined, () => props.channel)
+const { items, loading, initialLoading, error, noMore, total, hasFollowing, resetRequired, loadMore, reset, updateLike, applyFeedback } = useDiscoverFeed(props.search ? () => props.keyword : undefined, () => props.channel)
 const mounted = ref(false)
 const selectedItem = ref(null)
 const sentinel = ref(null)

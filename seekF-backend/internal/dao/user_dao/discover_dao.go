@@ -22,140 +22,154 @@ type DiscoverMediaInfo struct {
 
 // DiscoverDAO 发现页帖子、媒体和互动数据访问接口。
 type DiscoverDAO interface {
-	// FindPublicPostsByUuids 批量读取候选作品的当前公开状态，不能使用ES中的旧正文。
+	// 幂等保存当天首次点击，返回是否实际新增。
+	SaveClick(click *models.DiscoverClick) (bool, error)
+	// 设置帖子或作者不感兴趣状态。
+	SetFeedback(feedback *models.DiscoverFeedback, active bool) error
+	// 在时间流降级时同步过滤当前用户的不感兴趣目标。
+	ListRecommendationFeed(ctx context.Context, userId string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
+	// 批量核查当前公开状态与推荐负反馈，不依赖缓存权限。
+	FindRankingPosts(ctx context.Context, userId string, ids []string, mediaType *int8, recommended bool) ([]models.DiscoverPost, error)
+	// 查询近期、热门或兴趣关注召回候选及窗口内真实互动分。
+	ListRankingCandidates(ctx context.Context, userId, kind string, tags []string, mediaType *int8, now time.Time) ([]RankingCandidate, error)
+	// 读取用户最近30天与当前公开帖子的真实互动。
+	ListInterestHistory(ctx context.Context, userId string, now time.Time) ([]InterestHistory, error)
+	// 读取当前用户关注的作者标识。
+	ListFollowedAuthorIds(ctx context.Context, userId string) ([]string, error)
+	// 批量读取候选作品的当前公开状态，不能使用ES中的旧正文。
 	FindPublicPostsByUuids(ctx context.Context, uuids []string) ([]models.DiscoverPost, error)
-	// CountOwnWorksByStatus 返回作者各状态作品数量，不受当前选中状态限制。
+	// 返回作者各状态作品数量，不受当前选中状态限制。
 	CountOwnWorksByStatus(userId, keyword string, visibility *int8) (map[int8]int64, error)
-	// ListOwnWorks 按作者、状态及标题筛选作品并返回真实总数。
+	// 按作者、状态及标题筛选作品并返回真实总数。
 	ListOwnWorks(userId, keyword string, status, visibility *int8, page, pageSize int) ([]models.DiscoverPost, int64, error)
-	// SavePost 更新作品内容与编辑版本。
+	// 更新作品内容与编辑版本。
 	SavePost(post *models.DiscoverPost) error
-	// DeletePost 软删除指定作品。
+	// 软删除指定作品。
 	DeletePost(post *models.DiscoverPost) error
-	// DeletePostMedia 清理编辑前的媒体记录。
+	// 清理编辑前的媒体记录。
 	DeletePostMedia(postId int64) error
-	// ClaimPublishPost 依赖用户请求唯一键占用发布记录，返回是否创建成功。
+	// 依赖用户请求唯一键占用发布记录，返回是否创建成功。
 	ClaimPublishPost(post *models.DiscoverPost) (bool, error)
-	// FindPostByPublishKeyForUpdate 包含软删除记录地锁定发布请求对应帖子。
+	// 包含软删除记录地锁定发布请求对应帖子。
 	FindPostByPublishKeyForUpdate(userId, requestKey string) (*models.DiscoverPost, error)
 	// ========== 帖子 ==========
-	// CreatePost 保存帖子。
+	// 保存帖子。
 	CreatePost(post *models.DiscoverPost) error
-	// FindPostByUuid 按 UUID 查询帖子，不存在时返回空。
+	// 按 UUID 查询帖子，不存在时返回空。
 	FindPostByUuid(uuid string) (*models.DiscoverPost, error)
-	// FindPostByUuidForUpdate 查询并锁定帖子，须使用事务连接调用。
+	// 查询并锁定帖子，须使用事务连接调用。
 	FindPostByUuidForUpdate(uuid string) (*models.DiscoverPost, error)
-	// FindPostById 按主键查询帖子，不存在时返回空。
+	// 按主键查询帖子，不存在时返回空。
 	FindPostById(id int64) (*models.DiscoverPost, error)
-	// ListFeed 查询当前可见的时间流，关注子查询避免重复关系产生重复帖子。
+	// 查询当前可见的时间流，关注子查询避免重复关系产生重复帖子。
 	ListFeed(ctx context.Context, userId string, following bool, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
-	// HasFollowing 判断当前用户是否关注过博主。
+	// 判断当前用户是否关注过博主。
 	HasFollowing(ctx context.Context, userId string) (bool, error)
-	// IncrementCommentCount 增加帖子的评论数。
+	// 增加帖子的评论数。
 	IncrementCommentCount(postId int64) error
-	// IncrementViewCount 增加帖子的浏览数。
+	// 增加帖子的浏览数。
 	IncrementViewCount(postId int64) error
-	// ListPostsByUserId 分页查询指定用户的正常帖子。
+	// 分页查询指定用户的正常帖子。
 	ListPostsByUserId(userId, viewerId string, page, pageSize int) ([]models.DiscoverPost, error)
-	// CountPostsByUserId 统计指定用户的正常帖子数量。
+	// 统计指定用户的正常帖子数量。
 	CountPostsByUserId(userId, viewerId string) (int64, error)
-	// GetUserTotalLikes 统计指定用户正常帖子的总获赞数。
+	// 统计指定用户正常帖子的总获赞数。
 	GetUserTotalLikes(userId, viewerId string) (int, error)
 
 	// ========== 搜索 ==========
-	// SearchPostsByKeyword 兼容工具调用，返回关键词搜索的第一页。
+	// 兼容工具调用，返回关键词搜索的第一页。
 	SearchPostsByKeyword(keyword string, limit int) ([]models.DiscoverPost, error)
-	// SearchPostsPage 在全文检索不可用时按关键词分页查询并返回真实总数。
+	// 在全文检索不可用时按关键词分页查询并返回真实总数。
 	SearchPostsPage(keyword string, page, pageSize int) ([]models.DiscoverPost, int64, error)
 
 	// ========== 媒体 ==========
-	// CreateMedia 保存帖子媒体信息。
+	// 保存帖子媒体信息。
 	CreateMedia(media *models.DiscoverMedia) error
-	// FindMediaByPostId 按展示顺序查询帖子的媒体。
+	// 按展示顺序查询帖子的媒体。
 	FindMediaByPostId(postId int64) ([]DiscoverMediaInfo, error)
-	// FindMediaByPostIds 批量查询帖子媒体并按帖子及展示顺序排序。
+	// 批量查询帖子媒体并按帖子及展示顺序排序。
 	FindMediaByPostIds(postIds []int64) ([]DiscoverMediaInfo, error)
 
 	// ========== 点赞 ==========
-	// CountLikesByTargetUuid 统计指定目标的去重点赞用户数。
+	// 统计指定目标的去重点赞用户数。
 	CountLikesByTargetUuid(targetUuid string) (int, error)
-	// UpdatePostLikeCount 更新帖子的实际点赞数。
+	// 更新帖子的实际点赞数。
 	UpdatePostLikeCount(postId int64, count int) error
-	// UpdateCommentLikeCount 更新评论的实际点赞数。
+	// 更新评论的实际点赞数。
 	UpdateCommentLikeCount(commentId int64, count int) error
-	// CreateLike 保存点赞记录。
+	// 保存点赞记录。
 	CreateLike(like *models.DiscoverLike) error
-	// DeleteLike 删除用户对指定目标的点赞记录。
+	// 删除用户对指定目标的点赞记录。
 	DeleteLike(userId, targetUuid string) error
-	// FindLike 查询用户对指定目标的点赞记录。
+	// 查询用户对指定目标的点赞记录。
 	FindLike(userId, targetUuid string) (*models.DiscoverLike, error)
-	// FindLikesByUserIdAndTargetUuids 批量查询用户对多个目标的点赞状态
+	// 批量查询用户对多个目标的点赞状态
 	FindLikesByUserIdAndTargetUuids(userId string, targetUuids []string) ([]models.DiscoverLike, error)
-	// ListLikedPosts 分页查询用户点赞的正常帖子。
+	// 分页查询用户点赞的正常帖子。
 	ListLikedPosts(userId string, page, pageSize int) ([]models.DiscoverPost, error)
-	// CountLikedPosts 统计用户点赞的正常帖子数量。
+	// 统计用户点赞的正常帖子数量。
 	CountLikedPosts(userId string) (int64, error)
-	// IncrementLikeCount 增加帖子的点赞数。
+	// 增加帖子的点赞数。
 	IncrementLikeCount(postId int64) error
-	// DecrementLikeCount 减少帖子的点赞数。
+	// 减少帖子的点赞数。
 	DecrementLikeCount(postId int64) error
 
 	// ========== 评论 ==========
-	// CreateComment 保存评论。
+	// 保存评论。
 	CreateComment(comment *models.DiscoverComment) error
-	// FindCommentById 按主键查询评论，不存在时返回空。
+	// 按主键查询评论，不存在时返回空。
 	FindCommentById(commentId int64) (*models.DiscoverComment, error)
-	// FindCommentByUuid 按 UUID 查询评论，不存在时返回空。
+	// 按 UUID 查询评论，不存在时返回空。
 	FindCommentByUuid(uuid string) (*models.DiscoverComment, error)
-	// FindCommentByUuidForUpdate 查询并锁定评论，须使用事务连接调用。
+	// 查询并锁定评论，须使用事务连接调用。
 	FindCommentByUuidForUpdate(uuid string) (*models.DiscoverComment, error)
-	// FindCommentsByPostId 按时间及 ID 稳定分页读取全部评论。
+	// 按时间及 ID 稳定分页读取全部评论。
 	FindCommentsByPostId(postId int64, page, pageSize int) ([]models.DiscoverComment, error)
-	// FindCommentThread 按稳定顺序分页读取顶级评论或同一父评论的回复。
+	// 按稳定顺序分页读取顶级评论或同一父评论的回复。
 	FindCommentThread(postId int64, parentUuid string, page, pageSize int) ([]models.DiscoverComment, bool, error)
-	// CountReplies 批量统计顶级评论的回复数量。
+	// 批量统计顶级评论的回复数量。
 	CountReplies(parentUuids []string) (map[string]int64, error)
-	// IncrementCommentLikeCount 增加评论的点赞数。
+	// 增加评论的点赞数。
 	IncrementCommentLikeCount(commentId int64) error
-	// DecrementCommentLikeCount 减少评论的点赞数。
+	// 减少评论的点赞数。
 	DecrementCommentLikeCount(commentId int64) error
 
 	// ========== 收藏夹 ==========
-	// CreateFolder 创建收藏夹。
+	// 创建收藏夹。
 	CreateFolder(folder *models.DiscoverCollectionFolder) error
-	// UpdateFolder 更新收藏夹名称、描述和公开状态。
+	// 更新收藏夹名称、描述和公开状态。
 	UpdateFolder(uuid string, name, description string, isPublic int8) error
-	// DeleteFolder 删除指定收藏夹。
+	// 删除指定收藏夹。
 	DeleteFolder(uuid string) error
-	// FindFolderByUuid 按 UUID 查询收藏夹，不存在时返回空。
+	// 按 UUID 查询收藏夹，不存在时返回空。
 	FindFolderByUuid(uuid string) (*models.DiscoverCollectionFolder, error)
-	// ListFoldersByUserId 查询用户的收藏夹列表。
+	// 查询用户的收藏夹列表。
 	ListFoldersByUserId(userId string) ([]models.DiscoverCollectionFolder, error)
-	// FindDefaultFolder 查询用户的默认收藏夹。
+	// 查询用户的默认收藏夹。
 	FindDefaultFolder(userId string) (*models.DiscoverCollectionFolder, error)
 
 	// ========== 收藏记录 ==========
-	// CreateCollection 保存收藏记录。
+	// 保存收藏记录。
 	CreateCollection(col *models.DiscoverCollection) error
-	// DeleteCollection 删除用户在指定收藏夹中的目标收藏记录。
+	// 删除用户在指定收藏夹中的目标收藏记录。
 	DeleteCollection(userId string, folderId int64, targetUuid string) error
-	// FindCollectionInFolder 查询用户在指定收藏夹中的目标收藏记录。
+	// 查询用户在指定收藏夹中的目标收藏记录。
 	FindCollectionInFolder(userId string, folderId int64, targetUuid string) (*models.DiscoverCollection, error)
-	// FindCollectionByUserAndTarget 查询用户对指定目标的收藏记录。
+	// 查询用户对指定目标的收藏记录。
 	FindCollectionByUserAndTarget(userId, targetUuid string) (*models.DiscoverCollection, error)
-	// FindCollectionsByUserIdAndTargetUuids 批量查询用户对多个目标的收藏状态
+	// 批量查询用户对多个目标的收藏状态
 	FindCollectionsByUserIdAndTargetUuids(userId string, targetUuids []string) ([]models.DiscoverCollection, error)
-	// IncrementFolderPostCount 增加收藏夹的帖子数。
+	// 增加收藏夹的帖子数。
 	IncrementFolderPostCount(folderId int64) error
-	// DecrementFolderPostCount 减少收藏夹的帖子数。
+	// 减少收藏夹的帖子数。
 	DecrementFolderPostCount(folderId int64) error
-	// IncrementCollectCount 增加帖子的收藏数。
+	// 增加帖子的收藏数。
 	IncrementCollectCount(postId int64) error
-	// DecrementCollectCount 减少帖子的收藏数。
+	// 减少帖子的收藏数。
 	DecrementCollectCount(postId int64) error
-	// ListCollectedPostsByFolder 分页查询收藏夹中的正常帖子。
+	// 分页查询收藏夹中的正常帖子。
 	ListCollectedPostsByFolder(folderId int64, viewerId string, page, pageSize int) ([]models.DiscoverPost, error)
-	// CountCollectedPostsByFolder 统计收藏夹中的正常帖子数量。
+	// 统计收藏夹中的正常帖子数量。
 	CountCollectedPostsByFolder(folderId int64, viewerId string) (int64, error)
 }
 

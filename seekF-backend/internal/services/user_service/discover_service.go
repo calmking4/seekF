@@ -3,49 +3,60 @@ package userservice
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
-	userreq "seekF-backend/internal/dto/user/user_req"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	userdao "seekF-backend/internal/dao/user_dao"
+	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/models"
 	aipkg "seekF-backend/internal/pkg/ai"
+	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/db"
+	businessmetrics "seekF-backend/internal/pkg/observability/metrics"
+	redispkg "seekF-backend/internal/pkg/redis"
 	"seekF-backend/internal/pkg/upload/oss"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 // DiscoverService 发现页内容与互动业务接口。
 type DiscoverService interface {
-	// ListOwnWorks 查询当前作者的筛选分页作品。
+	// 记录有效主动点击，排除作者自身浏览并按天去重。
+	RecordDiscoverClick(ctx context.Context, userId string, input userreq.DiscoverClickRequest) error
+	// 设置或撤销帖子及作者级不感兴趣。
+	SetDiscoverFeedback(ctx context.Context, userId string, input userreq.DiscoverFeedbackRequest) (string, error)
+	// 查询当前作者的筛选分页作品。
 	ListOwnWorks(ctx context.Context, userId string, input userreq.ListOwnWorksRequest) ([]PostInfo, int64, map[int8]int64, error)
-	// SetPostVisibility 仅修改作者作品可见性及版本。
+	// 仅修改作者作品可见性及版本。
 	SetPostVisibility(ctx context.Context, userId string, input userreq.SetPostVisibilityRequest) (uint64, error)
 	SetLike(ctx context.Context, userId, targetUuid string, liked bool, isComment bool) (bool, int, error)
 	ListCommentThread(ctx context.Context, userId, postUuid, parentUuid string, page, pageSize int) ([]CommentInfo, bool, error)
 	CreatePost(ctx context.Context, userId string, input userreq.CreatePostRequest) (*PostInfo, error)
 	UpdatePost(ctx context.Context, userId, postUuid string, input userreq.CreatePostRequest) (*PostInfo, error)
 	DeletePost(ctx context.Context, userId, postUuid string) error
-	// ListFeed 查询当前用户的公开时间流或关注流并生成下一页游标。
+	// 查询时间流、关注流、推荐或热榜并生成下一页游标。
 	ListFeed(ctx context.Context, userId string, input userreq.FeedRequest) (*FeedInfo, error)
 	ListLikedPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error)
 	GetPostDetail(ctx context.Context, userId, uuid string) (*PostDetailInfo, error)
 	AddComment(ctx context.Context, userId, postUuid string, parentUuid, replyToUserId, content string) (*CommentInfo, error)
 	ListComments(ctx context.Context, userId, postUuid string, page, pageSize int) ([]CommentInfo, error)
 	AddAIComment(ctx context.Context, userId, postUuid, content, aiQuestion, parentUuid, replyToUserId, replyToContent string) (*CommentInfo, error)
-	// SearchPosts 搜索帖子（ES全文搜索）
+	// 搜索帖子（ES全文搜索）
 	SearchPosts(ctx context.Context, userId string, keyword string, page, pageSize int) ([]PostInfo, int64, error)
-	// GetUserProfile 获取用户主页信息
+	// 获取用户主页信息
 	GetUserProfile(ctx context.Context, profileUserId, currentUserId string, page, pageSize int) (*UserProfileInfo, error)
 
 	// 收藏夹
@@ -159,6 +170,7 @@ type FolderDetailInfo struct {
 	CreatedAt   string
 }
 
+// NewDiscoverService 构造发现页业务服务并注入数据访问依赖。
 func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.UserInfoDAO, contactDAO userdao.ContactDAO, followDAO userdao.FollowDAO, notificationDAO userdao.NotificationDAO) DiscoverService {
 	return &DiscoverServiceImpl{
 		discoverDAO:     discoverDAO,
@@ -174,6 +186,500 @@ func (s *DiscoverServiceImpl) CreatePost(ctx context.Context, userId string, inp
 	return s.saveDiscoverPost(ctx, userId, "", input)
 }
 
+// ========== 信息流、推荐与行为反馈 ==========
+
+// FeedInfo 信息流展示数据及下一页边界，不对时间流计算总数。
+type FeedInfo struct {
+	List         []PostInfo
+	NextCursor   string
+	HasMore      bool
+	HasFollowing bool
+}
+
+// feedCursor 保存排序边界和查询条件，仅用于翻页，不作为权限依据。
+type feedCursor struct {
+	Source    string    `json:"source"`
+	MediaType int8      `json:"media_type"`
+	UserId    string    `json:"user_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	Id        int64     `json:"id"`
+	Mode      string    `json:"mode,omitempty"`
+	Version   string    `json:"version,omitempty"`
+	Position  int       `json:"position,omitempty"`
+}
+
+// encodeFeedCursor 将排序边界和查询条件编码为客户端可传递的游标。
+func encodeFeedCursor(value feedCursor) (string, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("生成信息流游标失败: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// decodeFeedCursor 检查游标格式、排序边界及查询条件，实际权限仍由数据库查询保证。
+func decodeFeedCursor(token string, expected feedCursor) (feedCursor, error) {
+	invalid := fmt.Errorf("信息流游标无效或与当前筛选不匹配，请刷新列表")
+	if len(token) > 2048 {
+		return feedCursor{}, invalid
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return feedCursor{}, invalid
+	}
+	var value feedCursor
+	if json.Unmarshal(raw, &value) != nil || value.Source != expected.Source || value.MediaType != expected.MediaType || value.UserId != expected.UserId {
+		return feedCursor{}, invalid
+	}
+	if value.Mode == "ranked" {
+		if (expected.Source != "recommended" && expected.Source != "hot") || value.Position < 0 || value.Position > 3*constants.DiscoverRankingPoolLimit {
+			return feedCursor{}, invalid
+		}
+		// 旧版随机会话游标没有版本号，升级后明确引导客户端重新加载。
+		if value.Version == "" {
+			return feedCursor{}, ErrDiscoverSessionExpired
+		}
+		if _, err := uuid.Parse(value.Version); err != nil {
+			return feedCursor{}, invalid
+		}
+	} else if (value.Mode != "" && value.Mode != "time") || value.CreatedAt.IsZero() || value.Id <= 0 {
+		return feedCursor{}, invalid
+	}
+	return value, nil
+}
+
+// ListFeed 按当前公开范围查询下一批帖子，失败时不返回新游标。
+func (s *DiscoverServiceImpl) ListFeed(ctx context.Context, userId string, input userreq.FeedRequest) (*FeedInfo, error) {
+	if userId == "" {
+		return nil, fmt.Errorf("请先登录后查看信息流")
+	}
+	if input.Source == "" {
+		input.Source = "all"
+	}
+	if input.Source != "all" && input.Source != "following" && input.Source != "recommended" && input.Source != "hot" {
+		return nil, fmt.Errorf("信息流数据源无效")
+	}
+	if input.PageSize == 0 {
+		input.PageSize = 12
+	}
+	if input.PageSize < 1 || input.PageSize > 20 {
+		return nil, fmt.Errorf("信息流每页数量须为1至20条")
+	}
+	boundary := feedCursor{Source: input.Source, MediaType: -1}
+	if input.MediaType != nil {
+		if *input.MediaType != 0 && *input.MediaType != 1 {
+			return nil, fmt.Errorf("信息流媒体类型无效")
+		}
+		boundary.MediaType = *input.MediaType
+	}
+	if input.Source == "following" || input.Source == "recommended" || input.Source == "hot" {
+		boundary.UserId = userId
+	}
+	if input.Cursor != "" {
+		var err error
+		boundary, err = decodeFeedCursor(input.Cursor, boundary)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if input.Source == "recommended" || input.Source == "hot" {
+		return s.listRankedFeed(ctx, userId, input, boundary)
+	}
+	return s.listTimeFeed(ctx, userId, input, boundary)
+}
+
+// listTimeFeed 复用阶段三时间游标，推荐降级时继续按数据库负反馈过滤。
+func (s *DiscoverServiceImpl) listTimeFeed(ctx context.Context, userId string, input userreq.FeedRequest, boundary feedCursor) (*FeedInfo, error) {
+	following := input.Source == "following"
+	var posts []models.DiscoverPost
+	var err error
+	if input.Source == "recommended" {
+		posts, err = s.discoverDAO.ListRecommendationFeed(ctx, userId, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
+	} else {
+		posts, err = s.discoverDAO.ListFeed(ctx, userId, following, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("查询信息流失败: %w", err)
+	}
+	result := &FeedInfo{HasMore: len(posts) > input.PageSize}
+	if result.HasMore {
+		posts = posts[:input.PageSize]
+	}
+	if following {
+		result.HasFollowing = len(posts) > 0
+		// 已返回关注作品便可确定存在关注关系，只有空列表需要额外查询。
+		if !result.HasFollowing {
+			result.HasFollowing, err = s.discoverDAO.HasFollowing(ctx, userId)
+			if err != nil {
+				return nil, fmt.Errorf("查询关注关系失败: %w", err)
+			}
+		}
+	}
+	result.List, _, err = s.buildPostInfoList(ctx, userId, posts, 0)
+	if err != nil {
+		return nil, err
+	}
+	if result.HasMore {
+		last := posts[len(posts)-1]
+		boundary.CreatedAt, boundary.Id = last.CreatedAt, last.Id
+		result.NextCursor, err = encodeFeedCursor(boundary)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+// ErrDiscoverSessionExpired 表示固定候选已过期，需要刷新而不能在翻页途中重新排名。
+var ErrDiscoverSessionExpired = errors.New("推荐列表已过期，请刷新后继续浏览")
+
+// rankedFeedSession 保存当前账号固定筛选的候选或热榜引用，不保存权限。
+type rankedFeedSession struct {
+	UserId    string   `json:"user_id"`
+	Source    string   `json:"source"`
+	MediaType int8     `json:"media_type"`
+	Version   string   `json:"version"`
+	Ids       []string `json:"ids,omitempty"`
+	HotKey    string   `json:"hot_key,omitempty"`
+}
+
+// discoverHotCacheMu 防止本进程并发首屏请求重复生成并覆盖同一版热榜。
+var discoverHotCacheMu sync.Mutex
+
+// RecordDiscoverClick 在同一事务内核查公开帖子并保存按北京时间天去重的点击。
+func (s *DiscoverServiceImpl) RecordDiscoverClick(ctx context.Context, userId string, input userreq.DiscoverClickRequest) error {
+	if userId == "" {
+		return fmt.Errorf("请先登录")
+	}
+	created := false
+	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		dao := userdao.NewDiscoverDAO(tx)
+		post, err := dao.FindPostByUuidForUpdate(input.PostUuid)
+		if err != nil {
+			return fmt.Errorf("读取点击帖子失败: %w", err)
+		}
+		if !CanViewDiscoverPost(post, userId) || post.Visibility != 0 {
+			return fmt.Errorf("帖子不存在或不可见")
+		}
+		if post.UserId == userId {
+			return nil
+		}
+		now := time.Now()
+		created, err = dao.SaveClick(&models.DiscoverClick{UserId: userId, PostUuid: post.Uuid, Source: input.Source, ClickDay: now.In(time.FixedZone("北京时间", 8*3600)).Format("2006-01-02"), CreatedAt: now})
+		if err != nil {
+			return fmt.Errorf("保存帖子点击失败: %w", err)
+		}
+		return nil
+	})
+	if err == nil && created {
+		businessmetrics.RecordDiscoverClick()
+	}
+	return err
+}
+
+// SetDiscoverFeedback 从当前帖子确定作者，在Service事务内锁定并设置幂等反馈。
+func (s *DiscoverServiceImpl) SetDiscoverFeedback(ctx context.Context, userId string, input userreq.DiscoverFeedbackRequest) (string, error) {
+	if userId == "" || input.Active == nil {
+		return "", fmt.Errorf("不感兴趣参数无效")
+	}
+	if input.TargetType != constants.DiscoverFeedbackPost && input.TargetType != constants.DiscoverFeedbackAuthor {
+		return "", fmt.Errorf("不感兴趣目标类型无效")
+	}
+	authorId := ""
+	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		dao := userdao.NewDiscoverDAO(tx)
+		post, err := dao.FindPostByUuidForUpdate(input.PostUuid)
+		if err != nil {
+			return fmt.Errorf("读取反馈帖子失败: %w", err)
+		}
+		if !CanViewDiscoverPost(post, userId) || post.Visibility != 0 {
+			return fmt.Errorf("帖子不存在或不可见")
+		}
+		if post.UserId == userId {
+			return fmt.Errorf("不能对自己的作品设置不感兴趣")
+		}
+		authorId = post.UserId
+		target := post.Uuid
+		if input.TargetType == constants.DiscoverFeedbackAuthor {
+			target = authorId
+		}
+		if err := dao.SetFeedback(&models.DiscoverFeedback{UserId: userId, TargetType: input.TargetType, TargetUuid: target, CreatedAt: time.Now()}, *input.Active); err != nil {
+			return fmt.Errorf("保存不感兴趣状态失败: %w", err)
+		}
+		return nil
+	})
+	return authorId, err
+}
+
+// listRankedFeed 固定每轮排名，首屏失败降级时间流，后续请求不静默换一轮候选。
+func (s *DiscoverServiceImpl) listRankedFeed(ctx context.Context, userId string, input userreq.FeedRequest, boundary feedCursor) (*FeedInfo, error) {
+	session := rankedFeedSession{UserId: userId, Source: input.Source, MediaType: boundary.MediaType}
+	key := fmt.Sprintf("discover:feed:%s:%s:%d", userId, input.Source, boundary.MediaType)
+	if input.Cursor != "" {
+		if boundary.Mode == "time" {
+			return s.listTimeFeed(ctx, userId, input, boundary)
+		}
+		if boundary.Mode != "ranked" {
+			return nil, fmt.Errorf("推荐游标无效，请刷新列表")
+		}
+		payload, err := redispkg.GetKeyNilIsErr(key)
+		if err != nil || json.Unmarshal([]byte(payload), &session) != nil {
+			return nil, ErrDiscoverSessionExpired
+		}
+		if session.UserId != userId || session.Version != boundary.Version {
+			return nil, ErrDiscoverSessionExpired
+		}
+		if session.Source != input.Source || session.MediaType != boundary.MediaType {
+			return nil, fmt.Errorf("推荐游标与当前账号或频道不匹配")
+		}
+		if session.HotKey != "" {
+			payload, err := redispkg.GetKeyNilIsErr(session.HotKey)
+			if err != nil || json.Unmarshal([]byte(payload), &session.Ids) != nil {
+				return nil, ErrDiscoverSessionExpired
+			}
+		}
+		if boundary.Position > len(session.Ids) {
+			return nil, fmt.Errorf("推荐游标位置无效")
+		}
+	} else {
+		var ids []string
+		var err error
+		if input.Source == "hot" {
+			ids, session.HotKey, err = s.createHotRanking(ctx, input.MediaType)
+		} else {
+			ids, err = s.createRanking(ctx, userId, input.MediaType)
+		}
+		if err == nil && ids != nil {
+			boundary.Mode, boundary.Version = "ranked", uuid.NewString()
+			session.Version = boundary.Version
+			if session.HotKey == "" {
+				session.Ids = ids
+			}
+			var payload []byte
+			payload, err = json.Marshal(session)
+			if err == nil {
+				err = redispkg.SetKeyEx(key, string(payload), constants.DiscoverRankingSessionTTL)
+			}
+		}
+		if err != nil || ids == nil {
+			businessmetrics.RecordDiscoverFeedFallback(input.Source)
+			if err != nil {
+				zlog.Warn("推荐或热榜首屏降级为时间流，userId=" + userId + ": " + err.Error())
+			}
+			boundary.Mode = "time"
+			boundary.Version, boundary.Position = "", 0
+			return s.listTimeFeed(ctx, userId, input, boundary)
+		}
+		session.Ids = ids
+	}
+	return s.rankedFeedPage(ctx, userId, input, boundary, session.Ids)
+}
+
+// rankedFeedPage 按固定顺序批量核查当前权限，过滤后继续取候选直到填满或耗尽。
+func (s *DiscoverServiceImpl) rankedFeedPage(ctx context.Context, userId string, input userreq.FeedRequest, boundary feedCursor, ids []string) (*FeedInfo, error) {
+	posts := []models.DiscoverPost{}
+	result := &FeedInfo{}
+	position := boundary.Position
+scanCandidates:
+	for position < len(ids) {
+		end := min(position+40, len(ids))
+		batch, err := s.discoverDAO.FindRankingPosts(ctx, userId, ids[position:end], input.MediaType, input.Source == "recommended")
+		if err != nil {
+			return nil, fmt.Errorf("核查推荐帖子当前状态失败: %w", err)
+		}
+		byId := make(map[string]models.DiscoverPost, len(batch))
+		for _, post := range batch {
+			byId[post.Uuid] = post
+		}
+		for position < end {
+			post, visible := byId[ids[position]]
+			if visible && len(posts) == input.PageSize {
+				boundary.Position = position
+				result.HasMore = true
+				var err error
+				result.NextCursor, err = encodeFeedCursor(boundary)
+				if err != nil {
+					return nil, err
+				}
+				break scanCandidates
+			}
+			position++
+			if visible {
+				posts = append(posts, post)
+			}
+		}
+	}
+	var err error
+	result.List, _, err = s.buildPostInfoList(ctx, userId, posts, 0)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// createHotRanking 首次访问生成共享两小时版本，返回排名和供会话引用的缓存键。
+func (s *DiscoverServiceImpl) createHotRanking(ctx context.Context, mediaType *int8) ([]string, string, error) {
+	discoverHotCacheMu.Lock()
+	defer discoverHotCacheMu.Unlock()
+	bucket := time.Now().Truncate(constants.DiscoverHotRefresh)
+	media := int8(-1)
+	if mediaType != nil {
+		media = *mediaType
+	}
+	key := fmt.Sprintf("discover:hot:%d:%d", media, bucket.Unix())
+	if payload, err := redispkg.GetKeyNilIsErr(key); err == nil {
+		var ids []string
+		if json.Unmarshal([]byte(payload), &ids) == nil && ids != nil {
+			// 只延长同版排名的缓存寿命，保证新建的30分钟会话仍可引用，不重新排序。
+			err := redispkg.SetKeyEx(key, payload, constants.DiscoverHotRefresh+constants.DiscoverRankingSessionTTL)
+			return ids, key, err
+		}
+	}
+	candidates, err := s.discoverDAO.ListRankingCandidates(ctx, "", "hot", nil, mediaType, bucket)
+	if err != nil {
+		return nil, "", err
+	}
+	ids := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		ids = append(ids, candidate.Uuid)
+	}
+	payload, err := json.Marshal(ids)
+	if err != nil {
+		return nil, "", fmt.Errorf("编码热榜缓存失败: %w", err)
+	}
+	err = redispkg.SetKeyEx(key, string(payload), constants.DiscoverHotRefresh+constants.DiscoverRankingSessionTTL)
+	return ids, key, err
+}
+
+// createRanking 合并近期、热门、兴趣和关注候选，生成当前账号的推荐顺序。
+func (s *DiscoverServiceImpl) createRanking(ctx context.Context, userId string, mediaType *int8) ([]string, error) {
+	now := time.Now()
+	history, err := s.discoverDAO.ListInterestHistory(ctx, userId, now)
+	if err != nil {
+		return nil, err
+	}
+	authors, err := s.discoverDAO.ListFollowedAuthorIds(ctx, userId)
+	if err != nil {
+		return nil, err
+	}
+	if len(history) == 0 && len(authors) == 0 {
+		return nil, nil
+	}
+	interests := discoverTagInterests(history)
+	tags := make([]string, 0, len(interests))
+	for tag := range interests {
+		tags = append(tags, tag)
+	}
+	sort.Slice(tags, func(i, j int) bool {
+		if interests[tags[i]] == interests[tags[j]] {
+			return tags[i] < tags[j]
+		}
+		return interests[tags[i]] > interests[tags[j]]
+	})
+	if len(tags) > 10 {
+		tags = tags[:10]
+	}
+	var candidates []userdao.RankingCandidate
+	seen := map[string]bool{}
+	for _, kind := range []string{"recent", "hot", "affinity"} {
+		rows, err := s.discoverDAO.ListRankingCandidates(ctx, userId, kind, tags, mediaType, now)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if !seen[row.Uuid] {
+				seen[row.Uuid] = true
+				candidates = append(candidates, row)
+			}
+		}
+	}
+	return rankDiscoverCandidates(candidates, interests, authors, now), nil
+}
+
+// discoverTagInterests 根据真实互动累计标签权重，按最大权重归一化。
+func discoverTagInterests(history []userdao.InterestHistory) map[string]float64 {
+	weights := map[string]float64{}
+	maxWeight := 0.0
+	for _, row := range history {
+		var tags []string
+		if json.Unmarshal([]byte(row.Tags), &tags) != nil {
+			continue
+		}
+		for _, tag := range tags {
+			weights[tag] += row.Weight
+			maxWeight = math.Max(maxWeight, weights[tag])
+		}
+	}
+	if maxWeight > 0 {
+		for tag := range weights {
+			weights[tag] /= maxWeight
+		}
+	}
+	return weights
+}
+
+// rankDiscoverCandidates 使用可解释分数并优先错开相邻作者与首标签，不删除同作者候选。
+func rankDiscoverCandidates(candidates []userdao.RankingCandidate, interests map[string]float64, authors []string, now time.Time) []string {
+	following := map[string]bool{}
+	for _, id := range authors {
+		following[id] = true
+	}
+	scores := map[string]float64{}
+	topics := map[string]string{}
+	for _, row := range candidates {
+		var tags []string
+		_ = json.Unmarshal(row.Tags, &tags)
+		match := 0.0
+		for _, tag := range tags {
+			match = math.Max(match, interests[tag])
+		}
+		if len(tags) > 0 {
+			topics[row.Uuid] = tags[0]
+		}
+		ageHours := math.Max(0, now.Sub(row.CreatedAt).Hours())
+		score := math.Log1p(row.ActivityScore) + 3*match + 2/(1+ageHours/24)
+		if following[row.UserId] {
+			score += 1.5
+		}
+		scores[row.Uuid] = score
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		a, b := candidates[i], candidates[j]
+		if scores[a.Uuid] != scores[b.Uuid] {
+			return scores[a.Uuid] > scores[b.Uuid]
+		}
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.After(b.CreatedAt)
+		}
+		return a.Id > b.Id
+	})
+	ids := make([]string, 0, len(candidates))
+	lastAuthor, lastTopic := "", ""
+	for len(candidates) > 0 {
+		chosen := 0
+		// 同话题候选较多时先保证作者错开，再尽量同时错开话题。
+		for i, row := range candidates {
+			if row.UserId != lastAuthor {
+				chosen = i
+				break
+			}
+		}
+		for i, row := range candidates {
+			if row.UserId != lastAuthor && (lastTopic == "" || topics[row.Uuid] == "" || topics[row.Uuid] != lastTopic) {
+				chosen = i
+				break
+			}
+		}
+		row := candidates[chosen]
+		ids = append(ids, row.Uuid)
+		lastAuthor, lastTopic = row.UserId, topics[row.Uuid]
+		candidates = append(candidates[:chosen], candidates[chosen+1:]...)
+	}
+	return ids
+}
+
+// ========== 点赞作品 ==========
+
 // ListLikedPosts 查询用户点赞的帖子及媒体信息。
 func (s *DiscoverServiceImpl) ListLikedPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error) {
 	posts, err := s.discoverDAO.ListLikedPosts(userId, page, pageSize)
@@ -186,53 +692,7 @@ func (s *DiscoverServiceImpl) ListLikedPosts(ctx context.Context, userId string,
 		return nil, 0, err
 	}
 
-	var result []PostInfo
-	for _, post := range posts {
-		mediaList, _ := s.discoverDAO.FindMediaByPostId(post.Id)
-		firstUrl := ""
-		var firstMedia userdao.DiscoverMediaInfo
-		if len(mediaList) > 0 {
-			firstMedia = mediaList[0]
-			firstUrl = firstMedia.Url
-		}
-		cardSize := discoverCardSize(post, firstMedia)
-
-		var tags []string
-		if len(post.Tags) > 0 {
-			json.Unmarshal(post.Tags, &tags)
-		}
-
-		user, _ := s.userInfoDAO.FindUserByUuid(post.UserId)
-		nickname := ""
-		avatar := ""
-		if user != nil {
-			nickname = user.Nickname
-			avatar = user.Avatar
-		}
-
-		result = append(result, PostInfo{
-			Visibility: post.Visibility, Version: post.Version, ViewCount: post.ViewCount,
-			Uuid:         post.Uuid,
-			UserId:       post.UserId,
-			Nickname:     nickname,
-			Avatar:       avatar,
-			Title:        post.Title,
-			Content:      post.Content,
-			MediaType:    post.MediaType,
-			CoverUrl:     post.CoverUrl,
-			Tags:         tags,
-			FirstUrl:     firstUrl,
-			Width:        cardSize.Width,
-			Height:       cardSize.Height,
-			LikeCount:    post.LikeCount,
-			CommentCount: post.CommentCount,
-			CollectCount: post.CollectCount,
-			IsLiked:      true, // 点赞列表中的帖子都是已点赞的
-			CreatedAt:    post.CreatedAt.Format("2006-01-02 15:04:05"),
-		})
-	}
-
-	return result, total, nil
+	return s.buildPostInfoList(ctx, userId, posts, total)
 }
 
 // GetPostDetail 查询可用帖子详情及当前用户互动状态。
@@ -740,72 +1200,7 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 		return nil, 0, err
 	}
 
-	var result []PostInfo
-	postUuids := make([]string, 0, len(posts))
-	for _, post := range posts {
-		postUuids = append(postUuids, post.Uuid)
-	}
-	likedMap := make(map[string]bool)
-	collectedMap := make(map[string]bool)
-	if len(postUuids) > 0 && userId != "" {
-		likes, err := s.discoverDAO.FindLikesByUserIdAndTargetUuids(userId, postUuids)
-		if err != nil {
-			return nil, 0, err
-		}
-		for _, like := range likes {
-			likedMap[like.TargetUuid] = true
-		}
-		collections, err := s.discoverDAO.FindCollectionsByUserIdAndTargetUuids(userId, postUuids)
-		if err != nil {
-			return nil, 0, err
-		}
-		for _, collection := range collections {
-			collectedMap[collection.TargetUuid] = true
-		}
-	}
-	for _, post := range posts {
-		mediaList, _ := s.discoverDAO.FindMediaByPostId(post.Id)
-		firstUrl := ""
-		var firstMedia userdao.DiscoverMediaInfo
-		if len(mediaList) > 0 {
-			firstMedia = mediaList[0]
-			firstUrl = firstMedia.Url
-		}
-		cardSize := discoverCardSize(post, firstMedia)
-		var tags []string
-		if len(post.Tags) > 0 {
-			json.Unmarshal(post.Tags, &tags)
-		}
-		user, _ := s.userInfoDAO.FindUserByUuid(post.UserId)
-		nickname := ""
-		avatar := ""
-		if user != nil {
-			nickname = user.Nickname
-			avatar = user.Avatar
-		}
-		result = append(result, PostInfo{
-			Visibility: post.Visibility, Version: post.Version, ViewCount: post.ViewCount,
-			Uuid:         post.Uuid,
-			UserId:       post.UserId,
-			Nickname:     nickname,
-			Avatar:       avatar,
-			Title:        post.Title,
-			Content:      post.Content,
-			MediaType:    post.MediaType,
-			CoverUrl:     post.CoverUrl,
-			Tags:         tags,
-			FirstUrl:     firstUrl,
-			Width:        cardSize.Width,
-			Height:       cardSize.Height,
-			LikeCount:    post.LikeCount,
-			CommentCount: post.CommentCount,
-			CollectCount: post.CollectCount,
-			IsLiked:      likedMap[post.Uuid],
-			IsCollected:  collectedMap[post.Uuid],
-			CreatedAt:    post.CreatedAt.Format("2006-01-02 15:04:05"),
-		})
-	}
-	return result, total, nil
+	return s.buildPostInfoList(ctx, userId, posts, total)
 }
 
 // ========== 收藏/取消收藏 ==========
@@ -1184,67 +1579,9 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 		}
 	}
 
-	// 批量查询帖子的媒体、点赞、收藏状态
-	var postInfos []PostInfo
-	if len(posts) > 0 {
-		postIds := make([]int64, 0, len(posts))
-		postUuids := make([]string, 0, len(posts))
-		for _, post := range posts {
-			postIds = append(postIds, post.Id)
-			postUuids = append(postUuids, post.Uuid)
-		}
-
-		mediaList, _ := s.discoverDAO.FindMediaByPostIds(postIds)
-		mediaMap := make(map[int64]userdao.DiscoverMediaInfo)
-		for _, media := range mediaList {
-			if _, exists := mediaMap[media.PostId]; !exists {
-				mediaMap[media.PostId] = media
-			}
-		}
-
-		likedMap := make(map[string]bool)
-		collectedMap := make(map[string]bool)
-		if currentUserId != "" {
-			likes, _ := s.discoverDAO.FindLikesByUserIdAndTargetUuids(currentUserId, postUuids)
-			for _, like := range likes {
-				likedMap[like.TargetUuid] = true
-			}
-			collections, _ := s.discoverDAO.FindCollectionsByUserIdAndTargetUuids(currentUserId, postUuids)
-			for _, col := range collections {
-				collectedMap[col.TargetUuid] = true
-			}
-		}
-
-		for _, post := range posts {
-			firstMedia := mediaMap[post.Id]
-			firstUrl := firstMedia.Url
-			cardSize := discoverCardSize(post, firstMedia)
-			var tags []string
-			if len(post.Tags) > 0 {
-				json.Unmarshal(post.Tags, &tags)
-			}
-			postInfos = append(postInfos, PostInfo{
-				Visibility: post.Visibility, Version: post.Version, ViewCount: post.ViewCount,
-				Uuid:         post.Uuid,
-				UserId:       post.UserId,
-				Nickname:     user.Nickname,
-				Avatar:       user.Avatar,
-				Title:        post.Title,
-				Content:      post.Content,
-				MediaType:    post.MediaType,
-				CoverUrl:     post.CoverUrl,
-				Tags:         tags,
-				FirstUrl:     firstUrl,
-				Width:        cardSize.Width,
-				Height:       cardSize.Height,
-				LikeCount:    post.LikeCount,
-				CommentCount: post.CommentCount,
-				CollectCount: post.CollectCount,
-				IsLiked:      likedMap[post.Uuid],
-				IsCollected:  collectedMap[post.Uuid],
-				CreatedAt:    post.CreatedAt.Format("2006-01-02 15:04:05"),
-			})
-		}
+	postInfos, _, err := s.buildPostInfoList(ctx, currentUserId, posts, total)
+	if err != nil {
+		return nil, err
 	}
 
 	// 查询关注/粉丝数

@@ -11,6 +11,9 @@ export function useDiscoverFeed(getKeyword, getChannel) {
   const total = ref(0)
   const cursor = ref('')
   const hasFollowing = ref(false)
+  const resetRequired = ref(false)
+  const hiddenPosts = new Set()
+  const hiddenAuthors = new Set()
   const pageSize = 12
   let generation = 0
   let controller = null
@@ -26,7 +29,7 @@ export function useDiscoverFeed(getKeyword, getChannel) {
     error.value = ''
     try {
       const response = await useApi$(getKeyword ? '/user/discover/search' : '/user/discover/feed', {
-        body: getKeyword ? { page: page.value, page_size: pageSize, keyword } : { cursor: cursor.value, page_size: pageSize, source: getChannel?.() === 'following' ? 'following' : 'all', ...(getChannel?.() === 'image' ? { media_type: 0 } : getChannel?.() === 'video' ? { media_type: 1 } : {}) },
+        body: getKeyword ? { page: page.value, page_size: pageSize, keyword } : { cursor: cursor.value, page_size: pageSize, source: ['following', 'recommended', 'hot'].includes(getChannel?.()) ? getChannel() : 'all', ...(getChannel?.() === 'image' ? { media_type: 0 } : getChannel?.() === 'video' ? { media_type: 1 } : {}) },
         signal: controller.signal,
         retry: 0,
       })
@@ -37,7 +40,8 @@ export function useDiscoverFeed(getKeyword, getChannel) {
       if (!getKeyword && (!Array.isArray(response.data.list) || typeof response.data.has_more !== 'boolean' || typeof response.data.next_cursor !== 'string' || typeof response.data.has_following !== 'boolean' || (response.data.has_more && (!response.data.next_cursor || response.data.next_cursor === cursor.value || !response.data.list?.length)))) {
         throw new Error('获取内容失败，请稍后重试')
       }
-      const list = (response.data.list || []).map(normalizeDiscoverPost)
+      // 反馈保存时可能已有翻页请求在途，本地也过滤晚到结果，避免内容重新出现。
+      const list = (response.data.list || []).map(normalizeDiscoverPost).filter(post => !hiddenPosts.has(post.id) && !hiddenAuthors.has(post.user_id))
       items.value = mergeDiscoverPage(items.value, list)
       total.value = Number(response.data.total) || 0
       if (getKeyword) {
@@ -50,7 +54,8 @@ export function useDiscoverFeed(getKeyword, getChannel) {
       }
     } catch (err) {
       if (requestGeneration !== generation) return
-      error.value = err?.data?.message || (err.message === '获取内容失败，请稍后重试' ? err.message : '获取内容失败，请稍后重试')
+      resetRequired.value = err?.statusCode === 410 || err?.data?.code === 410
+      error.value = err?.data?.message || '获取内容失败，请稍后重试'
     } finally {
       if (requestGeneration === generation) loading.value = false
     }
@@ -66,6 +71,9 @@ export function useDiscoverFeed(getKeyword, getChannel) {
     total.value = 0
     noMore.value = false
     error.value = ''
+    resetRequired.value = false
+    hiddenPosts.clear()
+    hiddenAuthors.clear()
     loading.value = false
     return loadMore()
   }
@@ -74,6 +82,12 @@ export function useDiscoverFeed(getKeyword, getChannel) {
     const item = items.value.find(post => post.id === postId)
     if (item) { item.likeCount = likeCount; item.isLiked = isLiked }
   }
+  const applyFeedback = ({ post_uuid, author_uuid, target_type }) => {
+    if (target_type === 'author') hiddenAuthors.add(author_uuid)
+    else hiddenPosts.add(post_uuid)
+    items.value = items.value.filter(post => !hiddenPosts.has(post.id) && !hiddenAuthors.has(post.user_id))
+    if (!loading.value && !noMore.value && items.value.length < pageSize) void loadMore()
+  }
   onScopeDispose(() => { generation++; controller?.abort() })
-  return { items, loading, initialLoading, error, noMore, total, hasFollowing, loadMore, reset, updateLike }
+  return { items, loading, initialLoading, error, noMore, total, hasFollowing, resetRequired, loadMore, reset, updateLike, applyFeedback }
 }
