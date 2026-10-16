@@ -22,6 +22,10 @@ type DiscoverMediaInfo struct {
 
 // DiscoverDAO 发现页帖子、媒体和互动数据访问接口。
 type DiscoverDAO interface {
+	// 清理过期或当前已不可见的收件箱候选。
+	CleanupFeedInbox(ctx context.Context, from time.Time, limit int) error
+	// 合并收件箱与拉取候选并补查未覆盖内容。
+	ListHybridFeed(ctx context.Context, userId string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
 	// 幂等保存当天首次点击，返回是否实际新增。
 	SaveClick(click *models.DiscoverClick) (bool, error)
 	// 设置帖子或作者不感兴趣状态。

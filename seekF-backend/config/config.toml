@@ -54,6 +54,7 @@ maxAge = 30             # 保留旧日志的最大天数
 rotationTime = 24       # 轮转间隔（小时）
 
 [kafkaConfig]
+discoverFeedTopic = "discover_feed_events"
 discoverTopic = "discover_post_events"
 hostPort = "127.0.0.1:9092" # "127.0.0.1:9092,127.0.0.1:9093,127.0.0.1:9094" 多个kafka服务器
 loginTopic = "login"
@@ -133,3 +134,8 @@ clientID = ""
 clientSecret = ""
 redirectURL = "http://localhost:8080/user/gitee/callback"
 frontendRedirectURL = "http://localhost:3000/oauth/gitee/callback"
+
+[discoverFeedConfig]
+enabled = true
+followerThreshold = 500
+retentionDays = 30

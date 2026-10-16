@@ -43,6 +43,7 @@ func SetupRouter(
 		businessmetrics.NewDiscoverActionsCollector(),
 		businessmetrics.NewDiscoverFeedFallbacksCollector(),
 		businessmetrics.NewDiscoverActivityCollector(),
+		businessmetrics.NewDiscoverDistributionCollector(),
 	)
 	r := gin.New()
 	// 指标包围Recovery，确保异常恢复后的500响应也被记录。

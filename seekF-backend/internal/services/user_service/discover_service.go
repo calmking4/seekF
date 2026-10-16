@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"seekF-backend/internal/configs"
 	userdao "seekF-backend/internal/dao/user_dao"
 	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/models"
@@ -295,8 +296,22 @@ func (s *DiscoverServiceImpl) listTimeFeed(ctx context.Context, userId string, i
 	var err error
 	if input.Source == "recommended" {
 		posts, err = s.discoverDAO.ListRecommendationFeed(ctx, userId, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
+	} else if following && configs.GetConfig().DiscoverFeedConfig.Enabled {
+		started := time.Now()
+		posts, err = s.discoverDAO.ListHybridFeed(ctx, userId, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
+		mode := "hybrid"
+		if err != nil {
+			zlog.Warn("关注混合流查询失败，回退读时查询，userId=" + userId + ": " + err.Error())
+			mode = "fallback"
+			posts, err = s.discoverDAO.ListFeed(ctx, userId, true, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
+		}
+		businessmetrics.ObserveDiscoverFollowingQuery(mode, time.Since(started), err)
 	} else {
+		started := time.Now()
 		posts, err = s.discoverDAO.ListFeed(ctx, userId, following, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
+		if following {
+			businessmetrics.ObserveDiscoverFollowingQuery("pull", time.Since(started), err)
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("查询信息流失败: %w", err)
@@ -1584,10 +1599,6 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 		return nil, err
 	}
 
-	// 查询关注/粉丝数
-	followingCount, _ := s.followDAO.CountFollowing(profileUserId)
-	followerCount, _ := s.followDAO.CountFollowers(profileUserId)
-
 	// 查询当前用户是否关注了该用户
 	isFollowed := false
 	if currentUserId != "" && currentUserId != profileUserId {
@@ -1604,8 +1615,8 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 		Signature:      user.Signature,
 		PostCount:      total,
 		TotalLikes:     totalLikes,
-		FollowingCount: followingCount,
-		FollowerCount:  followerCount,
+		FollowingCount: user.FollowingCount,
+		FollowerCount:  user.FollowerCount,
 		IsFollowed:     isFollowed,
 		IsFriend:       isFriend,
 		Posts:          postInfos,
@@ -1843,7 +1854,7 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 			}
 		}
 
-		return userdao.NewDiscoverOutboxDAO(tx).Create(saved)
+		return userdao.NewDiscoverOutboxDAO(tx).Create(saved, postUuid == "" && saved.Status == 0 && saved.Visibility == 0)
 	})
 	if err != nil {
 		return nil, err
@@ -1879,7 +1890,7 @@ func (s *DiscoverServiceImpl) DeletePost(ctx context.Context, userId, postUuid s
 		if err := dao.DeletePost(post); err != nil {
 			return err
 		}
-		return userdao.NewDiscoverOutboxDAO(tx).Create(post)
+		return userdao.NewDiscoverOutboxDAO(tx).Create(post, false)
 	})
 }
 
@@ -1946,7 +1957,7 @@ func (s *DiscoverServiceImpl) SetPostVisibility(ctx context.Context, userId stri
 			if err := dao.SavePost(post); err != nil {
 				return err
 			}
-			if err := userdao.NewDiscoverOutboxDAO(tx).Create(post); err != nil {
+			if err := userdao.NewDiscoverOutboxDAO(tx).Create(post, false); err != nil {
 				return err
 			}
 		}

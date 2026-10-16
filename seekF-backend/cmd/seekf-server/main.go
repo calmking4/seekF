@@ -45,6 +45,13 @@ func main() {
 	// 启动发现页Outbox投递器
 	userservice.StartDiscoverPublisher()
 
+	// 初始化并启动关注分发Kafka消费者，新帖分发事务完成后提交位点。
+	userservice.InitDiscoverFeedConsumer(app.DiscoverDAO)
+	userservice.StartDiscoverFeedConsumer()
+
+	// 启动关注分发投递器与收件箱清理。
+	userservice.StartDiscoverFeedPublisher()
+
 	// 初始化Qdrant
 	db.InitQdrant()
 

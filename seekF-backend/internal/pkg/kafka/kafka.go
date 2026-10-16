@@ -14,14 +14,16 @@ var Ctx = context.Background()
 
 // KafkaService Kafka服务（全局单例）
 type KafkaService struct {
-	ChatWriter      *kafka.Writer
-	ChatReader      *kafka.Reader
-	AIChatWriter    *kafka.Writer
-	AIChatReader    *kafka.Reader
-	AICommentWriter *kafka.Writer
-	AICommentReader *kafka.Reader
-	DiscoverWriter  *kafka.Writer
-	DiscoverReader  *kafka.Reader
+	ChatWriter         *kafka.Writer
+	ChatReader         *kafka.Reader
+	AIChatWriter       *kafka.Writer
+	AIChatReader       *kafka.Reader
+	AICommentWriter    *kafka.Writer
+	AICommentReader    *kafka.Reader
+	DiscoverWriter     *kafka.Writer
+	DiscoverReader     *kafka.Reader
+	DiscoverFeedWriter *kafka.Writer
+	DiscoverFeedReader *kafka.Reader
 }
 
 var KafkaServiceInstance = new(KafkaService)
@@ -113,6 +115,24 @@ func (k *KafkaService) Init() {
 		StartOffset:    kafka.FirstOffset,
 	})
 
+	// 关注分发 Writer/Reader，沿用搜索同步的全部副本确认与手动位点提交，避免批次完成前丢任务。
+	k.DiscoverFeedWriter = &kafka.Writer{
+		Addr:                   kafka.TCP(kafkaConfig.HostPort),
+		Topic:                  kafkaConfig.DiscoverFeedTopic,
+		Balancer:               &kafka.Hash{},
+		WriteTimeout:           5 * time.Second,
+		BatchTimeout:           10 * time.Millisecond,
+		RequiredAcks:           kafka.RequireAll,
+		AllowAutoTopicCreation: false,
+	}
+	k.DiscoverFeedReader = kafka.NewReader(kafka.ReaderConfig{
+		Brokers:        []string{kafkaConfig.HostPort},
+		Topic:          kafkaConfig.DiscoverFeedTopic,
+		CommitInterval: 0,
+		GroupID:        "discover_feed_distribution",
+		StartOffset:    kafka.FirstOffset,
+	})
+
 	zlog.Info("Kafka服务初始化完成，聊天主题: " + kafkaConfig.ChatTopic + "，AI聊天主题: " + kafkaConfig.AIChatTopic)
 }
 
@@ -154,6 +174,16 @@ func (k *KafkaService) Close() {
 			zlog.Error("关闭发现页Kafka读取器失败: " + err.Error())
 		}
 	}
+	if k.DiscoverFeedWriter != nil {
+		if err := k.DiscoverFeedWriter.Close(); err != nil {
+			zlog.Error("关闭发现页Kafka写入器失败: " + err.Error())
+		}
+	}
+	if k.DiscoverFeedReader != nil {
+		if err := k.DiscoverFeedReader.Close(); err != nil {
+			zlog.Error("关闭发现页Kafka读取器失败: " + err.Error())
+		}
+	}
 }
 
 // CreateTopic 统一创建聊天、AI评论和发现页事件主题。
@@ -189,6 +219,11 @@ func (k *KafkaService) CreateTopic() error {
 		},
 		{
 			Topic:             kafkaConfig.AICommentTopic,
+			NumPartitions:     partitions,
+			ReplicationFactor: 1,
+		},
+		{
+			Topic:             kafkaConfig.DiscoverFeedTopic,
 			NumPartitions:     partitions,
 			ReplicationFactor: 1,
 		},

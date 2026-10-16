@@ -3,10 +3,13 @@ package userservice
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
-	"seekF-backend/internal/pkg/zlog"
+	"seekF-backend/internal/pkg/db"
+
+	"gorm.io/gorm"
 )
 
 type FollowService interface {
@@ -37,6 +40,7 @@ type FollowServiceImpl struct {
 	notificationDAO userdao.NotificationDAO
 }
 
+// NewFollowService 构造关注服务并注入列表查询依赖。
 func NewFollowService(followDAO userdao.FollowDAO, userInfoDAO userdao.UserInfoDAO, contactDAO userdao.ContactDAO, notificationDAO userdao.NotificationDAO) FollowService {
 	return &FollowServiceImpl{
 		followDAO:       followDAO,
@@ -46,74 +50,76 @@ func NewFollowService(followDAO userdao.FollowDAO, userInfoDAO userdao.UserInfoD
 	}
 }
 
+// ToggleFollow 按固定顺序锁定双方用户，在同一事务内切换关注、维护计数及保存通知。
 func (s *FollowServiceImpl) ToggleFollow(ctx context.Context, userId, followUserId string) (bool, error) {
 	if userId == followUserId {
 		return false, fmt.Errorf("不能关注自己")
 	}
 
-	// 检查目标用户是否存在
-	targetUser, err := s.userInfoDAO.FindUserByUuid(followUserId)
+	followed := false
+	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		users := userdao.NewUserInfoDAO(tx)
+		// 相互关注也以相同顺序加锁，避免两个事务反向等待。
+		ids := []string{userId, followUserId}
+		sort.Strings(ids)
+		for _, id := range ids {
+			user, err := users.FindUserByUuidForUpdate(id)
+			if err != nil {
+				return err
+			}
+			if user == nil {
+				return fmt.Errorf("用户不存在")
+			}
+		}
+		follows := userdao.NewFollowDAO(tx)
+		existing, err := follows.FindFollowForUpdate(userId, followUserId)
+		if err != nil {
+			return err
+		}
+		delta := int64(1)
+		if existing != nil {
+			delta = -1
+			if err := follows.DeleteFollow(userId, followUserId); err != nil {
+				return err
+			}
+		} else {
+			if err := follows.CreateFollow(&models.UserFollow{UserId: userId, FollowUserId: followUserId}); err != nil {
+				return err
+			}
+		}
+		if err := users.UpdateFollowCounts(userId, delta, 0); err != nil {
+			return err
+		}
+		if err := users.UpdateFollowCounts(followUserId, 0, delta); err != nil {
+			return err
+		}
+		if delta > 0 {
+			if err := userdao.NewNotificationDAO(tx).CreateNotification(&models.Notification{UserId: followUserId, ActorId: userId, Type: NotificationTypeFollow, TargetUuid: userId, Content: "关注了你"}); err != nil {
+				return err
+			}
+		}
+		followed = delta > 0
+		return nil
+	})
 	if err != nil {
-		return false, fmt.Errorf("查询用户失败: %v", err)
+		return false, fmt.Errorf("切换关注失败: %w", err)
 	}
-	if targetUser == nil {
-		return false, fmt.Errorf("用户不存在")
-	}
-
-	// 查询是否已关注
-	existing, err := s.followDAO.FindFollow(userId, followUserId)
-	if err != nil {
-		return false, fmt.Errorf("查询关注状态失败: %v", err)
-	}
-
-	if existing != nil {
-		// 已关注，取消关注
-		if err := s.followDAO.DeleteFollow(userId, followUserId); err != nil {
-			return false, fmt.Errorf("取消关注失败: %v", err)
-		}
-		return false, nil
-	}
-
-	// 未关注，创建关注
-	follow := &models.UserFollow{
-		Id:           0,
-		UserId:       userId,
-		FollowUserId: followUserId,
-	}
-	// 生成一个 id（GORM 自增不需要手动设）
-	if err := s.followDAO.CreateFollow(follow); err != nil {
-		return false, fmt.Errorf("关注失败: %v", err)
-	}
-
-	// 异步创建关注通知
-	go func() {
-		notification := &models.Notification{
-			UserId:     followUserId,
-			ActorId:    userId,
-			Type:       NotificationTypeFollow,
-			TargetUuid: userId,
-			Content:    "关注了你",
-		}
-		if err := s.notificationDAO.CreateNotification(notification); err != nil {
-			zlog.Error("创建关注通知失败: " + err.Error())
-		}
-	}()
-
-	return true, nil
+	return followed, nil
 }
 
+// GetFollowCounts 读取用户资料中同事务维护的关注和粉丝计数。
 func (s *FollowServiceImpl) GetFollowCounts(ctx context.Context, userId string) (int64, int64, error) {
-	following, err := s.followDAO.CountFollowing(userId)
+	user, err := s.userInfoDAO.FindUserByUuid(userId)
 	if err != nil {
-		return 0, 0, fmt.Errorf("查询关注数失败: %v", err)
+		return 0, 0, fmt.Errorf("查询关注粉丝数失败: %w", err)
 	}
-	followers, err := s.followDAO.CountFollowers(userId)
-	if err != nil {
-		return 0, 0, fmt.Errorf("查询粉丝数失败: %v", err)
+	if user == nil || user.Uuid == "" {
+		return 0, 0, fmt.Errorf("用户不存在")
 	}
-	return following, followers, nil
+	return user.FollowingCount, user.FollowerCount, nil
 }
 
+// ListFollowing 分页装配关注用户及当前好友状态。
 func (s *FollowServiceImpl) ListFollowing(ctx context.Context, userId string, page, pageSize int) ([]FollowUserInfo, int64, error) {
 	follows, err := s.followDAO.ListFollowing(userId, page, pageSize)
 	if err != nil {
@@ -151,6 +157,7 @@ func (s *FollowServiceImpl) ListFollowing(ctx context.Context, userId string, pa
 	return result, total, nil
 }
 
+// ListFollowers 分页装配粉丝及当前好友状态。
 func (s *FollowServiceImpl) ListFollowers(ctx context.Context, userId string, page, pageSize int) ([]FollowUserInfo, int64, error) {
 	follows, err := s.followDAO.ListFollowers(userId, page, pageSize)
 	if err != nil {
@@ -189,6 +196,7 @@ func (s *FollowServiceImpl) ListFollowers(ctx context.Context, userId string, pa
 	return result, total, nil
 }
 
+// IsFollowing 查询当前账号是否关注目标用户。
 func (s *FollowServiceImpl) IsFollowing(ctx context.Context, userId, targetUserId string) (bool, error) {
 	existing, err := s.followDAO.FindFollow(userId, targetUserId)
 	if err != nil {

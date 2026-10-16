@@ -62,16 +62,17 @@ type LogConfig struct {
 }
 
 type KafkaConfig struct {
-	MessageMode    string        `toml:"messageMode"`
-	HostPort       string        `toml:"hostPort"`
-	LoginTopic     string        `toml:"loginTopic"`
-	ChatTopic      string        `toml:"chatTopic"`
-	AIChatTopic    string        `toml:"aiChatTopic"`
-	AICommentTopic string        `toml:"aiCommentTopic"`
-	DiscoverTopic  string        `toml:"discoverTopic"`
-	LogoutTopic    string        `toml:"logoutTopic"`
-	Partition      int           `toml:"partition"`
-	Timeout        time.Duration `toml:"timeout"`
+	DiscoverFeedTopic string        `toml:"discoverFeedTopic"`
+	MessageMode       string        `toml:"messageMode"`
+	HostPort          string        `toml:"hostPort"`
+	LoginTopic        string        `toml:"loginTopic"`
+	ChatTopic         string        `toml:"chatTopic"`
+	AIChatTopic       string        `toml:"aiChatTopic"`
+	AICommentTopic    string        `toml:"aiCommentTopic"`
+	DiscoverTopic     string        `toml:"discoverTopic"`
+	LogoutTopic       string        `toml:"logoutTopic"`
+	Partition         int           `toml:"partition"`
+	Timeout           time.Duration `toml:"timeout"`
 }
 
 type StaticSrcConfig struct {
@@ -125,6 +126,7 @@ type AuthConfig struct {
 }
 
 type Config struct {
+	DiscoverFeedConfig `toml:"discoverFeedConfig"`
 	MainConfig         `toml:"mainConfig"`
 	MysqlConfig        `toml:"mysqlConfig"`
 	RedisConfig        `toml:"redisConfig"`
@@ -145,6 +147,13 @@ type Config struct {
 	WSConfig           `toml:"wsConfig"`
 	GithubOAuthConfig  `toml:"githubOAuthConfig"`
 	GiteeOAuthConfig   `toml:"giteeOAuthConfig"`
+}
+
+// DiscoverFeedConfig 关注流分发开关、作者阈值与有界批次配置。
+type DiscoverFeedConfig struct {
+	Enabled           bool  `toml:"enabled"`
+	FollowerThreshold int64 `toml:"followerThreshold"`
+	RetentionDays     int   `toml:"retentionDays"`
 }
 
 type SeniverseConfig struct {

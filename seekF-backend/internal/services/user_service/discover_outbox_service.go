@@ -35,6 +35,8 @@ type DiscoverEventReader interface {
 
 // discoverEventConsumer 发现页事件消费者，负责持久化事件的投递、消费和重试。
 type discoverEventConsumer struct {
+	target   int8
+	posts    userdao.DiscoverDAO
 	database *gorm.DB
 	writer   DiscoverEventWriter
 	reader   DiscoverEventReader
@@ -42,6 +44,12 @@ type discoverEventConsumer struct {
 }
 
 var discoverCons *discoverEventConsumer
+var discoverFeedCons *discoverEventConsumer
+
+// InitDiscoverFeedConsumer 初始化关注分发消费者，复用现有数据库与Kafka生命周期。
+func InitDiscoverFeedConsumer(discoverDAO userdao.DiscoverDAO) {
+	discoverFeedCons = &discoverEventConsumer{database: db.GormDB, writer: mykafka.KafkaServiceInstance.DiscoverFeedWriter, reader: mykafka.KafkaServiceInstance.DiscoverFeedReader, target: constants.DiscoverTargetFeed, posts: discoverDAO}
+}
 
 // InitDiscoverConsumer 初始化发现页消费者，Kafka和数据库沿用项目全局连接。
 func InitDiscoverConsumer(searchDAO userdao.ESDiscoverDAO) {
@@ -82,7 +90,13 @@ func setDiscoverEventFailure(event *models.DiscoverOutbox, err error) {
 
 // PublishDue 每轮最多处理50个事件，不同进程依靠行锁避免同时领取。
 func (s *discoverEventConsumer) PublishDue(ctx context.Context) error {
-	events, err := userdao.NewDiscoverOutboxDAO(s.database.WithContext(ctx)).ListDue(50)
+	var events []models.DiscoverOutbox
+	var err error
+	if s.target == constants.DiscoverTargetFeed {
+		events, err = userdao.NewDiscoverDistributionDAO(s.database.WithContext(ctx)).ListDue(50)
+	} else {
+		events, err = userdao.NewDiscoverOutboxDAO(s.database.WithContext(ctx)).ListDue(50)
+	}
 	if err != nil {
 		return fmt.Errorf("读取待投递发现页事件失败: %w", err)
 	}
@@ -108,6 +122,9 @@ func (s *discoverEventConsumer) publishEvent(ctx context.Context, id int64) erro
 		}
 		if event == nil || event.Status == constants.DiscoverEventCompleted || event.NextAttemptAt.After(time.Now()) {
 			return nil
+		}
+		if event.Target != s.target {
+			return fmt.Errorf("事件投递目标不匹配: %w", ErrDiscoverEventInvalid)
 		}
 		data, err := json.Marshal(discoverEventMessage{EventId: event.Id})
 		if err != nil {
@@ -142,6 +159,9 @@ func (s *discoverEventConsumer) publishEvent(ctx context.Context, id int64) erro
 
 // ProcessEvent 按事件ID幂等处理，读取最新作品并使用ES外部版本防止并发旧写覆盖。
 func (s *discoverEventConsumer) ProcessEvent(ctx context.Context, id int64) error {
+	if s.target == constants.DiscoverTargetFeed {
+		return s.processFeedEvent(ctx, id)
+	}
 	err := s.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewDiscoverOutboxDAO(tx)
 		event, err := dao.LockEvent(id, false)
@@ -150,6 +170,9 @@ func (s *discoverEventConsumer) ProcessEvent(ctx context.Context, id int64) erro
 		}
 		if event == nil {
 			return fmt.Errorf("事件不存在，eventId=%d: %w", id, ErrDiscoverEventInvalid)
+		}
+		if event.Target != constants.DiscoverTargetSearch {
+			return fmt.Errorf("搜索消费者收到其他目标事件: %w", ErrDiscoverEventInvalid)
 		}
 		if event.Status == constants.DiscoverEventCompleted {
 			return nil
