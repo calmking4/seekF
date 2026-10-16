@@ -66,7 +66,7 @@ func NewContactService(
 
 // GetUserList 获取联系人列表
 func (s *ContactServiceImpl) GetUserList(userId string) ([]userresp.MyUserListRespond, error) {
-	rspString, err := myredis.GetKeyNilIsErr("contact_user_list_" + userId)
+	rspString, err := myredis.GetKeyNilIsErr(constants.ContactUserListKeyPrefix + userId)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			// dao 层获取联系人列表
@@ -119,7 +119,7 @@ func (s *ContactServiceImpl) GetUserList(userId string) ([]userresp.MyUserListRe
 				zlog.Error(err.Error())
 				return nil, err
 			}
-			if err := myredis.SetKeyEx("contact_user_list_"+userId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
+			if err := myredis.SetKeyEx(constants.ContactUserListKeyPrefix+userId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
 				zlog.Error(err.Error())
 			}
 			return userListRsp, nil
@@ -243,7 +243,7 @@ func (s *ContactServiceImpl) DeleteContact(userId string, contactId string) erro
 	}
 
 	// 删除缓存中的联系人列表，以便下次获取时重新加载
-	if err := myredis.DelKeyIfExists("contact_user_list_" + userId); err != nil {
+	if err := myredis.DelKeyIfExists(constants.ContactUserListKeyPrefix + userId); err != nil {
 		zlog.Error(err.Error())
 	}
 
@@ -477,10 +477,10 @@ func (s *ContactServiceImpl) PassContactApply(id string, contactId string, curre
 		}
 
 		// 删除缓存
-		if err := myredis.DelKeyIfExists("contact_user_list_" + id); err != nil {
+		if err := myredis.DelKeyIfExists(constants.ContactUserListKeyPrefix + id); err != nil {
 			zlog.Error(err.Error())
 		}
-		if err := myredis.DelKeyIfExists("contact_user_list_" + contactId); err != nil {
+		if err := myredis.DelKeyIfExists(constants.ContactUserListKeyPrefix + contactId); err != nil {
 			zlog.Error(err.Error())
 		}
 
@@ -557,7 +557,7 @@ func (s *ContactServiceImpl) PassContactApply(id string, contactId string, curre
 		}
 
 		// 删除缓存
-		if err := myredis.DelKeyIfExists("my_joined_group_list_" + contactId); err != nil {
+		if err := myredis.DelKeyIfExists(constants.ContactJoinedGroupListKeyPrefix + contactId); err != nil {
 			zlog.Error(err.Error())
 		}
 
@@ -598,7 +598,7 @@ func (s *ContactServiceImpl) BlackContact(userId string, contactId string) error
 	}
 
 	// 删除缓存
-	if err := myredis.DelKeyIfExists("contact_user_list_" + userId); err != nil {
+	if err := myredis.DelKeyIfExists(constants.ContactUserListKeyPrefix + userId); err != nil {
 		zlog.Error(err.Error())
 	}
 
@@ -657,10 +657,10 @@ func (s *ContactServiceImpl) CancelBlackContact(userId string, contactId string)
 	}
 
 	// 删除缓存
-	if err := myredis.DelKeyIfExists("contact_user_list_" + userId); err != nil {
+	if err := myredis.DelKeyIfExists(constants.ContactUserListKeyPrefix + userId); err != nil {
 		zlog.Error(err.Error())
 	}
-	if err := myredis.DelKeyIfExists("contact_user_list_" + contactId); err != nil {
+	if err := myredis.DelKeyIfExists(constants.ContactUserListKeyPrefix + contactId); err != nil {
 		zlog.Error(err.Error())
 	}
 

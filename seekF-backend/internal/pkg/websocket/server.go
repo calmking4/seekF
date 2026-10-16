@@ -491,7 +491,7 @@ func (s *Server) sendToGroup(message *models.Message, messageBack *MessageBack, 
 	} else {
 		// 清除所有群成员的会话列表缓存
 		for _, member := range members {
-			myredis.DelKeysWithPattern("session_list_" + member)
+			myredis.DelKeysWithPattern(constants.SessionListKeyPrefix + member)
 		}
 	}
 
@@ -689,7 +689,7 @@ func (s *Server) updateSessionLastMessage(sessionId string, lastMessage string) 
 	// 清除会话列表缓存
 	session, err := s.sessionDAO.GetSessionByUuid(sessionId)
 	if err == nil {
-		myredis.DelKeysWithPattern("session_list_" + session.SendId)
+		myredis.DelKeysWithPattern(constants.SessionListKeyPrefix + session.SendId)
 	}
 }
 

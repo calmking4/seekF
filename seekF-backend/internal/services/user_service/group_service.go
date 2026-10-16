@@ -127,7 +127,7 @@ func (s *GroupServiceImpl) CreateGroup(req *userreq.CreateGroupRequest) error {
 
 // LoadMyGroup 获取我创建的群聊
 func (s *GroupServiceImpl) LoadMyGroup(ownerId string) ([]userresp.LoadMyGroupRespond, error) {
-	rspString, err := myredis.GetKeyNilIsErr("contact_mygroup_list_" + ownerId)
+	rspString, err := myredis.GetKeyNilIsErr(constants.ContactOwnedGroupListKeyPrefix + ownerId)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			// 使用 DAO 层方法获取群组列表
@@ -151,7 +151,7 @@ func (s *GroupServiceImpl) LoadMyGroup(ownerId string) ([]userresp.LoadMyGroupRe
 				return nil, err
 			}
 			// 缓存我创建的群组列表
-			if err := myredis.SetKeyEx("contact_mygroup_list_"+ownerId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
+			if err := myredis.SetKeyEx(constants.ContactOwnedGroupListKeyPrefix+ownerId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
 				zlog.Error(err.Error())
 				return nil, err
 			}
@@ -171,7 +171,7 @@ func (s *GroupServiceImpl) LoadMyGroup(ownerId string) ([]userresp.LoadMyGroupRe
 
 // LoadMyJoinedGroup 获取我加入的群聊
 func (s *GroupServiceImpl) LoadMyJoinedGroup(userId string) ([]userresp.LoadMyJoinedGroupRespond, error) {
-	rspString, err := myredis.GetKeyNilIsErr("my_joined_group_list_" + userId)
+	rspString, err := myredis.GetKeyNilIsErr(constants.ContactJoinedGroupListKeyPrefix + userId)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			// 使用 DAO 层方法获取用户加入的群聊联系列表
@@ -209,7 +209,7 @@ func (s *GroupServiceImpl) LoadMyJoinedGroup(userId string) ([]userresp.LoadMyJo
 				return nil, err
 			}
 
-			if err := myredis.SetKeyEx("my_joined_group_list_"+userId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
+			if err := myredis.SetKeyEx(constants.ContactJoinedGroupListKeyPrefix+userId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
 				zlog.Error(err.Error())
 			}
 
@@ -294,7 +294,7 @@ func (s *GroupServiceImpl) UpdateGroupInfo(req userreq.UpdateGroupInfoRequest, u
 	}
 
 	// 清除我的群组列表缓存
-	if err := myredis.DelKeyIfExists("contact_mygroup_list_" + group.OwnerId); err != nil {
+	if err := myredis.DelKeyIfExists(constants.ContactOwnedGroupListKeyPrefix + group.OwnerId); err != nil {
 		zlog.Error(err.Error())
 	}
 
@@ -646,7 +646,7 @@ func (s *GroupServiceImpl) DismissGroup(groupId string, userId string) error {
 	}
 
 	// 清除相关缓存
-	if err := myredis.DelKeyIfExists("contact_mygroup_list_" + userId); err != nil {
+	if err := myredis.DelKeyIfExists(constants.ContactOwnedGroupListKeyPrefix + userId); err != nil {
 		zlog.Error("删除缓存失败: " + err.Error())
 	}
 

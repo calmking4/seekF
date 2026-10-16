@@ -79,7 +79,7 @@ func (s *SessionServiceImpl) OpenSession(sendId string, receiveId string) (strin
 				return "", fmt.Errorf("系统错误")
 			}
 			// 清除缓存
-			myredis.DelKeysWithPattern("session_list_" + sendId)
+			myredis.DelKeysWithPattern(constants.SessionListKeyPrefix + sendId)
 			return deletedSession.Uuid, nil
 		}
 		zlog.Error(err.Error())
@@ -162,7 +162,7 @@ func (s *SessionServiceImpl) CreateSession(sendId string, receiveId string) (str
 	}
 
 	// 清除用户会话列表缓存
-	if err := myredis.DelKeysWithPattern("session_list_" + sendId); err != nil {
+	if err := myredis.DelKeysWithPattern(constants.SessionListKeyPrefix + sendId); err != nil {
 		zlog.Error(err.Error())
 	}
 
@@ -172,7 +172,7 @@ func (s *SessionServiceImpl) CreateSession(sendId string, receiveId string) (str
 // GetSessionList 获取会话列表（用户和群聊）
 func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessionListRespond, error) {
 	// 从 Redis 获取会话列表
-	rspString, err := myredis.GetKeyNilIsErr("session_list_" + userId)
+	rspString, err := myredis.GetKeyNilIsErr(constants.SessionListKeyPrefix + userId)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			// Redis 中不存在，从数据库获取
@@ -279,7 +279,7 @@ func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessio
 			if err != nil {
 				zlog.Error(err.Error())
 			}
-			if err := myredis.SetKeyEx("session_list_"+userId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
+			if err := myredis.SetKeyEx(constants.SessionListKeyPrefix+userId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
 				zlog.Error(err.Error())
 			}
 
@@ -309,7 +309,7 @@ func (s *SessionServiceImpl) DeleteSession(userId string, sessionId string) erro
 	}
 
 	// 清除用户会话列表缓存
-	if err := myredis.DelKeysWithPattern("session_list_" + userId); err != nil {
+	if err := myredis.DelKeysWithPattern(constants.SessionListKeyPrefix + userId); err != nil {
 		zlog.Error(err.Error())
 	}
 
