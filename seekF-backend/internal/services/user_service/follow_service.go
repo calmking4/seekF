@@ -83,7 +83,11 @@ func (s *FollowServiceImpl) ToggleFollow(ctx context.Context, userId, followUser
 				return err
 			}
 		} else {
-			if err := follows.CreateFollow(&models.UserFollow{UserId: userId, FollowUserId: followUserId}); err != nil {
+			latest, err := userdao.NewFollowingReadDAO(tx).LatestPostID(followUserId)
+			if err != nil {
+				return err
+			}
+			if err := follows.CreateFollow(&models.UserFollow{UserId: userId, FollowUserId: followUserId, LastSeenPostId: latest}); err != nil {
 				return err
 			}
 		}

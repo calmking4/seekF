@@ -14,7 +14,7 @@
     <div v-if="immersive" class="grid transition-[grid-template-rows,opacity,margin] duration-300 ease-out motion-reduce:transition-none" :class="tabsCollapsed ? 'mt-0 grid-rows-[0fr] opacity-0' : 'mt-5 grid-rows-[1fr] opacity-100'" :inert="tabsCollapsed">
       <div class="min-h-0 overflow-hidden">
         <nav class="relative mx-auto grid w-full max-w-md grid-cols-5" aria-label="发现内容分类">
-          <button v-for="tab in tabs" :key="tab.key" type="button" class="min-w-0 px-2 py-3 text-sm transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 sm:text-base" :class="channel === tab.key ? 'font-medium text-gray-900' : 'text-gray-500 hover:text-gray-800'" :aria-pressed="channel === tab.key" @click="$emit('update:channel', tab.key)">{{ tab.label }}</button>
+          <button v-for="tab in tabs" :key="tab.key" type="button" class="min-w-0 px-2 py-3 text-sm transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 sm:text-base" :class="channel === tab.key ? 'font-medium text-gray-900' : 'text-gray-500 hover:text-gray-800'" :aria-pressed="channel === tab.key" :aria-label="tab.key === 'following' && unreadAuthors ? '关注，' + unreadAuthors + '位作者有更新' : tab.label" @click="$emit('update:channel', tab.key)"><span class="relative inline-block">{{ tab.label }}<Transition enter-active-class="transition duration-200 ease-out motion-reduce:transition-none" enter-from-class="scale-50 opacity-0" leave-active-class="transition duration-150 motion-reduce:transition-none" leave-to-class="scale-50 opacity-0"><span v-if="tab.key === 'following' && unreadAuthors > 0" class="absolute -right-4 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold leading-none text-white ring-2 ring-gray-50" aria-hidden="true">{{ unreadAuthors > 99 ? '99+' : unreadAuthors }}</span></Transition></span></button>
           <span aria-hidden="true" class="pointer-events-none absolute bottom-0 left-0 flex w-1/5 justify-center transition-transform duration-300 ease-out motion-reduce:transition-none" :style="{ transform: 'translateX(' + activeTabIndex * 100 + '%)' }"><span class="h-0.5 w-8 rounded-full bg-[#60a5fa]" /></span>
         </nav>
       </div>
@@ -24,7 +24,7 @@
 
 <script setup>
 import { computed, ref, watch, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
-const props = defineProps({ initialKeyword: { type: String, default: '' }, immersive: { type: Boolean, default: false }, channel: { type: String, default: 'recommended' } })
+const props = defineProps({ initialKeyword: { type: String, default: '' }, immersive: { type: Boolean, default: false }, channel: { type: String, default: 'recommended' }, unreadAuthors: { type: Number, default: 0 } })
 defineEmits(['update:channel'])
 const header = ref(null)
 const tabs = [{ key: 'recommended', label: '推荐' }, { key: 'image', label: '图文' }, { key: 'video', label: '视频' }, { key: 'hot', label: '热榜' }, { key: 'following', label: '关注' }]

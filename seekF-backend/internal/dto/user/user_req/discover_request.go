@@ -23,10 +23,16 @@ type UpdatePostRequest struct {
 
 // FeedRequest 发现页游标分页，区分时间流、关注流、推荐与热榜。
 type FeedRequest struct {
-	Source    string `json:"source" binding:"omitempty,oneof=all following recommended hot"`
-	MediaType *int8  `json:"media_type" binding:"omitempty,oneof=0 1"`
-	Cursor    string `json:"cursor" binding:"max=2048"`
-	PageSize  int    `json:"page_size" binding:"min=0,max=20"`
+	AuthorUuid string `json:"author_uuid" binding:"max=20"`
+	Source     string `json:"source" binding:"omitempty,oneof=all following recommended hot"`
+	MediaType  *int8  `json:"media_type" binding:"omitempty,oneof=0 1"`
+	Cursor     string `json:"cursor" binding:"max=2048"`
+	PageSize   int    `json:"page_size" binding:"min=0,max=20"`
+}
+
+// FollowingReadRequest 使用服务端签发的作者更新快照确认查看。
+type FollowingReadRequest struct {
+	Token string `json:"token" binding:"required,max=2048"`
 }
 
 // DiscoverClickRequest 只用于用户主动打开详情，不由详情查询自动触发。

@@ -2,7 +2,7 @@ import { ref, computed, onScopeDispose } from 'vue'
 import { normalizeDiscoverPost, mergeDiscoverPage } from '~/utils/discover'
 
 // 首页和搜索页共用分页、失败重试与过期响应保护。
-export function useDiscoverFeed(getKeyword, getChannel) {
+export function useDiscoverFeed(getKeyword, getChannel, getAuthor, onLoaded) {
   const items = ref([])
   const loading = ref(false)
   const error = ref('')
@@ -29,7 +29,7 @@ export function useDiscoverFeed(getKeyword, getChannel) {
     error.value = ''
     try {
       const response = await useApi$(getKeyword ? '/user/discover/search' : '/user/discover/feed', {
-        body: getKeyword ? { page: page.value, page_size: pageSize, keyword } : { cursor: cursor.value, page_size: pageSize, source: ['following', 'recommended', 'hot'].includes(getChannel?.()) ? getChannel() : 'all', ...(getChannel?.() === 'image' ? { media_type: 0 } : getChannel?.() === 'video' ? { media_type: 1 } : {}) },
+        body: getKeyword ? { page: page.value, page_size: pageSize, keyword } : { cursor: cursor.value, page_size: pageSize, source: ['following', 'recommended', 'hot'].includes(getChannel?.()) ? getChannel() : 'all', ...(getChannel?.() === 'following' && getAuthor?.() ? { author_uuid: getAuthor() } : {}), ...(getChannel?.() === 'image' ? { media_type: 0 } : getChannel?.() === 'video' ? { media_type: 1 } : {}) },
         signal: controller.signal,
         retry: 0,
       })
@@ -51,6 +51,7 @@ export function useDiscoverFeed(getKeyword, getChannel) {
         cursor.value = response.data.next_cursor
         noMore.value = !response.data.has_more
         hasFollowing.value = response.data.has_following
+        onLoaded?.()
       }
     } catch (err) {
       if (requestGeneration !== generation) return

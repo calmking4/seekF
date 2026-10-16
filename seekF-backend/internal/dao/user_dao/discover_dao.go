@@ -22,6 +22,10 @@ type DiscoverMediaInfo struct {
 
 // DiscoverDAO 发现页帖子、媒体和互动数据访问接口。
 type DiscoverDAO interface {
+	// 查询关注作者及公开新作品的更新边界。
+	FollowingUpdates(ctx context.Context, userId string) ([]FollowingAuthorUpdate, error)
+	// 在当前关注与公开权限内查询指定作者的时间流。
+	ListFollowingAuthorFeed(ctx context.Context, userId, author string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
 	// 清理过期或当前已不可见的收件箱候选。
 	CleanupFeedInbox(ctx context.Context, from time.Time, limit int) error
 	// 合并收件箱与拉取候选并补查未覆盖内容。

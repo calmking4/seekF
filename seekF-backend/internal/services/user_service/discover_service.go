@@ -35,6 +35,10 @@ import (
 
 // DiscoverService 发现页内容与互动业务接口。
 type DiscoverService interface {
+	// 查询关注作者及未查看更新的作者数量。
+	FollowingUpdates(ctx context.Context, userId string) (*FollowingUpdatesInfo, error)
+	// 确认查看指定作者快照内的更新，不清除后续新帖。
+	ReadFollowingUpdates(ctx context.Context, userId, token string) error
 	// 记录有效主动点击，排除作者自身浏览并按天去重。
 	RecordDiscoverClick(ctx context.Context, userId string, input userreq.DiscoverClickRequest) error
 	// 设置或撤销帖子及作者级不感兴趣。
@@ -199,14 +203,15 @@ type FeedInfo struct {
 
 // feedCursor 保存排序边界和查询条件，仅用于翻页，不作为权限依据。
 type feedCursor struct {
-	Source    string    `json:"source"`
-	MediaType int8      `json:"media_type"`
-	UserId    string    `json:"user_id,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	Id        int64     `json:"id"`
-	Mode      string    `json:"mode,omitempty"`
-	Version   string    `json:"version,omitempty"`
-	Position  int       `json:"position,omitempty"`
+	AuthorUuid string    `json:"author_uuid,omitempty"`
+	Source     string    `json:"source"`
+	MediaType  int8      `json:"media_type"`
+	UserId     string    `json:"user_id,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	Id         int64     `json:"id"`
+	Mode       string    `json:"mode,omitempty"`
+	Version    string    `json:"version,omitempty"`
+	Position   int       `json:"position,omitempty"`
 }
 
 // encodeFeedCursor 将排序边界和查询条件编码为客户端可传递的游标。
@@ -229,7 +234,7 @@ func decodeFeedCursor(token string, expected feedCursor) (feedCursor, error) {
 		return feedCursor{}, invalid
 	}
 	var value feedCursor
-	if json.Unmarshal(raw, &value) != nil || value.Source != expected.Source || value.MediaType != expected.MediaType || value.UserId != expected.UserId {
+	if json.Unmarshal(raw, &value) != nil || value.Source != expected.Source || value.MediaType != expected.MediaType || value.UserId != expected.UserId || value.AuthorUuid != expected.AuthorUuid {
 		return feedCursor{}, invalid
 	}
 	if value.Mode == "ranked" {
@@ -266,7 +271,10 @@ func (s *DiscoverServiceImpl) ListFeed(ctx context.Context, userId string, input
 	if input.PageSize < 1 || input.PageSize > 20 {
 		return nil, fmt.Errorf("信息流每页数量须为1至20条")
 	}
-	boundary := feedCursor{Source: input.Source, MediaType: -1}
+	if len(input.AuthorUuid) > 20 || (input.AuthorUuid != "" && input.Source != "following") {
+		return nil, fmt.Errorf("作者筛选只适用于关注信息流")
+	}
+	boundary := feedCursor{Source: input.Source, MediaType: -1, AuthorUuid: input.AuthorUuid}
 	if input.MediaType != nil {
 		if *input.MediaType != 0 && *input.MediaType != 1 {
 			return nil, fmt.Errorf("信息流媒体类型无效")
@@ -294,7 +302,9 @@ func (s *DiscoverServiceImpl) listTimeFeed(ctx context.Context, userId string, i
 	following := input.Source == "following"
 	var posts []models.DiscoverPost
 	var err error
-	if input.Source == "recommended" {
+	if following && input.AuthorUuid != "" {
+		posts, err = s.discoverDAO.ListFollowingAuthorFeed(ctx, userId, input.AuthorUuid, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
+	} else if input.Source == "recommended" {
 		posts, err = s.discoverDAO.ListRecommendationFeed(ctx, userId, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
 	} else if following && configs.GetConfig().DiscoverFeedConfig.Enabled {
 		started := time.Now()
