@@ -11,17 +11,18 @@ type DiscoverAISuggestionsRequest struct {
 
 // CreatePostRequest 发布帖子及可选媒体尺寸信息。
 type CreatePostRequest struct {
-	RequestKey string             `json:"request_key"`
-	Visibility int8               `json:"visibility"`
-	Version    uint64             `json:"version"`
-	Title      string             `json:"title" form:"title"`
-	Content    string             `json:"content" form:"content"`
-	MediaType  int8               `json:"media_type" form:"media_type"`
-	Tags       []string           `json:"tags" form:"tags"`
-	Urls       []string           `json:"urls" form:"urls"`
-	CoverSize  *MediaSizeRequest  `json:"cover_size"`
-	MediaSizes []MediaSizeRequest `json:"media_sizes"`
-	CoverUrl   string             `json:"cover_url" form:"cover_url"`
+	SupportOnly int8               `json:"support_only,omitempty"`
+	RequestKey  string             `json:"request_key"`
+	Visibility  int8               `json:"visibility"`
+	Version     uint64             `json:"version"`
+	Title       string             `json:"title" form:"title"`
+	Content     string             `json:"content" form:"content"`
+	MediaType   int8               `json:"media_type" form:"media_type"`
+	Tags        []string           `json:"tags" form:"tags"`
+	Urls        []string           `json:"urls" form:"urls"`
+	CoverSize   *MediaSizeRequest  `json:"cover_size"`
+	MediaSizes  []MediaSizeRequest `json:"media_sizes"`
+	CoverUrl    string             `json:"cover_url" form:"cover_url"`
 }
 
 // UpdatePostRequest 更新已有帖子，UUID来自帖子详情，创建时由后端生成。

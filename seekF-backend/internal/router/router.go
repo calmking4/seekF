@@ -28,6 +28,7 @@ func SetupRouter(
 	followController *user.FollowController,
 	notificationController *user.NotificationController,
 	adminController *admin.AdminController,
+	supportController *user.SupportController,
 ) *gin.Engine {
 	httpMetrics := businessmetrics.NewHTTPMetrics()
 	metrics := observability.NewMetrics(
@@ -184,6 +185,9 @@ func SetupRouter(
 			protectedGroup.POST("/discover/uncollect", discoverController.UncollectPost)
 			protectedGroup.POST("/discover/check-collected", discoverController.CheckCollected)
 			protectedGroup.POST("/discover/collected-list", discoverController.ListCollectedPosts)
+			// 创作者助力
+			protectedGroup.POST("/support/creator/info", supportController.GetCreator)
+			protectedGroup.POST("/support/creator/save", supportController.SaveActivate)
 			// 关注
 			protectedGroup.POST("/follow/toggle", followController.ToggleFollow)
 			protectedGroup.POST("/follow/counts", followController.GetFollowCounts)

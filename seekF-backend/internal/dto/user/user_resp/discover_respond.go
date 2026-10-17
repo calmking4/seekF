@@ -2,28 +2,32 @@ package userresp
 
 // PostItem 帖子列表信息及首个媒体的像素尺寸。
 type PostItem struct {
-	Status       int8     `json:"status"`
-	ViewCount    int      `json:"view_count"`
-	Visibility   int8     `json:"visibility"`
-	Version      uint64   `json:"version"`
-	Uuid         string   `json:"uuid"`
-	UserId       string   `json:"user_id"`
-	Nickname     string   `json:"nickname"`
-	Avatar       string   `json:"avatar"`
-	Title        string   `json:"title"`
-	Content      string   `json:"content"`
-	MediaType    int8     `json:"media_type"`
-	CoverUrl     string   `json:"cover_url"`
-	Tags         []string `json:"tags"`
-	FirstUrl     string   `json:"first_url"`
-	Width        int      `json:"width"`
-	Height       int      `json:"height"`
-	LikeCount    int      `json:"like_count"`
-	CommentCount int      `json:"comment_count"`
-	CollectCount int      `json:"collect_count"`
-	IsLiked      bool     `json:"is_liked"`
-	IsCollected  bool     `json:"is_collected"`
-	CreatedAt    string   `json:"created_at"`
+	SupportOnly      int8     `json:"support_only"`
+	CanPlay          bool     `json:"can_play"`
+	LockReason       string   `json:"lock_reason"`
+	SupportExpiresAt string   `json:"support_expires_at"`
+	Status           int8     `json:"status"`
+	ViewCount        int      `json:"view_count"`
+	Visibility       int8     `json:"visibility"`
+	Version          uint64   `json:"version"`
+	Uuid             string   `json:"uuid"`
+	UserId           string   `json:"user_id"`
+	Nickname         string   `json:"nickname"`
+	Avatar           string   `json:"avatar"`
+	Title            string   `json:"title"`
+	Content          string   `json:"content"`
+	MediaType        int8     `json:"media_type"`
+	CoverUrl         string   `json:"cover_url"`
+	Tags             []string `json:"tags"`
+	FirstUrl         string   `json:"first_url"`
+	Width            int      `json:"width"`
+	Height           int      `json:"height"`
+	LikeCount        int      `json:"like_count"`
+	CommentCount     int      `json:"comment_count"`
+	CollectCount     int      `json:"collect_count"`
+	IsLiked          bool     `json:"is_liked"`
+	IsCollected      bool     `json:"is_collected"`
+	CreatedAt        string   `json:"created_at"`
 }
 
 type ListPostsRespond struct {
@@ -32,25 +36,29 @@ type ListPostsRespond struct {
 }
 
 type PostDetailRespond struct {
-	Visibility   int8     `json:"visibility"`
-	Version      uint64   `json:"version"`
-	Uuid         string   `json:"uuid"`
-	UserId       string   `json:"user_id"`
-	Nickname     string   `json:"nickname"`
-	Avatar       string   `json:"avatar"`
-	Title        string   `json:"title"`
-	Content      string   `json:"content"`
-	MediaType    int8     `json:"media_type"`
-	CoverUrl     string   `json:"cover_url"`
-	Tags         []string `json:"tags"`
-	Urls         []string `json:"urls"`
-	LikeCount    int      `json:"like_count"`
-	CommentCount int      `json:"comment_count"`
-	CollectCount int      `json:"collect_count"`
-	ViewCount    int      `json:"view_count"`
-	IsLiked      bool     `json:"is_liked"`
-	IsCollected  bool     `json:"is_collected"`
-	CreatedAt    string   `json:"created_at"`
+	SupportOnly      int8     `json:"support_only"`
+	CanPlay          bool     `json:"can_play"`
+	LockReason       string   `json:"lock_reason"`
+	SupportExpiresAt string   `json:"support_expires_at"`
+	Visibility       int8     `json:"visibility"`
+	Version          uint64   `json:"version"`
+	Uuid             string   `json:"uuid"`
+	UserId           string   `json:"user_id"`
+	Nickname         string   `json:"nickname"`
+	Avatar           string   `json:"avatar"`
+	Title            string   `json:"title"`
+	Content          string   `json:"content"`
+	MediaType        int8     `json:"media_type"`
+	CoverUrl         string   `json:"cover_url"`
+	Tags             []string `json:"tags"`
+	Urls             []string `json:"urls"`
+	LikeCount        int      `json:"like_count"`
+	CommentCount     int      `json:"comment_count"`
+	CollectCount     int      `json:"collect_count"`
+	ViewCount        int      `json:"view_count"`
+	IsLiked          bool     `json:"is_liked"`
+	IsCollected      bool     `json:"is_collected"`
+	CreatedAt        string   `json:"created_at"`
 }
 
 // CommentItem 评论信息及其回复数量。

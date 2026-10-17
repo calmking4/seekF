@@ -16,6 +16,7 @@ import (
 
 // DiscoverPostItem 帖子结构化数据（供前端渲染）
 type DiscoverPostItem struct {
+	SupportOnly  int8     `json:"support_only"`
 	ID           string   `json:"id"`
 	Src          string   `json:"src"`
 	MediaType    int8     `json:"media_type"`
@@ -148,6 +149,10 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 	for i, post := range posts {
 		// 获取首图 URL
 		src := firstMediaURLByPostID[post.Id]
+		// 工具没有查看者身份，不向模型或结构化结果提供助力作品媒体地址。
+		if post.SupportOnly == 1 {
+			src = ""
+		}
 
 		// 获取用户信息
 		var avatar, nickname string
@@ -166,6 +171,9 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 
 		// 截断正文摘要
 		contentSnippet := post.Content
+		if post.SupportOnly == 1 {
+			contentSnippet = ""
+		}
 		if len(contentSnippet) > 100 {
 			contentSnippet = contentSnippet[:100] + "..."
 		}
@@ -180,6 +188,7 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 
 		// 结构化数据
 		postItems = append(postItems, DiscoverPostItem{
+			SupportOnly:  post.SupportOnly,
 			ID:           post.Uuid,
 			Src:          src,
 			MediaType:    post.MediaType,

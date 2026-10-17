@@ -209,6 +209,7 @@ func (c *FileController) DeleteFile(ctx *gin.Context) {
 
 // ViewDiscoverFile 在业务鉴权后流式返回发现页媒体，支持视频Range请求。
 func (c *FileController) ViewDiscoverFile(ctx *gin.Context) {
+	ctx.Header("Cache-Control", "no-store")
 	stream, err := c.fileService.OpenDiscoverFile(ctx.Request.Context(), ctx.GetString("Uuid"), ctx.Query("url"), ctx.GetHeader("Range"))
 	if err != nil {
 		resp.Error(ctx, "媒体不存在或无权访问", http.StatusForbidden)
@@ -216,7 +217,7 @@ func (c *FileController) ViewDiscoverFile(ctx *gin.Context) {
 	}
 	defer stream.Body.Close()
 	status := http.StatusOK
-	headers := map[string]string{"Cache-Control": "private, no-store", "Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff"}
+	headers := map[string]string{"Cache-Control": "no-store", "Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff"}
 	if stream.ContentRange != "" {
 		status = http.StatusPartialContent
 		headers["Content-Range"] = stream.ContentRange

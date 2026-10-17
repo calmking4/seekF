@@ -76,7 +76,7 @@ func (c *DiscoverController) CreatePost(ctx *gin.Context) {
 	}
 
 	resp.Success(ctx, "发布成功", userresp.PostItem{
-		Visibility: postInfo.Visibility, Version: postInfo.Version,
+		SupportOnly: postInfo.SupportOnly, CanPlay: postInfo.CanPlay, LockReason: postInfo.LockReason, SupportExpiresAt: postInfo.SupportExpiresAt, Visibility: postInfo.Visibility, Version: postInfo.Version,
 		Uuid:      postInfo.Uuid,
 		UserId:    postInfo.UserId,
 		Nickname:  postInfo.Nickname,
@@ -95,6 +95,7 @@ func (c *DiscoverController) CreatePost(ctx *gin.Context) {
 
 // ListFeed 返回公开时间流或当前登录用户的关注流。
 func (c *DiscoverController) ListFeed(ctx *gin.Context) {
+	ctx.Header("Cache-Control", "no-store")
 	var req userreq.FeedRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		resp.Error(ctx, "信息流参数错误", http.StatusBadRequest)
@@ -108,7 +109,7 @@ func (c *DiscoverController) ListFeed(ctx *gin.Context) {
 	items := make([]userresp.PostItem, 0, len(result.List))
 	for _, p := range result.List {
 		items = append(items, userresp.PostItem{
-			Visibility: p.Visibility, Version: p.Version,
+			SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
 			Uuid:         p.Uuid,
 			UserId:       p.UserId,
 			Nickname:     p.Nickname,
@@ -162,6 +163,7 @@ func (c *DiscoverController) ReadFollowingUpdates(ctx *gin.Context) {
 
 // SearchPosts 搜索帖子
 func (c *DiscoverController) SearchPosts(ctx *gin.Context) {
+	ctx.Header("Cache-Control", "no-store")
 	userId := ctx.GetString("Uuid")
 
 	var req userreq.SearchPostsRequest
@@ -186,7 +188,7 @@ func (c *DiscoverController) SearchPosts(ctx *gin.Context) {
 	var items []userresp.PostItem
 	for _, p := range posts {
 		items = append(items, userresp.PostItem{
-			Visibility: p.Visibility, Version: p.Version,
+			SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
 			Uuid:         p.Uuid,
 			UserId:       p.UserId,
 			Nickname:     p.Nickname,
@@ -216,6 +218,7 @@ func (c *DiscoverController) SearchPosts(ctx *gin.Context) {
 
 // ListLikedPosts 获取用户点赞的帖子列表
 func (c *DiscoverController) ListLikedPosts(ctx *gin.Context) {
+	ctx.Header("Cache-Control", "no-store")
 	userId := ctx.GetString("Uuid")
 	if userId == "" {
 		resp.Error(ctx, "获取用户信息失败", http.StatusBadRequest)
@@ -243,7 +246,7 @@ func (c *DiscoverController) ListLikedPosts(ctx *gin.Context) {
 	var items []userresp.PostItem
 	for _, p := range posts {
 		items = append(items, userresp.PostItem{
-			Visibility: p.Visibility, Version: p.Version,
+			SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
 			Uuid:         p.Uuid,
 			UserId:       p.UserId,
 			Nickname:     p.Nickname,
@@ -273,6 +276,7 @@ func (c *DiscoverController) ListLikedPosts(ctx *gin.Context) {
 
 // GetPostDetail 获取帖子详情
 func (c *DiscoverController) GetPostDetail(ctx *gin.Context) {
+	ctx.Header("Cache-Control", "no-store")
 	userId := ctx.GetString("Uuid")
 	if userId == "" {
 		resp.Error(ctx, "获取用户信息失败", http.StatusBadRequest)
@@ -296,7 +300,7 @@ func (c *DiscoverController) GetPostDetail(ctx *gin.Context) {
 	}
 
 	resp.Success(ctx, "获取成功", userresp.PostDetailRespond{
-		Visibility: detail.Visibility, Version: detail.Version,
+		SupportOnly: detail.SupportOnly, CanPlay: detail.CanPlay, LockReason: detail.LockReason, SupportExpiresAt: detail.SupportExpiresAt, Visibility: detail.Visibility, Version: detail.Version,
 		Uuid:         detail.Uuid,
 		UserId:       detail.UserId,
 		Nickname:     detail.Nickname,
@@ -676,6 +680,7 @@ func (c *DiscoverController) GetFolderDetail(ctx *gin.Context) {
 
 // ListCollectedPosts 获取收藏夹中的帖子列表
 func (c *DiscoverController) ListCollectedPosts(ctx *gin.Context) {
+	ctx.Header("Cache-Control", "no-store")
 	userId := ctx.GetString("Uuid")
 
 	var req userreq.ListCollectedPostsRequest
@@ -703,7 +708,7 @@ func (c *DiscoverController) ListCollectedPosts(ctx *gin.Context) {
 	var items []userresp.PostItem
 	for _, p := range posts {
 		items = append(items, userresp.PostItem{
-			Visibility: p.Visibility, Version: p.Version,
+			SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
 			Uuid:         p.Uuid,
 			UserId:       p.UserId,
 			Nickname:     p.Nickname,
@@ -816,6 +821,7 @@ func (c *DiscoverController) CheckCollected(ctx *gin.Context) {
 
 // GetUserProfile 获取用户主页信息
 func (c *DiscoverController) GetUserProfile(ctx *gin.Context) {
+	ctx.Header("Cache-Control", "no-store")
 	userId := ctx.GetString("Uuid")
 
 	var req userreq.GetUserProfileRequest
@@ -843,7 +849,7 @@ func (c *DiscoverController) GetUserProfile(ctx *gin.Context) {
 	var items []userresp.PostItem
 	for _, p := range profile.Posts {
 		items = append(items, userresp.PostItem{
-			Visibility: p.Visibility, Version: p.Version,
+			SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
 			Uuid:         p.Uuid,
 			UserId:       p.UserId,
 			Nickname:     p.Nickname,
@@ -957,6 +963,7 @@ func (c *DiscoverController) SetFeedback(ctx *gin.Context) {
 
 // ListOwnWorks 返回当前登录作者的作品及筛选分页总数。
 func (c *DiscoverController) ListOwnWorks(ctx *gin.Context) {
+	ctx.Header("Cache-Control", "no-store")
 	var req userreq.ListOwnWorksRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		resp.Error(ctx, "作品筛选参数错误", http.StatusBadRequest)
@@ -969,7 +976,7 @@ func (c *DiscoverController) ListOwnWorks(ctx *gin.Context) {
 	}
 	items := make([]userresp.PostItem, 0, len(posts))
 	for _, p := range posts {
-		items = append(items, userresp.PostItem{Status: p.Status, Uuid: p.Uuid, UserId: p.UserId, Nickname: p.Nickname, Avatar: p.Avatar, Title: p.Title, Content: p.Content, MediaType: p.MediaType, CoverUrl: p.CoverUrl, Tags: p.Tags, FirstUrl: p.FirstUrl, Width: p.Width, Height: p.Height, ViewCount: p.ViewCount, LikeCount: p.LikeCount, CommentCount: p.CommentCount, CollectCount: p.CollectCount, IsLiked: p.IsLiked, IsCollected: p.IsCollected, Visibility: p.Visibility, Version: p.Version, CreatedAt: p.CreatedAt})
+		items = append(items, userresp.PostItem{Status: p.Status, Uuid: p.Uuid, UserId: p.UserId, Nickname: p.Nickname, Avatar: p.Avatar, Title: p.Title, Content: p.Content, MediaType: p.MediaType, CoverUrl: p.CoverUrl, Tags: p.Tags, FirstUrl: p.FirstUrl, Width: p.Width, Height: p.Height, ViewCount: p.ViewCount, LikeCount: p.LikeCount, CommentCount: p.CommentCount, CollectCount: p.CollectCount, IsLiked: p.IsLiked, IsCollected: p.IsCollected, SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version, CreatedAt: p.CreatedAt})
 	}
 	resp.Success(ctx, "获取作品成功", gin.H{"list": items, "total": total, "counts": counts})
 }

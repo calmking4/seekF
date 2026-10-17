@@ -63,7 +63,10 @@ func initApp(db *gorm.DB) App {
 	adminDAO := admindao.NewAdminDAO(db)
 	adminService := adminservice.NewAdminService(adminDAO)
 	adminController := admin.NewAdminController(adminService, authService)
-	engine := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController, wsController, aiChatController, knowledgeController, discoverController, followController, notificationController, adminController)
+	supportDAO := userdao.NewSupportDAO(db)
+	supportService := userservice.NewSupportService(supportDAO, userInfoDAO)
+	supportController := user.NewSupportController(supportService)
+	engine := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController, wsController, aiChatController, knowledgeController, discoverController, followController, notificationController, adminController, supportController)
 	esDiscoverDAO := userdao.NewESDiscoverDAO()
 	app := App{
 		Router:         engine,
@@ -82,13 +85,13 @@ func initApp(db *gorm.DB) App {
 // wire.go:
 
 // DAO ProviderSet — 所有数据访问层依赖
-var daoProviderSet = wire.NewSet(admindao.NewAdminDAO, userdao.NewUserInfoDAO, userdao.NewContactDAO, userdao.NewSessionDAO, userdao.NewGroupDAO, userdao.NewContactApplyDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO, userdao.NewESDiscoverDAO, userdao.NewFollowDAO, userdao.NewNotificationDAO)
+var daoProviderSet = wire.NewSet(admindao.NewAdminDAO, userdao.NewUserInfoDAO, userdao.NewContactDAO, userdao.NewSessionDAO, userdao.NewGroupDAO, userdao.NewContactApplyDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO, userdao.NewESDiscoverDAO, userdao.NewFollowDAO, userdao.NewNotificationDAO, userdao.NewSupportDAO)
 
 // ServiceProviderSet — 所有业务逻辑层依赖
-var serviceProviderSet = wire.NewSet(adminservice.NewAdminService, userservice.NewAuthService, userservice.NewUserInfoService, userservice.NewContactService, userservice.NewGroupService, userservice.NewSessionService, userservice.NewMessageService, userservice.NewFileService, userservice.NewAIChatService, userservice.NewKnowledgeService, userservice.NewDiscoverService, userservice.NewFollowService, userservice.NewNotificationService)
+var serviceProviderSet = wire.NewSet(adminservice.NewAdminService, userservice.NewAuthService, userservice.NewUserInfoService, userservice.NewContactService, userservice.NewGroupService, userservice.NewSessionService, userservice.NewMessageService, userservice.NewFileService, userservice.NewAIChatService, userservice.NewKnowledgeService, userservice.NewDiscoverService, userservice.NewFollowService, userservice.NewNotificationService, userservice.NewSupportService)
 
 // controllerProviderSet — 所有控制器依赖
-var controllerProviderSet = wire.NewSet(admin.NewAdminController, user.NewAuthController, user.NewUserInfoController, user.NewContactController, user.NewGroupController, user.NewSessionController, user.NewMessageController, user.NewFileController, user.NewWsController, user.NewAIChatController, user.NewKnowledgeController, user.NewDiscoverController, user.NewFollowController, user.NewNotificationController)
+var controllerProviderSet = wire.NewSet(admin.NewAdminController, user.NewAuthController, user.NewUserInfoController, user.NewContactController, user.NewGroupController, user.NewSessionController, user.NewMessageController, user.NewFileController, user.NewWsController, user.NewAIChatController, user.NewKnowledgeController, user.NewDiscoverController, user.NewFollowController, user.NewNotificationController, user.NewSupportController)
 
 // App 包含所有需要暴露的依赖
 // 全局单例（websocket、ai 等）需要通过 App 暴露给 main.go 使用

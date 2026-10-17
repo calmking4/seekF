@@ -3,7 +3,15 @@
     <Transition name="discover">
       <div v-if="show" :class="standalone ? 'discover-standalone' : 'discover-overlay'" @click.self="handleClose">
       <button v-if="!standalone" type="button" aria-label="关闭详情" class="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-gray-600 focus-visible:ring-2 focus-visible:ring-blue-500" @click="handleClose"><Icon name="mdi:close" /></button>
-      <div ref="dialogRef" class="note-card" tabindex="-1" :role="standalone ? 'region' : 'dialog'" :aria-modal="standalone ? undefined : true" :aria-label="detail?.title || item?.title || '动态详情'" @keydown="handleKeydown">
+      <div ref="dialogRef" class="note-card" :class="{ '!h-auto w-[560px]': isSupportLocked }" tabindex="-1" :role="standalone ? 'region' : 'dialog'" :aria-modal="standalone ? undefined : true" :aria-label="isSupportLocked ? '助力后查看' : detail?.title || item?.title || '动态详情'" @keydown="handleKeydown">
+        <div v-if="isSupportLocked" class="flex min-h-[360px] w-full flex-col items-center justify-center gap-4 px-6 py-12 text-center">
+          <span class="flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-50 text-blue-500"><Icon name="mdi:lock-outline" class="text-3xl" /></span>
+          <h2 class="text-lg font-medium text-gray-800">{{ detail?.lock_reason || '助力创作者后可查看' }}</h2>
+          <p class="max-w-sm text-sm leading-6 text-gray-500">助力后可查看该创作者的全部助力图文、视频及评论，权益有效期为30天。</p>
+          <p v-if="detailError" class="text-xs text-gray-500" role="alert">{{ detailError }}<button type="button" class="ml-2 text-blue-500" @click="fetchDetail">重试</button></p>
+          <el-button type="primary" :loading="supportInfoLoading || detailLoading" :disabled="!detail?.user_id" @click="showSupportInfo">查看助力</el-button>
+        </div>
+        <template v-else>
         <!-- 左侧媒体区：宽度由首张图测量锁定；切换时后续图宽度铺满，留白 bg-gray-50 -->
         <div
           ref="mediaContainerRef"
@@ -12,12 +20,13 @@
           :style="lockedWidthPx != null ? { width: `${lockedWidthPx}px` } : undefined"
         >
           <!-- 视频播放 -->
-          <div v-if="detail?.media_type === 1 && detail?.urls?.length" class="video-wrapper">
+          <div v-if="detail?.media_type === 1 && detail?.urls?.length && detail?.can_play !== false" class="video-wrapper">
             <video
               :key="detail.urls[0]"
               :src="detail.urls[0]"
               class="video-player"
               @loadedmetadata="onVideoMetadataLoad"
+              @error="fetchDetail"
               controls
               preload="metadata"
               playsinline
@@ -252,12 +261,14 @@
             </div>
           </div>
         </div>
+        </template>
       </div>
       </div>
     </Transition>
 
     <!-- 收藏夹选择弹窗 -->
     <CollectDialog
+      v-if="!isSupportLocked"
       :visible="showCollectDialog"
       :post-uuid="props.item?.id || ''"
       @close="showCollectDialog = false"
@@ -274,8 +285,23 @@ const emit = defineEmits(['close', 'like-updated', 'collect-updated', 'follow-up
 const auth = useAuthState()
 const show = ref(false)
 const detail = ref(null)
+const isSupportLocked = computed(() => (detail.value?.support_only ?? props.item?.support_only) === 1 && detail.value?.can_play !== true)
 const detailLoading = ref(false)
 const detailError = ref('')
+const supportInfoLoading = ref(false)
+const showSupportInfo = async () => {
+  if (supportInfoLoading.value || !detail.value?.user_id) return
+  const creatorId = detail.value.user_id
+  const viewerId = auth.getUser()?.uuid || auth.getUser()?.Uuid || ''
+  supportInfoLoading.value = true
+  try {
+    const response = await useApi$('/user/support/creator/info', { body: { creator_id: creatorId }, retry: 0 })
+    if (disposed || detail.value?.user_id !== creatorId || viewerId !== (auth.getUser()?.uuid || auth.getUser()?.Uuid || '')) return
+    if (response.code !== 200 || !response.data?.activated) throw new Error(response.message || '创作者暂未开通助力')
+    await ElMessageBox.alert(`每30天${response.data.price_yuan}元，可观看该创作者的全部助力图文与视频。助力购买暂未开放。`, '创作者助力', { confirmButtonText: '知道了' })
+  } catch (error) { if (!disposed && error !== 'cancel' && error !== 'close') ElMessage.error(error?.data?.message || error.message || '获取助力信息失败') }
+  finally { if (!disposed) supportInfoLoading.value = false }
+}
 const currentIndex = ref(0)
 const imageError = ref(false)
 const authorId = computed(() => detail.value?.user_id || props.item?.user_id || '')
@@ -358,13 +384,20 @@ let detailVersion = 0
 const fetchDetail = async () => {
   if (!props.item?.id || detailLoading.value) return
   const version = ++detailVersion
+  const viewerId = auth.getUser()?.uuid || auth.getUser()?.Uuid || ''
   detailLoading.value = true
   detailError.value = ''
   try {
     const response = await useApi$('/user/discover/detail', { body: { uuid: props.item.id }, retry: 0 })
-    if (disposed || version !== detailVersion) return
+    if (disposed || version !== detailVersion || viewerId !== (auth.getUser()?.uuid || auth.getUser()?.Uuid || '')) return
     if (response.code !== 200 || !response.data) throw new Error(response.message || '动态暂时无法访问')
     detail.value = response.data
+    if (isSupportLocked.value) {
+      comments.value = []; commentsHasMore.value = false
+      showCommentInput.value = false; commentText.value = ''; replyTarget.value = null
+      showCollectDialog.value = false
+      return
+    }
     currentIndex.value = 0
     isLiked.value = !!response.data.is_liked
     likeCount.value = response.data.like_count || 0
@@ -383,6 +416,14 @@ const fetchDetail = async () => {
     if (!disposed && version === detailVersion) detailLoading.value = false
   }
 }
+// 切换账号时重新读取当前权限，并立即移除上一账号的媒体地址。
+watch(() => auth.getUser()?.uuid || auth.getUser()?.Uuid || '', () => {
+  detailVersion++
+  detail.value = null
+  comments.value = []; showCommentInput.value = false; commentText.value = ''; replyTarget.value = null; showCollectDialog.value = false
+  detailLoading.value = false
+  if (!disposed && show.value) void fetchDetail()
+})
 const fetchFollowState = async () => {
   if (!authorId.value || isSelf.value) return
   followLoading.value = true
@@ -409,13 +450,14 @@ const goToAuthor = () => { if (authorId.value) { emit('close', 'author'); naviga
 const buildComment = comment => ({ ...comment, replies: [], expanded: false, replyPage: 1, replyHasMore: true, replyLoading: false, replyError: '' })
 const fetchComments = async (reset = false) => {
   reset = reset || (!!commentsError.value && commentsRetryReset.value)
-  if (!props.item?.id || commentsLoading.value || (!reset && !commentsHasMore.value && !commentsError.value)) return
+  if (!detail.value || isSupportLocked.value || !props.item?.id || commentsLoading.value || (!reset && !commentsHasMore.value && !commentsError.value)) return
+  const version = detailVersion
   commentsLoading.value = true
   commentsError.value = ''
   const page = reset ? 1 : commentsPage.value
   try {
     const response = await useApi$('/user/discover/comment/threads', { body: { post_uuid: props.item.id, page, page_size: 20 }, retry: 0 })
-    if (disposed) return
+    if (disposed || version !== detailVersion || isSupportLocked.value) return
     if (response.code !== 200 || !Array.isArray(response.data?.list)) throw new Error('获取评论失败')
     const list = response.data.list.map(buildComment)
     comments.value = reset ? list : mergeDiscoverPage(comments.value, list)
@@ -426,12 +468,13 @@ const fetchComments = async (reset = false) => {
   finally { if (!disposed) commentsLoading.value = false }
 }
 const loadReplies = async comment => {
-  if (comment.replyLoading || !comment.replyHasMore) return
+  if (!detail.value || isSupportLocked.value || comment.replyLoading || !comment.replyHasMore) return
+  const version = detailVersion
   comment.replyLoading = true
   comment.replyError = ''
   try {
     const response = await useApi$('/user/discover/comment/replies', { body: { post_uuid: props.item.id, parent_id: comment.uuid, page: comment.replyPage, page_size: 10 }, retry: 0 })
-    if (disposed) return
+    if (disposed || version !== detailVersion || isSupportLocked.value) return
     if (response.code !== 200 || !Array.isArray(response.data?.list)) throw new Error('获取回复失败')
     comment.replies = mergeDiscoverPage(comment.replies, response.data.list)
     comment.replyPage++
@@ -516,7 +559,8 @@ const toggleAIComment = () => {
   nextTick(() => commentInputRef.value?.focus())
 }
 const submitComment = async () => {
-  if (submitting.value || !props.item?.id || !commentText.value.trim()) return
+  if (!detail.value || isSupportLocked.value || submitting.value || !props.item?.id || !commentText.value.trim()) return
+  const version = detailVersion
   const text = commentText.value.trim()
   const aiComment = text.startsWith('@AI助手') || isAIComment.value
   const question = aiComment ? text.replace(/^@AI助手\s*/, '').trim() : ''
@@ -531,7 +575,7 @@ const submitComment = async () => {
   if (aiComment) { body.ai_question = question; body.reply_to_content = target?.content || '' }
   try {
     const response = await useApi$(aiComment ? '/user/discover/comment/ai' : '/user/discover/comment/add', { body, retry: 0 })
-    if (disposed) return
+    if (disposed || version !== detailVersion || isSupportLocked.value) return
     if (response.code !== 200) throw new Error('评论发送失败')
     const comment = response.data
     if (comment?.uuid) {

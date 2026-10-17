@@ -7,7 +7,8 @@
         <span v-if="post.visibility === 1" class="absolute left-2 top-2 z-10 rounded bg-black/40 px-2 py-1 text-xs text-white">仅自己可见</span>
         <img v-if="post.cover_url || (post.media_type !== 1 && post.first_url)" :src="post.cover_url || post.first_url" :alt="post.title" class="h-full w-full object-cover" loading="lazy" />
         <div v-else class="flex h-full items-center justify-center text-gray-300"><Icon :name="post.media_type === 1 ? 'uil:video' : 'uil:image'" class="text-4xl" /></div>
-        <span v-if="post.media_type === 1" class="absolute right-2 top-2 rounded-full bg-black/40 p-1 text-white"><Icon name="mdi:play" class="block text-lg" /></span>
+        <span v-if="post.media_type === 1" class="absolute right-2 rounded-full bg-black/40 p-1 text-white" :class="post.support_only === 1 ? 'bottom-2' : 'top-2'"><Icon name="mdi:play" class="block text-lg" /></span>
+        <span v-if="post.support_only === 1" class="pointer-events-none absolute right-2 top-2 inline-flex h-6 items-center justify-center gap-1 rounded-md bg-[#60A5FA] pl-1.5 pr-2 text-xs font-semibold text-white"><Icon name="mdi:lightning-bolt" class="block shrink-0 text-base" aria-hidden="true" /><span class="block leading-none">助力专属</span></span>
       </div>
       <div class="p-3">
         <h3 class="mb-3 line-clamp-2 text-sm font-medium text-gray-800">{{ post.title || '未命名帖子' }}</h3>

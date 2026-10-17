@@ -264,6 +264,12 @@
       </div>
 
       <div class="mb-5 flex items-center gap-3 text-sm text-gray-500"><span>谁可以看</span><el-radio-group v-model="visibility" :disabled="publishing"><el-radio-button :value="0">公开</el-radio-button><el-radio-button :value="1">仅自己可见</el-radio-button></el-radio-group></div>
+      <div class="mb-5 space-y-2">
+        <div class="flex flex-wrap items-center gap-3 text-sm text-gray-500"><span>观看方式</span><el-radio-group v-model="supportOnly" :disabled="publishing || isEditing"><el-radio-button :value="0">免费</el-radio-button><el-radio-button :value="1" :disabled="supportLoading || !supportSettings?.activated">助力专属</el-radio-button></el-radio-group></div>
+        <p class="text-xs text-gray-400">发布后不能切换免费或助力属性。<NuxtLink v-if="!isEditing" to="/discover/support" class="text-blue-500">{{ supportSettings?.activated ? '管理助力价格' : '开通创作者助力' }}</NuxtLink></p>
+        <p v-if="mediaType === 'image' && supportOnly === 1" class="text-xs text-gray-400">首张图片作为公开封面，正文及其余图片仅助力用户可见。</p>
+        <p v-if="supportError" class="text-xs text-gray-500" role="alert">{{ supportError }}<button type="button" class="ml-2 text-blue-500" @click="loadSupportSettings">重试</button></p>
+      </div>
       <!-- 标签 -->
       <DiscoverCreationSuggestions v-if="mediaType === 'image'" mode="tags" :suggested-tags="suggestionTags" :selected-tags="tags" :ready="suggestionsReady" @select-tag="acceptSuggestedTag" />
       <div class="flex flex-wrap items-center gap-2">
@@ -372,6 +378,21 @@ const isEditing = computed(() => !!route.query.edit || !!editingId.value)
 const editorLoading = ref(true)
 const editingVersion = ref(0)
 const visibility = ref(0)
+const supportOnly = ref(0)
+const supportSettings = ref(null)
+const supportLoading = ref(false)
+const supportError = ref('')
+const sameEditor = () => !editorDisposed && editorUserId === (editorAuth.getUser()?.uuid || editorAuth.getUser()?.Uuid || '')
+const loadSupportSettings = async () => {
+  supportLoading.value = true; supportError.value = ''
+  try {
+    const response = await useApi$('/user/support/creator/info', { body: {}, retry: 0 })
+    if (!sameEditor()) return
+    if (response.code !== 200 || !response.data) throw new Error(response.message || '获取助力设置失败')
+    supportSettings.value = response.data
+  } catch (error) { if (sameEditor()) supportError.value = error?.data?.message || error.message || '获取助力设置失败' }
+  finally { if (sameEditor()) supportLoading.value = false }
+}
 const draftId = ref('')
 const draftSaveStatus = ref('尚未保存')
 const draftList = ref([])
@@ -435,6 +456,8 @@ const uploadAbortMap = ref(new Map())
 const pauseControlMap = ref(new Map())
 
 const canPublish = computed(() => {
+  if (!sameEditor()) return false
+  if (supportOnly.value === 1 && !isEditing.value && (supportLoading.value || !supportSettings.value?.activated)) return false
   if (mediaList.value.length === 0 || !title.value.trim() || Array.from(title.value.trim()).length > 50 || Array.from(content.value).length > 5000 || coverFile.value) return false
   if (mediaType.value === 'video') {
     return mediaList.value.every(m => m.uploadStatus === 'done' && m.uploadedUrl)
@@ -449,6 +472,7 @@ const resetPublishWorkspace = () => {
   localURLs.forEach(url => URL.revokeObjectURL(url))
   mediaList.value = []; mediaByType = { image: null, video: null }
   title.value = ''; content.value = ''; tags.value = []; visibility.value = 0
+  supportOnly.value = 0
   coverFile.value = null; coverUrl.value = ''; coverPreview.value = ''
   draftId.value = ''; draftSaveStatus.value = '尚未保存'
   requestKey.value = ''; publishPayload.value = ''
@@ -461,7 +485,7 @@ const resetPublishWorkspace = () => {
 /** 点击保存草稿时持久化当前内容，成功后回到上传工作台。 */
 const persistDraft = async () => {
   if (editorLoading.value || savingDraft.value || hasActiveUpload.value || editorDisposed || (editorAuth.getUser()?.uuid || editorAuth.getUser()?.Uuid || '') !== editorUserId) return
-  const patch = buildDiscoverDraft({ mediaType: mediaType.value, title: title.value, content: content.value, tags: tags.value, coverUrl: coverUrl.value, mediaList: mediaList.value, visibility: visibility.value, requestKey: requestKey.value, publishPayload: publishPayload.value })
+  const patch = buildDiscoverDraft({ mediaType: mediaType.value, title: title.value, content: content.value, tags: tags.value, coverUrl: coverUrl.value, mediaList: mediaList.value, visibility: visibility.value, supportOnly: supportOnly.value, requestKey: requestKey.value, publishPayload: publishPayload.value })
   const previous = (draftId.value ? loadDiscoverDraft(draftId.value) : null) || emptyDraft()
   const saved = { ...previous, ...patch, id: draftId.value || previous.id, postUuid: editingId.value, version: editingVersion.value }
   const otherType = mediaType.value === 'image' ? 'video' : 'image'
@@ -519,6 +543,7 @@ const restoreDraftOnMount = () => {
   editingId.value = draft.postUuid || ''
   editingVersion.value = draft.version || 0
   visibility.value = draft.visibility || 0
+  supportOnly.value = draft.supportOnly === 1 ? 1 : 0
   requestKey.value = draft.requestKey || ''
   publishPayload.value = draft.publishPayload || ''
   mediaType.value = draft.mediaType || 'image'
@@ -878,7 +903,7 @@ const handlePublish = async () => {
   publishing.value = true
   try {
     const urls = mediaList.value.map(media => media.uploadedUrl)
-    const body = { title: title.value.trim(), content: content.value.trim(), media_type: mediaType.value === 'video' ? 1 : 0, tags: [...tags.value], urls, media_sizes: mediaList.value.map(media => ({ width: media.width || 0, height: media.height || 0 })), cover_url: mediaType.value === 'image' ? urls[0] : coverUrl.value, visibility: visibility.value }
+    const body = { title: title.value.trim(), content: content.value.trim(), media_type: mediaType.value === 'video' ? 1 : 0, tags: [...tags.value], urls, media_sizes: mediaList.value.map(media => ({ width: media.width || 0, height: media.height || 0 })), cover_url: mediaType.value === 'image' ? urls[0] : coverUrl.value, visibility: visibility.value, support_only: supportOnly.value }
     const payload = JSON.stringify(body)
     if (!requestKey.value || publishPayload.value !== payload) { requestKey.value = crypto.randomUUID(); publishPayload.value = payload }
     const response = await useApi$(editingId.value ? '/user/discover/update' : '/user/discover/create', { body: { ...body, request_key: requestKey.value, ...(editingId.value ? { post_uuid: editingId.value } : {}), version: editingVersion.value }, retry: 0 })
@@ -911,6 +936,7 @@ const loadEditingPost = async id => {
   const post = response.data
   if (post.user_id !== (editorAuth.getUser()?.uuid || editorAuth.getUser()?.Uuid)) throw new Error('只能编辑自己的作品')
   editingId.value = id; editingVersion.value = post.version; visibility.value = post.visibility || 0
+  supportOnly.value = post.support_only === 1 ? 1 : 0
   draftId.value = emptyDraft().id; title.value = post.title; content.value = post.content || ''; tags.value = post.tags || []; mediaType.value = post.media_type === 1 ? 'video' : 'image'; coverUrl.value = post.cover_url || ''; coverPreview.value = coverUrl.value
   // 先展示服务端返回的作品，尺寸与视频首帧后台补全，避免等待媒体加载导致空白。
   mediaList.value = (post.urls || []).map(url => ({ url, uploadedUrl: url, file: null, type: mediaType.value, uploadStatus: 'done', uploadProgress: 100, width: 0, height: 0 }))
@@ -933,6 +959,7 @@ const beforeUnloadHandler = (e) => {
 }
 
 onMounted(async () => {
+  void loadSupportSettings()
   draftCount.value = listDiscoverDrafts().length
   try {
     if (route.query.draft) { draftId.value = String(route.query.draft); restoreDraftOnMount() }

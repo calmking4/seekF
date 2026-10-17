@@ -17,7 +17,7 @@ type FileDAO interface {
 	// FindAsset 查询资源状态，不持有行锁。
 	FindAsset(fileURL string) (*models.FileAsset, error)
 	// CountReadableAssetReferences 统计查看者可访问作品中的资源引用。
-	CountReadableAssetReferences(fileURL, userId string) (int64, error)
+	CountReadableAssetReferences(fileURL, userId, environment string, now time.Time) (int64, error)
 	CreateAsset(asset *models.FileAsset) error
 	FindAssetForUpdate(fileURL string) (*models.FileAsset, error)
 	SaveAsset(asset *models.FileAsset) error
@@ -84,14 +84,19 @@ func (d *FileDAOImpl) FindAsset(fileURL string) (*models.FileAsset, error) {
 	return &asset, err
 }
 
-// CountReadableAssetReferences 同时检查媒体及封面引用，私密作品只允许作者读取。
-func (d *FileDAOImpl) CountReadableAssetReferences(fileURL, userId string) (int64, error) {
+// CountReadableAssetReferences 校验图文和视频的作品状态及实时权益，封面仅允许图片资源引用。
+func (d *FileDAOImpl) CountReadableAssetReferences(fileURL, userId, environment string, now time.Time) (int64, error) {
 	var media, cover int64
-	err := d.db.Table("discover_media AS m").Joins("JOIN discover_post AS p ON p.id = m.post_id").Joins("JOIN file_asset a ON a.id = m.asset_id").Where("a.url_hash = ? AND p.status = 0 AND p.deleted_at IS NULL AND (p.visibility = 0 OR p.user_id = ?)", FileURLHash(fileURL), userId).Count(&media).Error
+	err := d.db.Table("discover_media AS m").Joins("JOIN discover_post AS p ON p.id = m.post_id").Joins("JOIN file_asset a ON a.id = m.asset_id").
+		Where("a.url_hash = ? AND a.state = 1 AND p.status = 0 AND p.deleted_at IS NULL AND (p.visibility = 0 OR p.user_id = ?)", FileURLHash(fileURL), userId).
+		Where(`((m.type = 0 AND a.category = 'discover_image') OR
+		(m.type = 1 AND a.category = 'discover_video')) AND
+		(p.support_only = 0 OR p.user_id = ? OR EXISTS
+		(SELECT 1 FROM support_entitlement e WHERE e.user_id = ? AND e.creator_id = p.user_id AND e.environment = ? AND e.expires_at > ?))`, userId, userId, environment, now).Count(&media).Error
 	if err != nil {
 		return 0, err
 	}
-	err = d.db.Model(&models.DiscoverPost{}).Where("cover_asset_id IN (SELECT id FROM file_asset WHERE url_hash = ?) AND status = 0 AND (visibility = 0 OR user_id = ?)", FileURLHash(fileURL), userId).Count(&cover).Error
+	err = d.db.Model(&models.DiscoverPost{}).Where("cover_asset_id IN (SELECT id FROM file_asset WHERE url_hash = ? AND category = 'discover_image' AND state = 1) AND status = 0 AND (visibility = 0 OR user_id = ?)", FileURLHash(fileURL), userId).Count(&cover).Error
 	return media + cover, err
 }
 

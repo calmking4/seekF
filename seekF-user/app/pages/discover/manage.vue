@@ -19,6 +19,7 @@
         <div class="flex min-w-0 flex-1 flex-col">
           <NuxtLink :to="'/discover/post/' + encodeURIComponent(post.uuid)" target="_blank" rel="noopener" class="line-clamp-2 text-base font-medium text-gray-800 hover:text-blue-500">{{ post.title }}</NuxtLink>
           <p class="mt-2 text-xs text-gray-400">{{ post.created_at }}</p>
+          <span v-if="post.support_only === 1" class="mt-2 w-fit rounded-full bg-blue-50 px-2 py-1 text-xs text-blue-500">助力专属</span>
           <span class="mt-2 w-fit rounded-full px-2 py-1 text-xs" :class="post.visibility === 1 ? 'bg-gray-100 text-gray-500' : 'bg-blue-50 text-blue-500'">{{ post.visibility === 1 ? '仅自己可见' : '公开' }}</span>
           <div class="mt-4 flex flex-wrap items-center gap-4 text-xs text-gray-400 sm:mt-auto sm:pt-4"><span v-for="stat in stats" :key="stat.field" class="flex items-center gap-1" :title="stat.label" :aria-label="stat.label + '：' + (post[stat.field] || 0)"><Icon :name="stat.icon" class="text-base" />{{ post[stat.field] || 0 }}</span></div>
         </div>

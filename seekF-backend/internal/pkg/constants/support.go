@@ -15,10 +15,10 @@ const (
 	SupportOrderTimeout = 15 * time.Minute
 	// 支付成功后的退款申请期限，单位小时。
 	SupportRefundWindow = 168 * time.Hour
-	// 免费视频。
-	SupportVideoFree int8 = 0
-	// 助力专属视频。
-	SupportVideoExclusive int8 = 1
+	// 免费作品，适用于图文和视频。
+	SupportPostFree int8 = 0
+	// 助力专属作品，适用于图文和视频。
+	SupportPostExclusive int8 = 1
 	// 订单等待付款。
 	SupportOrderPending int8 = 0
 	// 订单已付款。

@@ -10,7 +10,7 @@ const activeKey = () => draftStorageKey() + ':active'
 const newId = () => globalThis.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2)
 
 export function emptyDraft() {
- return { id: newId(), mediaType: 'image', title: '', content: '', tags: [], coverUrl: '', visibility: 0, requestKey: '', publishPayload: '', video: null, images: [] }
+ return { id: newId(), mediaType: 'image', title: '', content: '', tags: [], coverUrl: '', visibility: 0, supportOnly: 0, requestKey: '', publishPayload: '', video: null, images: [] }
 }
 
 // 空白工作台不算草稿，兼容过滤旧版本自动生成的空记录。
@@ -57,7 +57,7 @@ export function clearDiscoverDraft(id) {
 }
 
 // 草稿只保存可恢复的远程地址和文件元信息，blob地址无法跨页面恢复。
-export function buildDiscoverDraft({ mediaType, title, content, tags, coverUrl, mediaList, visibility = 0, requestKey = '', publishPayload = '' }) {
+export function buildDiscoverDraft({ mediaType, title, content, tags, coverUrl, mediaList, visibility = 0, supportOnly = 0, requestKey = '', publishPayload = '' }) {
  const safeURL = value => typeof value === 'string' && !value.startsWith('blob:') ? value : ''
  const serialize = media => ({
   width: media.width || 0, height: media.height || 0,
@@ -69,7 +69,7 @@ export function buildDiscoverDraft({ mediaType, title, content, tags, coverUrl, 
   uploadStatus: media.uploadedUrl ? 'done' : 'pending_reselect',
   needsReselect: !media.uploadedUrl, posterUrl: safeURL(media.posterUrl),
  })
- return { mediaType, title, content, tags: [...tags], visibility, requestKey, publishPayload, coverUrl: safeURL(coverUrl),
+ return { mediaType, title, content, tags: [...tags], visibility, supportOnly, requestKey, publishPayload, coverUrl: safeURL(coverUrl),
   video: mediaType === 'video' && mediaList[0] ? serialize(mediaList[0]) : null,
   images: mediaType === 'image' ? mediaList.map(serialize) : [],
  }
@@ -79,7 +79,7 @@ export function applyDiscoverDraft(draft) {
  if (!draft) return null
  const rows = draft.mediaType === 'video' ? (draft.video ? [draft.video] : []) : (draft.images || [])
  return { mediaType: draft.mediaType || 'image', title: draft.title || '', content: draft.content || '', tags: draft.tags || [],
-  visibility: draft.visibility || 0, coverUrl: draft.coverUrl || '', coverPreview: draft.coverUrl || '',
+  visibility: draft.visibility || 0, supportOnly: draft.supportOnly === 1 ? 1 : 0, coverUrl: draft.coverUrl || '', coverPreview: draft.coverUrl || '',
   mediaList: rows.map(media => ({ ...media, type: draft.mediaType === 'video' ? 'video' : 'image', file: null,
    url: media.previewUrl || media.uploadedUrl || '', uploadStatus: media.uploadedUrl ? 'done' : 'pending_reselect',
    uploadStatusText: media.uploadedUrl ? '上传完成' : '请重新选择文件', uploadProgress: media.uploadedUrl ? 100 : (media.uploadProgress || 0),

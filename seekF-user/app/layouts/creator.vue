@@ -15,7 +15,7 @@
 </template>
 <script setup>
 const route = useRoute()
-const creatorNav = [{ path: '/discover/create', label: '发布', icon: 'uil:plus-square' }, { path: '/discover/manage', label: '作品管理', icon: 'uil:clipboard-notes' }]
+const creatorNav = [{ path: '/discover/create', label: '发布', icon: 'uil:plus-square' }, { path: '/discover/manage', label: '作品管理', icon: 'uil:clipboard-notes' }, { path: '/discover/support', label: '创作助力', icon: 'mdi:hand-heart-outline' }]
 const auth = useAuthState()
 const user = computed(() => auth.getUser())
 </script>

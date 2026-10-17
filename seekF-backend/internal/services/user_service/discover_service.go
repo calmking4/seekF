@@ -96,50 +96,58 @@ type MediaSize struct {
 
 // PostInfo 帖子列表展示信息。
 type PostInfo struct {
-	Status       int8
-	ViewCount    int
-	Visibility   int8
-	Version      uint64
-	Width        int
-	Height       int
-	Uuid         string
-	UserId       string
-	Nickname     string
-	Avatar       string
-	Title        string
-	Content      string
-	MediaType    int8
-	CoverUrl     string
-	Tags         []string
-	FirstUrl     string
-	LikeCount    int
-	CommentCount int
-	CollectCount int
-	IsLiked      bool
-	IsCollected  bool
-	CreatedAt    string
+	SupportOnly      int8
+	CanPlay          bool
+	LockReason       string
+	SupportExpiresAt string
+	Status           int8
+	ViewCount        int
+	Visibility       int8
+	Version          uint64
+	Width            int
+	Height           int
+	Uuid             string
+	UserId           string
+	Nickname         string
+	Avatar           string
+	Title            string
+	Content          string
+	MediaType        int8
+	CoverUrl         string
+	Tags             []string
+	FirstUrl         string
+	LikeCount        int
+	CommentCount     int
+	CollectCount     int
+	IsLiked          bool
+	IsCollected      bool
+	CreatedAt        string
 }
 
 type PostDetailInfo struct {
-	Visibility   int8
-	Version      uint64
-	Uuid         string
-	UserId       string
-	Nickname     string
-	Avatar       string
-	Title        string
-	Content      string
-	MediaType    int8
-	CoverUrl     string
-	Tags         []string
-	Urls         []string
-	LikeCount    int
-	CommentCount int
-	CollectCount int
-	ViewCount    int
-	IsLiked      bool
-	IsCollected  bool
-	CreatedAt    string
+	SupportOnly      int8
+	CanPlay          bool
+	LockReason       string
+	SupportExpiresAt string
+	Visibility       int8
+	Version          uint64
+	Uuid             string
+	UserId           string
+	Nickname         string
+	Avatar           string
+	Title            string
+	Content          string
+	MediaType        int8
+	CoverUrl         string
+	Tags             []string
+	Urls             []string
+	LikeCount        int
+	CommentCount     int
+	CollectCount     int
+	ViewCount        int
+	IsLiked          bool
+	IsCollected      bool
+	CreatedAt        string
 }
 
 // CommentInfo 评论展示及回复数量信息。
@@ -732,6 +740,15 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 	if !CanViewDiscoverPost(post, userId) && (post == nil || post.UserId != userId || post.DeletedAt.Valid) {
 		return nil, fmt.Errorf("帖子不存在")
 	}
+	expiries, err := discoverSupportExpiries(ctx, userId, []models.DiscoverPost{*post})
+	if err != nil {
+		return nil, err
+	}
+	canPlay, lockReason, expiresAt := discoverPlaybackAccess(*post, userId, expiries[post.UserId], time.Now())
+	// 无权益时仅返回助力提示所需信息，不装配正文、媒体或互动数据。
+	if !canPlay {
+		return &PostDetailInfo{Uuid: post.Uuid, UserId: post.UserId, SupportOnly: post.SupportOnly, CanPlay: false, LockReason: lockReason, SupportExpiresAt: expiresAt}, nil
+	}
 
 	// 异步增加浏览量
 	go func() {
@@ -740,10 +757,15 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 		}
 	}()
 
-	mediaList, _ := s.discoverDAO.FindMediaByPostId(post.Id)
-	var urls []string
+	mediaList, err := s.discoverDAO.FindMediaByPostId(post.Id)
+	if err != nil {
+		return nil, fmt.Errorf("查询帖子媒体失败: %w", err)
+	}
+	urls := make([]string, 0, len(mediaList))
 	for _, m := range mediaList {
-		urls = append(urls, m.Url)
+		if canPlay {
+			urls = append(urls, m.Url)
+		}
 	}
 
 	var tags []string
@@ -772,6 +794,7 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 	}
 
 	return &PostDetailInfo{
+		SupportOnly: post.SupportOnly, CanPlay: canPlay, LockReason: lockReason, SupportExpiresAt: expiresAt,
 		Visibility: post.Visibility, Version: post.Version,
 		Uuid:         post.Uuid,
 		UserId:       post.UserId,
@@ -814,6 +837,9 @@ func (s *DiscoverServiceImpl) SetLike(ctx context.Context, userId, targetUuid st
 			}
 			if !CanViewDiscoverPost(post, userId) {
 				return fmt.Errorf("评论所属帖子不可用")
+			}
+			if err := requireDiscoverSupport(ctx, tx, userId, post); err != nil {
+				return err
 			}
 			targetId, owner = comment.Id, comment.UserId
 		} else {
@@ -876,47 +902,58 @@ func (s *DiscoverServiceImpl) SetLike(ctx context.Context, userId, targetUuid st
 
 // AddComment 保存评论并通知作者或被回复者。
 func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid string, parentUuid, replyToUserId, content string) (*CommentInfo, error) {
-	post, err := s.discoverDAO.FindPostByUuid(postUuid)
-	if err != nil {
-		return nil, err
-	}
-	if !CanViewDiscoverPost(post, userId) {
-		return nil, fmt.Errorf("帖子不存在")
-	}
-	// 回复顶级评论时客户端不传回复用户，从父评论确定通知接收者。
+	var post *models.DiscoverPost
 	replyRecipient := replyToUserId
-	if parentUuid != "" {
-		parent, err := s.discoverDAO.FindCommentByUuid(parentUuid)
-		if err != nil {
-			return nil, fmt.Errorf("查询被回复评论失败: %w", err)
-		}
-		if parent == nil || parent.PostId != post.Id {
-			return nil, fmt.Errorf("被回复的评论不存在或不属于当前帖子")
-		}
-		if replyRecipient == "" {
-			replyRecipient = parent.UserId
-		}
-	}
 
 	commentUUID := "C" + util.GetNowAndLenRandomString(11)
 	comment := &models.DiscoverComment{
 		Uuid:          commentUUID,
-		PostId:        post.Id,
 		UserId:        userId,
 		ParentId:      parentUuid,
 		ReplyToUserId: replyToUserId,
 		Content:       content,
 	}
 
-	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-
+	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
-
+		var err error
+		post, err = txDiscoverDAO.FindPostByUuidForUpdate(postUuid)
+		if err != nil {
+			return err
+		}
+		if !CanViewDiscoverPost(post, userId) {
+			return fmt.Errorf("帖子不存在或已下架")
+		}
+		if err := requireDiscoverSupport(ctx, tx, userId, post); err != nil {
+			return err
+		}
+		if parentUuid != "" {
+			parent, err := txDiscoverDAO.FindCommentByUuid(parentUuid)
+			if err != nil {
+				return fmt.Errorf("查询被回复评论失败: %w", err)
+			}
+			if parent == nil || parent.PostId != post.Id {
+				return fmt.Errorf("被回复的评论不存在或不属于当前帖子")
+			}
+			if replyRecipient == "" {
+				replyRecipient = parent.UserId
+			}
+		}
+		comment.PostId = post.Id
 		if err := txDiscoverDAO.CreateComment(comment); err != nil {
 			return fmt.Errorf("评论失败: %v", err)
 		}
-
-		return txDiscoverDAO.IncrementCommentCount(post.Id)
+		if err := txDiscoverDAO.IncrementCommentCount(post.Id); err != nil {
+			return err
+		}
+		recipient, notificationType, text := post.UserId, NotificationTypeCommentPost, "评论了你的帖子："
+		if parentUuid != "" {
+			recipient, notificationType, text = replyRecipient, NotificationTypeReply, "回复了你的评论："
+		}
+		if recipient != "" && recipient != userId {
+			return userdao.NewNotificationDAO(tx).CreateNotification(&models.Notification{UserId: recipient, ActorId: userId, Type: notificationType, TargetUuid: commentUUID, Content: text + truncateContent(content, 50)})
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -929,39 +966,6 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 		nickname = user.Nickname
 		avatar = user.Avatar
 	}
-
-	// 异步创建评论/回复通知
-	go func() {
-		if parentUuid != "" {
-			// 回复评论，通知被回复者
-			if replyRecipient != "" && replyRecipient != userId {
-				notification := &models.Notification{
-					UserId:     replyRecipient,
-					ActorId:    userId,
-					Type:       NotificationTypeReply,
-					TargetUuid: commentUUID,
-					Content:    "回复了你的评论：" + truncateContent(content, 50),
-				}
-				if err := s.notificationDAO.CreateNotification(notification); err != nil {
-					zlog.Error("创建回复通知失败: " + err.Error())
-				}
-			}
-		} else {
-			// 评论帖子，通知帖子作者
-			if post.UserId != userId {
-				notification := &models.Notification{
-					UserId:     post.UserId,
-					ActorId:    userId,
-					Type:       NotificationTypeCommentPost,
-					TargetUuid: commentUUID,
-					Content:    "评论了你的帖子：" + truncateContent(content, 50),
-				}
-				if err := s.notificationDAO.CreateNotification(notification); err != nil {
-					zlog.Error("创建评论通知失败: " + err.Error())
-				}
-			}
-		}
-	}()
 
 	return &CommentInfo{
 		Uuid:          commentUUID,
@@ -993,6 +997,9 @@ func (s *DiscoverServiceImpl) ListComments(ctx context.Context, userId, postUuid
 	if !CanViewDiscoverPost(post, userId) {
 		return nil, fmt.Errorf("帖子不存在或已下架")
 	}
+	if err := requireDiscoverSupport(ctx, db.GormDB, userId, post); err != nil {
+		return nil, err
+	}
 	comments, err := s.discoverDAO.FindCommentsByPostId(post.Id, page, pageSize)
 	if err != nil {
 		return nil, err
@@ -1008,6 +1015,9 @@ func (s *DiscoverServiceImpl) ListCommentThread(ctx context.Context, userId, pos
 	}
 	if !CanViewDiscoverPost(post, userId) {
 		return nil, false, fmt.Errorf("帖子不存在或已下架")
+	}
+	if err := requireDiscoverSupport(ctx, db.GormDB, userId, post); err != nil {
+		return nil, false, err
 	}
 	if parentUuid != "" {
 		parent, err := s.discoverDAO.FindCommentByUuid(parentUuid)
@@ -1453,6 +1463,11 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 	if len(posts) == 0 {
 		return []PostInfo{}, total, nil
 	}
+	expiries, err := discoverSupportExpiries(ctx, userId, posts)
+	if err != nil {
+		return nil, 0, err
+	}
+	now := time.Now()
 
 	postIds := make([]int64, 0, len(posts))
 	userIds := make([]string, 0, len(posts))
@@ -1513,6 +1528,14 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 	for _, post := range posts {
 		firstMedia := mediaMap[post.Id]
 		firstUrl := firstMedia.Url
+		canPlay, lockReason, expiresAt := discoverPlaybackAccess(post, userId, expiries[post.UserId], now)
+		content := post.Content
+		if !canPlay {
+			firstUrl = ""
+			if post.SupportOnly == 1 {
+				content = ""
+			}
+		}
 		cardSize := discoverCardSize(post, firstMedia)
 
 		var tags []string
@@ -1528,13 +1551,14 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 		}
 
 		result = append(result, PostInfo{
+			SupportOnly: post.SupportOnly, CanPlay: canPlay, LockReason: lockReason, SupportExpiresAt: expiresAt,
 			Visibility: post.Visibility, Version: post.Version, ViewCount: post.ViewCount, Status: post.Status,
 			Uuid:         post.Uuid,
 			UserId:       post.UserId,
 			Nickname:     nickname,
 			Avatar:       avatar,
 			Title:        post.Title,
-			Content:      post.Content,
+			Content:      content,
 			MediaType:    post.MediaType,
 			CoverUrl:     post.CoverUrl,
 			Tags:         tags,
@@ -1674,8 +1698,14 @@ func validateDiscoverPost(input *userreq.CreatePostRequest, creating bool) error
 	if input.MediaType != 0 && input.MediaType != 1 {
 		return fmt.Errorf("媒体类型无效")
 	}
+	if input.SupportOnly != 0 && input.SupportOnly != 1 {
+		return fmt.Errorf("助力属性无效")
+	}
 	if len(input.Urls) == 0 || len(input.Urls) > 9 || (input.MediaType == 1 && len(input.Urls) != 1) {
 		return fmt.Errorf("图片需为1至9张，视频仅限1个")
+	}
+	if input.MediaType == 1 && input.CoverUrl != "" && input.CoverUrl == input.Urls[0] {
+		return fmt.Errorf("视频封面必须单独上传图片")
 	}
 	if len(input.Tags) > 10 {
 		return fmt.Errorf("标签最多10个")
@@ -1790,6 +1820,18 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 			}
 			saved.Version++
 		}
+		if postUuid != "" && input.SupportOnly != saved.SupportOnly {
+			return fmt.Errorf("作品发布后不能切换免费或助力属性")
+		}
+		if input.SupportOnly == 1 {
+			activate, err := userdao.NewSupportDAO(tx).FindActivate(userId)
+			if err != nil {
+				return fmt.Errorf("查询助力开通状态失败: %w", err)
+			}
+			if activate == nil {
+				return fmt.Errorf("请先开通创作者助力")
+			}
+		}
 		urls := append([]string{}, input.Urls...)
 		if input.CoverUrl != "" {
 			urls = append(urls, input.CoverUrl)
@@ -1814,8 +1856,11 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 			if asset.Category != expected {
 				return fmt.Errorf("媒体类型与上传资源不一致")
 			}
+			if input.SupportOnly == 1 && (!isDiscoverObjectKey(asset.ObjectKey) || asset.URL != oss.FileURL(asset.ObjectKey)) {
+				return fmt.Errorf("助力作品必须使用本站上传的私有资源")
+			}
 			// 编辑历史OSS资源时沿用私有ACL保护，外部历史链接只保留展示关联。
-			if postUuid != "" && isDiscoverObjectKey(asset.ObjectKey) && asset.URL == oss.FileURL(asset.ObjectKey) {
+			if (postUuid != "" || input.SupportOnly == 1) && isDiscoverObjectKey(asset.ObjectKey) && asset.URL == oss.FileURL(asset.ObjectKey) {
 				if err := oss.SetDiscoverPrivateACL(ctx, asset.ObjectKey); err != nil {
 					return err
 				}
@@ -1834,6 +1879,7 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 		}
 		saved.Title, saved.Content, saved.Tags = input.Title, input.Content, tags
 		saved.MediaType, saved.Visibility, saved.CoverUrl = input.MediaType, input.Visibility, input.CoverUrl
+		saved.SupportOnly = input.SupportOnly
 		saved.CoverWidth, saved.CoverHeight = 0, 0
 		saved.CoverAssetId = nil
 		if cover := assets[input.CoverUrl]; cover != nil {

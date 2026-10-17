@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime/multipart"
 	"path"
+	"seekF-backend/internal/configs"
 	userdao "seekF-backend/internal/dao/user_dao"
 	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/models"
@@ -412,7 +413,7 @@ func (s *FileServiceImpl) OpenDiscoverFile(ctx context.Context, userId, fileURL,
 		return nil, fmt.Errorf("媒体已失效或正在上传")
 	}
 	if asset == nil || asset.UserId != userId {
-		references, err := dao.CountReadableAssetReferences(fileURL, userId)
+		references, err := dao.CountReadableAssetReferences(fileURL, userId, configs.GetConfig().AlipayConfig.Environment, time.Now())
 		if err != nil {
 			return nil, err
 		}
