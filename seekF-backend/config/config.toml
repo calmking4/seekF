@@ -3,6 +3,13 @@ appName = "seekF"
 host = "0.0.0.0"
 port = 8000
 
+[alipayConfig]
+environment = "sandbox" # sandbox或production
+appID = ""
+sellerID = ""
+returnURL = ""
+notifyURL = "" 
+
 [authConfig]
 # mode: "redis"(默认，不透明token+redis会话) 或 "jwt"(JWT+Redis校验)
 mode = "redis"

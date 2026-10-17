@@ -32,6 +32,7 @@ type DiscoverPost struct {
 	CoverAssetId       *int64          `gorm:"index;comment:封面资源ID，关联file_asset，无封面时为空"`
 	Visibility         int8            `gorm:"index:idx_discover_author_feed,priority:3;index:idx_discover_feed,priority:2;index:idx_discover_feed_media,priority:2;not null;default:0;index;comment:可见性，0.公开，1.仅自己可见"`
 	Version            uint64          `gorm:"not null;default:1;comment:编辑版本号"`
+	SupportOnly        int8            `gorm:"column:support_only;not null;default:0;comment:助力属性，0免费，1助力专属，发布后不可修改"`
 }
 
 // TableName 返回发现页帖子表名。

@@ -3,6 +3,7 @@ package configs
 import (
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -53,6 +54,17 @@ type OSSConfig struct {
 	Region          string `toml:"region"`
 	Bucket          string `toml:"bucket"`
 	BaseURL         string `toml:"baseURL"`
+}
+
+// AlipayConfig 支付宝支付配置
+type AlipayConfig struct {
+	Environment     string `toml:"environment"`
+	AppID           string `toml:"appID"`
+	SellerID        string `toml:"sellerID"`
+	PrivateKey      string `toml:"-"`
+	AlipayPublicKey string `toml:"-"`
+	ReturnURL       string `toml:"returnURL"`
+	NotifyURL       string `toml:"notifyURL"`
 }
 
 type LogConfig struct {
@@ -126,6 +138,7 @@ type AuthConfig struct {
 }
 
 type Config struct {
+	AlipayConfig       `toml:"alipayConfig"`
 	DiscoverFeedConfig `toml:"discoverFeedConfig"`
 	MainConfig         `toml:"mainConfig"`
 	MysqlConfig        `toml:"mysqlConfig"`
@@ -201,6 +214,29 @@ var config *Config
 
 // loadEnvConfig 从环境变量加载敏感配置
 func loadEnvConfig(cfg *Config) {
+	// 支付宝配置，密钥仅从环境变量读取。
+	if v, ok := os.LookupEnv("ALIPAY_ENVIRONMENT"); ok {
+		cfg.AlipayConfig.Environment = strings.TrimSpace(v)
+	}
+	if v, ok := os.LookupEnv("ALIPAY_APP_ID"); ok {
+		cfg.AlipayConfig.AppID = strings.TrimSpace(v)
+	}
+	if v, ok := os.LookupEnv("ALIPAY_SELLER_ID"); ok {
+		cfg.AlipayConfig.SellerID = strings.TrimSpace(v)
+	}
+	if v, ok := os.LookupEnv("ALIPAY_PRIVATE_KEY"); ok {
+		cfg.AlipayConfig.PrivateKey = strings.TrimSpace(v)
+	}
+	if v, ok := os.LookupEnv("ALIPAY_PUBLIC_KEY"); ok {
+		cfg.AlipayConfig.AlipayPublicKey = strings.TrimSpace(v)
+	}
+	if v, ok := os.LookupEnv("ALIPAY_RETURN_URL"); ok {
+		cfg.AlipayConfig.ReturnURL = strings.TrimSpace(v)
+	}
+	if v, ok := os.LookupEnv("ALIPAY_NOTIFY_URL"); ok {
+		cfg.AlipayConfig.NotifyURL = strings.TrimSpace(v)
+	}
+
 	// MySQL Password
 	if v := os.Getenv("MYSQL_PASSWORD"); v != "" {
 		cfg.MysqlConfig.Password = v
