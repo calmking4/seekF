@@ -44,9 +44,9 @@ fromName = "seekF"     # 发件人名称
 [ossConfig]
 accessKeyID = ""
 accessKeySecret = ""
-region = "cn-shenzhen"
-bucket = "seekf"
-baseURL = "https://seekf.oss-cn-shenzhen.aliyuncs.com"
+region = ""
+bucket = ""
+baseURL = ""
 
 [logConfig]
 logDir = "./logs"       # 日志目录
@@ -84,7 +84,7 @@ glmApiKey = ""
 glmModel = ""
 glmBaseUrl = ""
 glmMaxTokens = 131072
-glm4vModel = ""
+glm4vModel = "glm-4.6v"
 glm4vMaxTokens = 131072
 
 qwenLocalApiKey = ""

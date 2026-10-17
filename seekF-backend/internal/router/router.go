@@ -152,6 +152,7 @@ func SetupRouter(
 			protectedGroup.POST("/knowledge/content", knowledgeController.GetDocumentContent)
 			// Discover
 			protectedGroup.POST("/discover/create", discoverController.CreatePost)
+			protectedGroup.POST("/discover/ai-suggestions", discoverController.SuggestCreation)
 			protectedGroup.POST("/discover/update", discoverController.UpdatePost)
 			protectedGroup.POST("/discover/works", discoverController.ListOwnWorks)
 			protectedGroup.POST("/discover/visibility", discoverController.SetPostVisibility)

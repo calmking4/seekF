@@ -235,12 +235,21 @@ func loadEnvConfig(cfg *Config) {
 		cfg.EmailConfig.FromAddress = v
 	}
 
-	// OSS Access Key
+	// OSS配置
 	if v := os.Getenv("OSS_ACCESS_KEY_ID"); v != "" {
 		cfg.OSSConfig.AccessKeyID = v
 	}
 	if v := os.Getenv("OSS_ACCESS_KEY_SECRET"); v != "" {
 		cfg.OSSConfig.AccessKeySecret = v
+	}
+	if v := os.Getenv("OSS_REGION"); v != "" {
+		cfg.OSSConfig.Region = v
+	}
+	if v := os.Getenv("OSS_BUCKET"); v != "" {
+		cfg.OSSConfig.Bucket = v
+	}
+	if v := os.Getenv("OSS_BASE_URL"); v != "" {
+		cfg.OSSConfig.BaseURL = v
 	}
 
 	// AI Model Configuration

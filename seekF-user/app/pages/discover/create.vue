@@ -11,7 +11,7 @@
             <button type="button" class="rounded-full px-5 py-2.5 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500" :class="mediaType === 'image' ? 'bg-gray-100 text-gray-800' : 'text-gray-400 hover:text-gray-600'" :aria-pressed="mediaType === 'image'" :disabled="hasActiveUpload" @click="switchType('image')">上传图文</button>
           </template>
         </div>
-        <div v-if="!isEditing" class="flex items-center gap-2"><button type="button" class="flex items-center gap-2 rounded-full bg-gray-100 px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-200 disabled:opacity-50" :disabled="hasActiveUpload" @click="showDraftList"><Icon name="mdi:inbox-outline" />草稿箱<span>({{ draftCount }})</span></button></div>
+        <div v-if="!isEditing && mediaList.length === 0" class="flex items-center gap-2"><button type="button" class="flex items-center gap-2 rounded-full bg-gray-100 px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-200 disabled:opacity-50" :disabled="hasActiveUpload" @click="showDraftList"><Icon name="mdi:inbox-outline" />草稿箱<span>({{ draftCount }})</span></button></div>
       </div>
       <p v-if="!isEditing" class="mb-4 text-xs text-gray-400" role="status">{{ draftSaveStatus }}</p>
       <!-- 上传区域 -->
@@ -239,6 +239,7 @@
       <div v-if="mediaList.length > 0">
       <!-- 标题 -->
       <div class="mb-4">
+        <DiscoverCreationSuggestions v-if="mediaType === 'image'" :titles="suggestionTitles" :suggested-tags="suggestionTags" :ready="suggestionsReady" :open="suggestionsOpen" :loading="suggestionsLoading" :error="suggestionsError" @toggle="toggleSuggestions" @close="suggestionsOpen = false" @generate="generateSuggestions" @select-title="acceptSuggestedTitle" />
         <el-input
           v-model="title"
           placeholder="填写标题会有更多赞哦~"
@@ -264,6 +265,7 @@
 
       <div class="mb-5 flex items-center gap-3 text-sm text-gray-500"><span>谁可以看</span><el-radio-group v-model="visibility" :disabled="publishing"><el-radio-button :value="0">公开</el-radio-button><el-radio-button :value="1">仅自己可见</el-radio-button></el-radio-group></div>
       <!-- 标签 -->
+      <DiscoverCreationSuggestions v-if="mediaType === 'image'" mode="tags" :suggested-tags="suggestionTags" :selected-tags="tags" :ready="suggestionsReady" @select-tag="acceptSuggestedTag" />
       <div class="flex flex-wrap items-center gap-2">
         <el-tag
           v-for="(tag, index) in tags"
@@ -404,6 +406,28 @@ const tags = ref([])
 const tagInputValue = ref('')
 const tagInputVisible = ref(false)
 const tagInputRef = ref()
+
+const {
+  titles: suggestionTitles, suggestedTags: suggestionTags, ready: suggestionsReady,
+  open: suggestionsOpen, loading: suggestionsLoading, error: suggestionsError,
+  generate: generateSuggestions, toggle: toggleSuggestions,
+} = useDiscoverCreationSuggestions(() => ({
+  mediaType: mediaType.value, media: mediaList.value,
+  title: title.value, content: content.value, tags: tags.value,
+  editorKey: [editingId.value, draftId.value].join(':'),
+  userId: (editorAuth.getUser()?.uuid || editorAuth.getUser()?.Uuid || '') === editorUserId ? editorUserId : '',
+  disabled: editorLoading.value || publishing.value || savingDraft.value,
+}))
+// AI只提供候选，用户明确点击后才改变当前输入，沿用手动草稿保存流程。
+const acceptSuggestedTitle = value => {
+  if (!suggestionsReady.value) return
+  title.value = value
+  suggestionsOpen.value = false
+}
+const acceptSuggestedTag = value => {
+  if (!suggestionsReady.value || tags.value.includes(value) || tags.value.length >= 10) return
+  tags.value.push(value)
+}
 
 // 视频上传 AbortController
 const uploadAbortMap = ref(new Map())

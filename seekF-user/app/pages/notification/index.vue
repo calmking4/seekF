@@ -271,7 +271,7 @@ button:disabled { cursor: default; opacity: .5; }
 .category-card:active { transform: scale(.98); }
 .category-card.likes { --accent: #e57989; }
 .category-card:hover { border-color: #c9d9ed; background: #fcfdff; }
-.category-card.active { border-color: #9dc4f5; box-shadow: 0 4px 18px #609ae90a; background: #f7faff; }
+.category-card.active { border-color: #9dc4f5; }
 .category-icon { position: relative; flex-shrink: 0; width: 48px; height: 48px; display: grid; place-items: center; color: var(--accent); font-size: 40px; }
 .category-icon { transition: transform .32s cubic-bezier(.34, 1.56, .64, 1); }
 .category-card.active .category-icon { transform: translateY(-2px) scale(1.06); }

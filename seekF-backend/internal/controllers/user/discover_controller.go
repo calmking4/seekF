@@ -27,6 +27,21 @@ func NewDiscoverController(discoverService userservice.DiscoverService) *Discove
 
 // ========== 帖子 ==========
 
+// SuggestCreation 根据已上传图片返回待用户采纳的标题和标签候选。
+func (c *DiscoverController) SuggestCreation(ctx *gin.Context) {
+	var req userreq.DiscoverAISuggestionsRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.Error(ctx, "图片创作建议参数错误", http.StatusBadRequest)
+		return
+	}
+	result, err := c.discoverService.SuggestDiscoverCreation(ctx.Request.Context(), ctx.GetString("Uuid"), req)
+	if err != nil {
+		respondDiscoverError(ctx, err)
+		return
+	}
+	resp.Success(ctx, "生成创作建议成功", result)
+}
+
 // CreatePost 发布帖子
 func (c *DiscoverController) CreatePost(ctx *gin.Context) {
 	userId := ctx.GetString("Uuid")
@@ -115,6 +130,34 @@ func (c *DiscoverController) ListFeed(ctx *gin.Context) {
 		})
 	}
 	resp.Success(ctx, "获取成功", userresp.FeedRespond{List: items, NextCursor: result.NextCursor, HasMore: result.HasMore, HasFollowing: result.HasFollowing})
+}
+
+// FollowingUpdates 返回关注栏作者和有更新的作者数。
+func (c *DiscoverController) FollowingUpdates(ctx *gin.Context) {
+	result, err := c.discoverService.FollowingUpdates(ctx.Request.Context(), ctx.GetString("Uuid"))
+	if err != nil {
+		respondDiscoverError(ctx, err)
+		return
+	}
+	resp.Success(ctx, "获取关注作者更新成功", result)
+}
+
+// ReadFollowingUpdates 确认已成功查看指定作者快照内的更新。
+func (c *DiscoverController) ReadFollowingUpdates(ctx *gin.Context) {
+	var req userreq.FollowingReadRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.Error(ctx, "作者更新参数错误", http.StatusBadRequest)
+		return
+	}
+	if err := c.discoverService.ReadFollowingUpdates(ctx.Request.Context(), ctx.GetString("Uuid"), req.Token); err != nil {
+		if errors.Is(err, userservice.ErrFollowingReadExpired) {
+			resp.Error(ctx, err.Error(), http.StatusGone)
+		} else {
+			resp.Error(ctx, "同步作者更新状态失败，请稍后重试", http.StatusServiceUnavailable)
+		}
+		return
+	}
+	resp.Success(ctx, "已查看作者更新", nil)
 }
 
 // SearchPosts 搜索帖子

@@ -1,5 +1,14 @@
 package userreq
 
+// DiscoverAISuggestionsRequest 根据本人已上传的图片生成标题与标签建议。
+type DiscoverAISuggestionsRequest struct {
+	Urls      []string `json:"urls" binding:"required,min=1,max=9,dive,max=2048"`
+	MediaType int8     `json:"media_type" binding:"oneof=0"`
+	Title     string   `json:"title" binding:"max=50"`
+	Content   string   `json:"content" binding:"max=5000"`
+	Tags      []string `json:"tags" binding:"max=10,dive,max=20"`
+}
+
 // CreatePostRequest 发布帖子及可选媒体尺寸信息。
 type CreatePostRequest struct {
 	RequestKey string             `json:"request_key"`

@@ -35,6 +35,8 @@ import (
 
 // DiscoverService 发现页内容与互动业务接口。
 type DiscoverService interface {
+	// 根据已上传图片生成标题和标签候选，不保存或发布作品。
+	SuggestDiscoverCreation(ctx context.Context, userId string, input userreq.DiscoverAISuggestionsRequest) (*DiscoverCreationSuggestions, error)
 	// 查询关注作者及未查看更新的作者数量。
 	FollowingUpdates(ctx context.Context, userId string) (*FollowingUpdatesInfo, error)
 	// 确认查看指定作者快照内的更新，不清除后续新帖。

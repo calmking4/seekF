@@ -533,7 +533,7 @@ const submitComment = async () => {
     const response = await useApi$(aiComment ? '/user/discover/comment/ai' : '/user/discover/comment/add', { body, retry: 0 })
     if (disposed) return
     if (response.code !== 200) throw new Error('评论发送失败')
-    const comment = aiComment ? response.data?.user_comment : response.data
+    const comment = response.data
     if (comment?.uuid) {
       const normalized = { ...comment, reply_to_nickname: target && !target.isReplyToTopLevel ? target.nickname : comment.reply_to_nickname }
       if (target) {

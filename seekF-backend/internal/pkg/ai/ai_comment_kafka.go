@@ -12,6 +12,7 @@ import (
 	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/db"
 	mykafka "seekF-backend/internal/pkg/kafka"
+	"seekF-backend/internal/pkg/upload/oss"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 
@@ -109,11 +110,25 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 	}
 
 	// 3. 获取帖子图片URL（仅取图片类型，type=0）
-	mediaList, _ := c.discoverDAO.FindMediaByPostId(post.Id)
+	mediaList, err := c.discoverDAO.FindMediaByPostId(post.Id)
+	if err != nil {
+		zlog.Error("AI评论: 查询图片失败，帖子=" + payload.PostUuid + ": " + err.Error())
+		return
+	}
 	var imageUrls []string
 	for _, m := range mediaList {
 		if m.Type == 0 { // 0=图片，1=视频
-			imageUrls = append(imageUrls, m.Url)
+			imageURL := m.Url
+			key := oss.ObjectKeyFromURL(imageURL)
+			// 本站私有图片使用短时链接；历史外部图片仍沿用原地址。
+			if strings.HasPrefix(key, "discover/images/") && imageURL == oss.FileURL(key) {
+				imageURL, err = oss.SignResourceURL(ctx, key)
+				if err != nil {
+					zlog.Error("AI评论: 准备图片失败，帖子=" + payload.PostUuid + ": " + err.Error())
+					return
+				}
+			}
+			imageUrls = append(imageUrls, imageURL)
 		}
 	}
 
@@ -158,6 +173,10 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 		zlog.Error("AI评论: 生成失败: " + err.Error())
 		return
 	}
+	if result == nil {
+		zlog.Error("AI评论: 未返回生成结果，帖子=" + payload.PostUuid)
+		return
+	}
 
 	aiReply := strings.TrimSpace(result.Content)
 	if aiReply == "" {
@@ -189,8 +208,7 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 			return err
 		}
 
-		txDiscoverDAO.IncrementCommentCount(post.Id)
-		return nil
+		return txDiscoverDAO.IncrementCommentCount(post.Id)
 	})
 	if err != nil {
 		return

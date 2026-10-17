@@ -272,6 +272,19 @@ func DeleteFileByURL(ctx context.Context, fileURL string) error {
 // FileURL 根据已配置的OSS基址返回资源地址。
 func FileURL(objectKey string) string { clientOnce.Do(initOSSClient); return buildFileURL(objectKey) }
 
+// SignResourceURL 为已校验归属的媒体生成5分钟可读链接，供服务端调用视觉模型。
+func SignResourceURL(ctx context.Context, objectKey string) (string, error) {
+	client, err := getClient()
+	if err != nil {
+		return "", err
+	}
+	result, err := client.Presign(ctx, &oss.GetObjectRequest{Bucket: oss.Ptr(ossBucketName), Key: oss.Ptr(objectKey)}, oss.PresignExpires(5*time.Minute))
+	if err != nil {
+		return "", fmt.Errorf("生成图片访问链接失败: %w", err)
+	}
+	return result.URL, nil
+}
+
 // SetDiscoverPrivateACL 将历史发现页对象改为私有，后续通过业务鉴权读取。
 func SetDiscoverPrivateACL(ctx context.Context, objectKey string) error {
 	client, err := getClient()
