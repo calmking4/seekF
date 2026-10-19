@@ -51,7 +51,8 @@
             <div class="notification-content">
               <button class="actor-name" :disabled="!item.actor_id" @click="openActor(item)">{{ item.actor_name || '未知用户' }}</button>
               <div class="event-meta"><span>{{ actionText(item.type) }}</span><time :datetime="item.created_at" :title="fullTime(item.created_at)">{{ formatTime(item.created_at) }}</time></div>
-              <button v-if="item.type !== 4" class="post-message" @click="openPost(item)">
+              <NuxtLink v-if="item.type === 7" :to="item.actor_id ? `/user/${encodeURIComponent(item.actor_id)}` : '/discover'" class="mt-2 block text-sm text-blue-500" @click="readItem(item)">{{ item.content }} 查看创作者作品</NuxtLink>
+              <button v-else-if="item.type !== 4" class="post-message" @click="openPost(item)">
                 <span v-if="isComment(item) || item.type === 6" class="comment-text">{{ commentContent(item) }}</span>
                 <span class="post-reference"><Icon name="uil:file-alt" />{{ item.target_available ? (item.post_title || '查看原帖') : '原帖已删除或不可见' }}</span>
               </button>
@@ -60,7 +61,7 @@
               :disabled="followPending[item.actor_id] || !item.target_available" @click="toggleFollow(item)">
               <Icon :name="item.is_following ? 'uil:check' : 'uil:plus'" />{{ followPending[item.actor_id] ? '处理中…' : item.is_following ? '已关注' : '回关' }}
             </button>
-            <div v-else class="post-actions">
+            <div v-else-if="item.type !== 7" class="post-actions">
               <button v-if="isComment(item) && item.target_available" class="reply-button" @click="openPost(item, true)">{{ item.comment_uuid ? '回复' : '查看评论' }}</button>
               <button class="post-cover" aria-label="查看原帖" @click="openPost(item)">
                 <img v-if="item.post_cover && !failedImages[item.post_cover]" :src="item.post_cover" alt="" loading="lazy" @error="failedImages[item.post_cover] = true" />
@@ -95,6 +96,7 @@ const categories = [
   { key: 'likes', label: '赞和收藏', icon: 'uil:heart' },
   { key: 'follows', label: '新增关注', icon: 'uil:user-check', iconClass: 'text-emerald-400' },
   { key: 'contacts', label: '好友和群', icon: 'uil:users-alt', iconClass: 'text-amber-400' },
+  { key: 'support', label: '助力', icon: 'mdi:hand-heart-outline' },
 ]
 const activeCategory = ref('comments')
 const isContactCategory = computed(() => activeCategory.value === 'contacts')
@@ -124,8 +126,8 @@ const pageSize = 20
 
 const badge = count => count > 99 ? '99+' : count
 const isComment = item => [2, 3].includes(item.type)
-const categoryOf = item => isComment(item) ? 'comments' : item.type === 4 ? 'follows' : 'likes'
-const actionText = type => ({ 1: '赞了你的帖子', 2: '评论了你的帖子', 3: '回复了你的评论', 4: '成为了你的新关注者', 5: '收藏了你的帖子', 6: '赞了你的评论' }[type] || '与你有了新互动')
+const categoryOf = item => item.type === 7 ? 'support' : isComment(item) ? 'comments' : item.type === 4 ? 'follows' : 'likes'
+const actionText = type => ({ 1: '赞了你的帖子', 2: '评论了你的帖子', 3: '回复了你的评论', 4: '成为了你的新关注者', 5: '收藏了你的帖子', 6: '赞了你的评论', 7: '助力付款已确认' }[type] || '与你有了新互动')
 const commentContent = item => (item.content || '').replace(/^(评论了你的帖子|回复了你的评论)[：:]/, '') || '查看评论内容'
 const avatarColor = id => ['#7ca5cf', '#b39ac8', '#d6a18f', '#83b6a4'][Array.from(String(id || '')).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 4]
 const parseTime = value => new Date(String(value || '').replace(/^(\d{4}-\d{2}-\d{2}) /, '$1T'))

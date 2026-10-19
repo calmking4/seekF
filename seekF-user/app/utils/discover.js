@@ -34,6 +34,7 @@ export function mergeDiscoverPage(existing, incoming) {
 
 // 登录回跳仅接受站内帖子详情路径，拒绝外部地址与其他任意路径。
 export function discoverReturnPath(value) {
+  if (typeof value === 'string' && /^\/support(?:\/result)?(?:\?[^#]*)?$/.test(value)) return value
   return typeof value === 'string' && /^\/discover\/post\/[A-Za-z0-9_-]+$/.test(value) ? value : '/'
 }
 

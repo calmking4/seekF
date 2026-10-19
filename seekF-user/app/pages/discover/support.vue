@@ -71,6 +71,7 @@
       </aside>
     </div>
 
+    <SupportIncome />
     <section class="rounded-2xl border border-gray-100 bg-white p-6 sm:p-7">
       <h2 class="flex items-center gap-2 text-sm font-medium text-gray-700"><Icon name="lucide:book-open" class="text-base text-gray-400" /> 开通前，了解这些</h2>
       <div class="mt-5 grid gap-5 md:grid-cols-3 md:gap-7">

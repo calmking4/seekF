@@ -4,7 +4,7 @@ package userreq
 type ListNotificationRequest struct {
 	Page       int    `json:"page" form:"page"`
 	PageSize   int    `json:"page_size" form:"page_size"`
-	Category   string `json:"category" form:"category" binding:"omitempty,oneof=comments likes follows"`
+	Category   string `json:"category" form:"category" binding:"omitempty,oneof=comments likes follows support"`
 	UnreadOnly bool   `json:"unread_only" form:"unread_only"`
 }
 
@@ -15,5 +15,5 @@ type MarkNotificationReadRequest struct {
 
 // MarkNotificationCategoryReadRequest 标记指定分类通知已读。
 type MarkNotificationCategoryReadRequest struct {
-	Category string `json:"category" form:"category" binding:"required,oneof=comments likes follows"`
+	Category string `json:"category" form:"category" binding:"required,oneof=comments likes follows support"`
 }

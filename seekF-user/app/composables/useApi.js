@@ -27,6 +27,7 @@ export const useApi$ = (url, options = {}) => {
         credentials: "include",
         onResponse: (context) => { mapDiscoverMediaResponse(context.response._data, apiBase); options.onResponse?.(context) },
         onRequestError: (error) => {
+            if (options.signal?.aborted) return;
             console.error('onRequestError: ', error);
             ElMessage.error('网络请求失败，请检查网络连接');
         },

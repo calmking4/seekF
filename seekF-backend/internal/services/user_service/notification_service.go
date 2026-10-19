@@ -8,6 +8,7 @@ import (
 
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
+	"seekF-backend/internal/pkg/constants"
 )
 
 // 通知类型常量
@@ -177,6 +178,9 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 				info.PostTitle, info.PostCover, info.TargetAvailable = post.Title, covers[targetUuid], true
 			}
 		}
+		if n.Type == constants.NotificationSupportPaid {
+			info.TargetAvailable = true
+		}
 		if n.Type != NotificationTypeFollow && !info.TargetAvailable {
 			info.Content = ""
 			info.TargetUuid = ""
@@ -192,6 +196,8 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 // NotificationCategoryTypes 将页面分类映射到通知类型，空分类兼容旧客户端。
 func NotificationCategoryTypes(category string) []int8 {
 	switch category {
+	case "support":
+		return []int8{constants.NotificationSupportPaid}
 	case "comments":
 		return []int8{NotificationTypeCommentPost, NotificationTypeReply}
 	case "likes":
@@ -210,6 +216,7 @@ func (s *NotificationServiceImpl) GetUnreadCounts(ctx context.Context, userId st
 		return nil, fmt.Errorf("查询分类未读数失败: %w", err)
 	}
 	return map[string]int64{
+		"support":  counts[constants.NotificationSupportPaid],
 		"comments": counts[NotificationTypeCommentPost] + counts[NotificationTypeReply],
 		"likes":    counts[NotificationTypeLikePost] + counts[NotificationTypeCollectPost] + counts[NotificationTypeLikeComment],
 		"follows":  counts[NotificationTypeFollow],

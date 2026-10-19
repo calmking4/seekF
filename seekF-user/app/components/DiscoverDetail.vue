@@ -2,15 +2,16 @@
   <Teleport to="body" :disabled="standalone">
     <Transition name="discover">
       <div v-if="show" :class="standalone ? 'discover-standalone' : 'discover-overlay'" @click.self="handleClose">
-      <button v-if="!standalone" type="button" aria-label="关闭详情" class="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-gray-600 focus-visible:ring-2 focus-visible:ring-blue-500" @click="handleClose"><Icon name="mdi:close" /></button>
-      <div ref="dialogRef" class="note-card" :class="{ '!h-auto w-[560px]': isSupportLocked }" tabindex="-1" :role="standalone ? 'region' : 'dialog'" :aria-modal="standalone ? undefined : true" :aria-label="isSupportLocked ? '助力后查看' : detail?.title || item?.title || '动态详情'" @keydown="handleKeydown">
-        <div v-if="isSupportLocked" class="flex min-h-[360px] w-full flex-col items-center justify-center gap-4 px-6 py-12 text-center">
-          <span class="flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-50 text-blue-500"><Icon name="mdi:lock-outline" class="text-3xl" /></span>
-          <h2 class="text-lg font-medium text-gray-800">{{ detail?.lock_reason || '助力创作者后可查看' }}</h2>
-          <p class="max-w-sm text-sm leading-6 text-gray-500">助力后可查看该创作者的全部助力图文、视频及评论，权益有效期为30天。</p>
-          <p v-if="detailError" class="text-xs text-gray-500" role="alert">{{ detailError }}<button type="button" class="ml-2 text-blue-500" @click="fetchDetail">重试</button></p>
-          <el-button type="primary" :loading="supportInfoLoading || detailLoading" :disabled="!detail?.user_id" @click="showSupportInfo">查看助力</el-button>
-        </div>
+      <button v-if="!standalone && !isSupportLocked" type="button" aria-label="关闭详情" class="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-gray-600 focus-visible:ring-2 focus-visible:ring-blue-500" @click="handleClose"><Icon name="mdi:close" /></button>
+      <div ref="dialogRef" class="note-card" :class="{ '!h-auto !w-[680px] !max-w-full !flex-col': isSupportLocked }" tabindex="-1" :role="standalone ? 'region' : 'dialog'" :aria-modal="standalone ? undefined : true" :aria-label="isSupportLocked ? '助力创作者' : detail?.title || item?.title || '动态详情'" @keydown="handleKeydown">
+        <template v-if="isSupportLocked">
+          <SupportPurchase v-if="detail?.user_id && !detailError" :key="`${auth.getUser()?.uuid || auth.getUser()?.Uuid}:${detail.user_id}`" :creator-id="detail.user_id" :nickname="detail.nickname" :avatar="detail.avatar" @paid="fetchDetail" @close="closeSupport" />
+          <div v-else class="flex min-h-64 flex-col items-center justify-center gap-4 p-8 text-sm text-slate-500" role="status">
+            <p>{{ detailError || '正在读取创作者信息…' }}</p>
+            <button v-if="detailError" type="button" class="text-blue-500" @click="fetchDetail">重试</button>
+            <button type="button" class="text-slate-400" @click="closeSupport">关闭</button>
+          </div>
+        </template>
         <template v-else>
         <!-- 左侧媒体区：宽度由首张图测量锁定；切换时后续图宽度铺满，留白 bg-gray-50 -->
         <div
@@ -288,20 +289,6 @@ const detail = ref(null)
 const isSupportLocked = computed(() => (detail.value?.support_only ?? props.item?.support_only) === 1 && detail.value?.can_play !== true)
 const detailLoading = ref(false)
 const detailError = ref('')
-const supportInfoLoading = ref(false)
-const showSupportInfo = async () => {
-  if (supportInfoLoading.value || !detail.value?.user_id) return
-  const creatorId = detail.value.user_id
-  const viewerId = auth.getUser()?.uuid || auth.getUser()?.Uuid || ''
-  supportInfoLoading.value = true
-  try {
-    const response = await useApi$('/user/support/creator/info', { body: { creator_id: creatorId }, retry: 0 })
-    if (disposed || detail.value?.user_id !== creatorId || viewerId !== (auth.getUser()?.uuid || auth.getUser()?.Uuid || '')) return
-    if (response.code !== 200 || !response.data?.activated) throw new Error(response.message || '创作者暂未开通助力')
-    await ElMessageBox.alert(`每30天${response.data.price_yuan}元，可观看该创作者的全部助力图文与视频。助力购买暂未开放。`, '创作者助力', { confirmButtonText: '知道了' })
-  } catch (error) { if (!disposed && error !== 'cancel' && error !== 'close') ElMessage.error(error?.data?.message || error.message || '获取助力信息失败') }
-  finally { if (!disposed) supportInfoLoading.value = false }
-}
 const currentIndex = ref(0)
 const imageError = ref(false)
 const authorId = computed(() => detail.value?.user_id || props.item?.user_id || '')
@@ -383,6 +370,7 @@ let detailVersion = 0
 
 const fetchDetail = async () => {
   if (!props.item?.id || detailLoading.value) return
+  const wasSupportLocked = detail.value?.support_only === 1 && detail.value?.can_play === false
   const version = ++detailVersion
   const viewerId = auth.getUser()?.uuid || auth.getUser()?.Uuid || ''
   detailLoading.value = true
@@ -398,6 +386,8 @@ const fetchDetail = async () => {
       showCollectDialog.value = false
       return
     }
+    // 在服务端确认当前作品由锁定变为可读后提示，兼容轮询、跨标签页通知和窗口焦点刷新。
+    if (wasSupportLocked && response.data.support_only === 1 && response.data.can_play === true) ElMessage.success('支付成功，助力权益已生效')
     currentIndex.value = 0
     isLiked.value = !!response.data.is_liked
     likeCount.value = response.data.like_count || 0
@@ -608,15 +598,21 @@ const handleClose = () => {
   clearTimeout(closeTimer)
   closeTimer = setTimeout(() => emit('close'), 300)
 }
+const closeSupport = () => props.standalone ? navigateTo('/discover') : handleClose()
 const handleKeydown = event => {
   if (props.standalone || showCollectDialog.value) return
   if (event.key === 'Escape') { event.preventDefault(); handleClose() }
   if (event.key !== 'Tab') return
-  const elements = [...dialogRef.value.querySelectorAll('button:not(:disabled), a[href], textarea:not(:disabled), input:not(:disabled), [tabindex="0"]')].filter(element => element.getClientRects().length)
+  const elements = [...dialogRef.value.querySelectorAll('button:not(:disabled), a[href], iframe, textarea:not(:disabled), input:not(:disabled), [tabindex="0"]')].filter(element => element.getClientRects().length)
   if (!elements.length) { event.preventDefault(); dialogRef.value.focus(); return }
   const first = elements[0], last = elements[elements.length - 1]
   if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.value)) { event.preventDefault(); last.focus() }
   else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialogRef.value)) { event.preventDefault(); first.focus() }
+}
+// 支付结果由后端确认后，重新读取仍在打开的作品权限。
+const refreshSupportAccess = (event) => {
+  if (event?.type === 'storage' && event.key !== 'seekf-support-confirmed') return
+  if (!disposed && show.value && isSupportLocked.value && !detailLoading.value) void fetchDetail()
 }
 onMounted(() => {
   previousFocus = document.activeElement
@@ -631,6 +627,8 @@ onMounted(() => {
     scheduleMediaWidth()
   })
   window.addEventListener('resize', scheduleMediaWidth)
+  window.addEventListener('focus', refreshSupportAccess)
+  window.addEventListener('storage', refreshSupportAccess)
   fetchDetail()
 })
 onUnmounted(() => {
@@ -641,6 +639,8 @@ onUnmounted(() => {
   cancelAnimationFrame(mediaFrame)
   mediaResizeObserver?.disconnect()
   window.removeEventListener('resize', scheduleMediaWidth)
+  window.removeEventListener('focus', refreshSupportAccess)
+  window.removeEventListener('storage', refreshSupportAccess)
   if (!props.standalone && previousFocus?.isConnected) previousFocus.focus()
 })
 </script>

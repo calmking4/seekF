@@ -61,6 +61,9 @@ func main() {
 	// 定期清理未被作品引用的过期上传资源。
 	userservice.StartDiscoverAssetCleanup(context.Background())
 
+	// 启动助力订单持久化查单与关单补偿，每分钟领取到期任务。
+	userservice.StartSupportOrderScanner(context.Background())
+
 	// 启动服务，监听 8080 端口
 	app.Router.Run()
 }

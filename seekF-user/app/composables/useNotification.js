@@ -1,8 +1,8 @@
 ﻿export function useNotification() {
   const unreadCount = useState('notification-unread', () => 0)
-  const unreadCategories = useState('notification-categories', () => ({ comments: 0, likes: 0, follows: 0 }))
+  const unreadCategories = useState('notification-categories', () => ({ comments: 0, likes: 0, follows: 0, support: 0 }))
   const revision = useState('notification-revision', () => 0)
-  const readBeforeIds = ref({ comments: 0, likes: 0, follows: 0 })
+  const readBeforeIds = ref({ comments: 0, likes: 0, follows: 0, support: 0 })
   const pendingCategories = new Map()
   const fetchUnreadCount = async () => {
     const current = ++revision.value
@@ -11,7 +11,7 @@
       if (res.code !== 200) throw new Error(res.message || '获取未读通知数失败')
       if (current !== revision.value) return
       unreadCount.value = res.data?.unread_count || 0
-      unreadCategories.value = { comments: 0, likes: 0, follows: 0, ...res.data?.categories }
+      unreadCategories.value = { comments: 0, likes: 0, follows: 0, support: 0, ...res.data?.categories }
     } catch (error) { console.error('获取未读通知数失败:', error) }
   }
   const markCategoryAsRead = (category) => {

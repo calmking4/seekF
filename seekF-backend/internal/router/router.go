@@ -57,14 +57,17 @@ func SetupRouter(
 	// 添加CORS中间件
 	r.Use(middlewares.CORSMiddleware())
 
+	// 支付宝异步通知独立于用户会话，使用RSA2签名验证。
+	r.POST("/payment/alipay/notify", supportController.AlipayNotify)
+
 	// 管理端使用独立会话，所有数据接口均校验实时管理员权限。
 	adminGroup := r.Group("/admin")
 	adminGroup.POST("/login", adminController.Login)
 	adminGroup.POST("/logout", adminController.Logout)
-	adminGroup.Use(adminController.RequireAdmin())
 	adminGroup.GET("/me", adminController.Me)
 	adminGroup.GET("/overview", adminController.Overview)
 	adminGroup.GET("/system", adminController.System)
+	adminGroup.Use(adminController.RequireAdmin())
 
 	// 用户端接口
 	userGroup := r.Group("/user")
@@ -188,6 +191,13 @@ func SetupRouter(
 			// 创作者助力
 			protectedGroup.POST("/support/creator/info", supportController.GetCreator)
 			protectedGroup.POST("/support/creator/save", supportController.SaveActivate)
+			protectedGroup.POST("/support/creator/income", supportController.GetIncome)
+			protectedGroup.POST("/support/creator/records", supportController.ListReceivedOrders)
+			protectedGroup.POST("/support/order/create", supportController.CreateOrder)
+			protectedGroup.POST("/support/order/info", supportController.GetOrder)
+			protectedGroup.POST("/support/order/pay", supportController.PayOrder)
+			protectedGroup.POST("/support/order/list", supportController.ListOrders)
+			protectedGroup.POST("/support/entitlement/list", supportController.ListEntitlements)
 			// 关注
 			protectedGroup.POST("/follow/toggle", followController.ToggleFollow)
 			protectedGroup.POST("/follow/counts", followController.GetFollowCounts)

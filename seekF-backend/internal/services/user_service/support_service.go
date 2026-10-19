@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
+	"sync"
 	"time"
 
 	"seekF-backend/internal/configs"
@@ -12,7 +15,11 @@ import (
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/db"
+	"seekF-backend/internal/pkg/payment"
+	"seekF-backend/internal/pkg/zlog"
 
+	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -37,12 +44,22 @@ func requireDiscoverSupport(ctx context.Context, conn *gorm.DB, userId string, p
 	return ErrDiscoverSupportRequired
 }
 
-// SupportService 创作者助力开通及定价业务接口。
+// SupportService 创作者助力开通、支付及权益业务接口。
 type SupportService interface {
 	// 查询创作者的开通状态、价格和当前用户权益。
 	GetCreator(ctx context.Context, userId, creatorId string) (*userresp.SupportCreatorRespond, error)
 	// 为本人开通助力或修改价格。
 	SaveActivate(ctx context.Context, userId string, priceYuan int) (*userresp.SupportCreatorRespond, error)
+	// 创建或复用待支付订单。
+	CreateOrder(ctx context.Context, userId, creatorId, requestKey string) (*userresp.SupportOrderRespond, error)
+	// 查询本人订单的服务端确认结果。
+	GetOrder(ctx context.Context, userId, orderNo string) (*userresp.SupportOrderRespond, error)
+	// 为本人的有效待支付订单生成网页和扫码收银台地址。
+	PayOrder(ctx context.Context, userId, orderNo string) (*userresp.SupportPaymentRespond, error)
+	// 查询本人订单、权益、收到的助力或创作者收益。
+	ListSupport(ctx context.Context, userId, kind string, page int) (any, error)
+	// 验证并处理支付宝异步通知。
+	Notify(ctx context.Context, values url.Values) error
 }
 
 // SupportServiceImpl 使用现有分层组织助力开通业务。
@@ -72,7 +89,7 @@ func (s *SupportServiceImpl) GetCreator(ctx context.Context, userId, creatorId s
 	if err != nil {
 		return nil, fmt.Errorf("查询助力设置失败: %w", err)
 	}
-	result := &userresp.SupportCreatorRespond{CreatorId: creatorId, PriceYuan: constants.SupportDefaultPriceFen / 100}
+	result := &userresp.SupportCreatorRespond{CreatorId: creatorId, Nickname: user.Nickname, Avatar: user.Avatar, PriceYuan: constants.SupportDefaultPriceFen / 100}
 	if activate != nil {
 		result.Activated = true
 		result.PriceYuan = activate.PriceFen / 100
@@ -155,4 +172,362 @@ func discoverPlaybackAccess(post models.DiscoverPost, userId string, expires *ti
 		return false, "助力权益已到期", expiresAt
 	}
 	return false, "助力创作者后可观看", expiresAt
+}
+
+// supportTransaction 对首次权益并发插入及数据库死锁执行有限重试，所有写入随事务回滚。
+func supportTransaction(ctx context.Context, run func(*gorm.DB) error) error {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		err = db.GormDB.WithContext(ctx).Transaction(run)
+		var sqlErr *mysql.MySQLError
+		if !errors.As(err, &sqlErr) || (sqlErr.Number != 1213 && sqlErr.Number != 1205 && sqlErr.Number != 1062) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 20 * time.Millisecond):
+		}
+	}
+	return err
+}
+
+// supportOrderRespond 转换本人可见的订单字段。
+func supportOrderRespond(row *models.SupportOrder) *userresp.SupportOrderRespond {
+	return &userresp.SupportOrderRespond{OrderNo: row.OrderNo, RequestKey: row.RequestKey, CreatorId: row.CreatorId, AmountFen: row.AmountFen, DurationHours: row.DurationHours, Status: row.Status, RefundStatus: row.RefundStatus, ExpiresAt: row.ExpiresAt, PaidAt: row.PaidAt, ConfirmedAt: row.ConfirmedAt, CreatedAt: row.CreatedAt, HasError: row.LastError != ""}
+}
+
+// CreateOrder 锁定购买者串行处理幂等请求，以服务端价格创建固定期限快照。
+func (s *SupportServiceImpl) CreateOrder(ctx context.Context, userId, creatorId, requestKey string) (*userresp.SupportOrderRespond, error) {
+	cfg := configs.GetConfig().AlipayConfig
+	if err := payment.ValidateAlipayConfig(cfg); err != nil {
+		return nil, err
+	}
+	if userId == "" || creatorId == "" || userId == creatorId {
+		return nil, fmt.Errorf("请选择其他已开通助力的创作者")
+	}
+	if len(requestKey) < 8 || len(requestKey) > 64 || strings.TrimSpace(requestKey) != requestKey {
+		return nil, fmt.Errorf("订单请求标识必须为8至64个字符")
+	}
+	var result *models.SupportOrder
+	err := supportTransaction(ctx, func(tx *gorm.DB) error {
+		user, err := userdao.NewUserInfoDAO(tx).FindUserByUuidForUpdate(userId)
+		if err != nil {
+			return err
+		}
+		if user == nil || user.Status != 0 {
+			return fmt.Errorf("购买者账号不可用")
+		}
+		dao := userdao.NewSupportDAO(tx)
+		result, err = dao.FindRequest(cfg.Environment, userId, requestKey)
+		if err != nil {
+			return err
+		}
+		if result != nil {
+			if result.CreatorId != creatorId {
+				return fmt.Errorf("订单请求标识已用于其他创作者")
+			}
+			return nil
+		}
+		creator, err := userdao.NewUserInfoDAO(tx).FindUserByUuid(creatorId)
+		if err != nil {
+			return err
+		}
+		if creator == nil || creator.Uuid == "" || creator.Status != 0 {
+			return fmt.Errorf("创作者账号不可用")
+		}
+		activate, err := userdao.NewSupportDAO(tx).FindActivate(creatorId)
+		if err != nil {
+			return err
+		}
+		if activate == nil {
+			return fmt.Errorf("创作者尚未开通助力")
+		}
+		now := time.Now()
+		result, err = dao.FindPending(cfg.Environment, userId, creatorId, now)
+		if err != nil || result != nil {
+			return err
+		}
+		result = &models.SupportOrder{Environment: cfg.Environment, OrderNo: "SO" + strings.ReplaceAll(uuid.NewString(), "-", ""), UserId: userId, CreatorId: creatorId, RequestKey: requestKey, Channel: "alipay", AmountFen: activate.PriceFen, DurationHours: constants.SupportDurationHours, ExpiresAt: now.Add(constants.SupportOrderTimeout), NextAttemptAt: now.Add(time.Minute)}
+		return dao.CreateOrder(result)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("创建助力订单失败: %w", err)
+	}
+	return supportOrderRespond(result), nil
+}
+
+// ownOrder 校验交易环境及购买者身份。
+func ownOrder(ctx context.Context, userId, orderNo string) (*models.SupportOrder, error) {
+	row, err := userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).FindOrder(configs.GetConfig().AlipayConfig.Environment, orderNo, false)
+	if err != nil {
+		return nil, fmt.Errorf("查询助力订单失败: %w", err)
+	}
+	if row == nil || userId == "" || row.UserId != userId {
+		return nil, fmt.Errorf("助力订单不存在")
+	}
+	return row, nil
+}
+
+// GetOrder 查询本人订单，渠道确认通过后台持久化扫描完成。
+func (s *SupportServiceImpl) GetOrder(ctx context.Context, userId, orderNo string) (*userresp.SupportOrderRespond, error) {
+	row, err := ownOrder(ctx, userId, orderNo)
+	if err != nil {
+		return nil, err
+	}
+	return supportOrderRespond(row), nil
+}
+
+// PayOrder 保持原订单号、金额和截止时间，不为继续支付创建新订单。
+func (s *SupportServiceImpl) PayOrder(ctx context.Context, userId, orderNo string) (*userresp.SupportPaymentRespond, error) {
+	row, err := ownOrder(ctx, userId, orderNo)
+	if err != nil {
+		return nil, err
+	}
+	if row.Status != constants.SupportOrderPending || !row.ExpiresAt.After(time.Now()) {
+		return nil, fmt.Errorf("订单不可继续支付，请刷新支付结果")
+	}
+	cfg := configs.GetConfig().AlipayConfig
+	pageURL, err := payment.AlipayPageURL(cfg, row.OrderNo, row.AmountFen, row.ExpiresAt)
+	if err != nil {
+		return nil, err
+	}
+	qrURL, err := payment.AlipayQRURL(cfg, row.OrderNo, row.AmountFen, row.ExpiresAt)
+	if err != nil {
+		return nil, err
+	}
+	return &userresp.SupportPaymentRespond{PayURL: pageURL, QRURL: qrURL}, nil
+}
+
+// ListSupport 限定登录用户与当前环境，分页返回交易及权益数据。
+func (s *SupportServiceImpl) ListSupport(ctx context.Context, userId, kind string, page int) (any, error) {
+	if userId == "" {
+		return nil, fmt.Errorf("请先登录")
+	}
+	if page < 1 {
+		page = 1
+	}
+	if page > 100000 {
+		return nil, fmt.Errorf("页码超出范围")
+	}
+	cfg := configs.GetConfig().AlipayConfig
+	dao := userdao.NewSupportDAO(db.GormDB.WithContext(ctx))
+	switch kind {
+	case "received":
+		rows, total, err := dao.ListReceivedOrders(cfg.Environment, userId, page)
+		if err != nil {
+			return nil, fmt.Errorf("查询收到的助力记录失败: %w", err)
+		}
+		result := make([]userresp.SupportReceivedOrderRespond, 0, len(rows))
+		for _, row := range rows {
+			result = append(result, userresp.SupportReceivedOrderRespond{OrderNo: row.OrderNo, BuyerId: row.BuyerId, BuyerNickname: row.BuyerNickname, BuyerAvatar: row.BuyerAvatar, AmountFen: row.AmountFen, RefundStatus: row.RefundStatus, PaidAt: row.PaidAt, ConfirmedAt: row.ConfirmedAt})
+		}
+		return map[string]any{"list": result, "total": total}, nil
+	case "orders":
+		rows, total, err := dao.ListOrders(cfg.Environment, userId, page)
+		if err != nil {
+			return nil, fmt.Errorf("查询助力订单失败: %w", err)
+		}
+		result := make([]*userresp.SupportOrderRespond, 0, len(rows))
+		for i := range rows {
+			result = append(result, supportOrderRespond(&rows[i]))
+		}
+		return map[string]any{"list": result, "total": total}, nil
+	case "entitlements":
+		rows, err := dao.ListMyEntitlements(cfg.Environment, userId, page)
+		if err != nil {
+			return nil, fmt.Errorf("查询助力权益失败: %w", err)
+		}
+		result := make([]map[string]any, 0, len(rows))
+		for _, row := range rows {
+			result = append(result, map[string]any{"creator_id": row.CreatorId, "expires_at": row.ExpiresAt})
+		}
+		return result, nil
+	case "income":
+		row, err := dao.Income(cfg.Environment, userId)
+		if err != nil {
+			return nil, fmt.Errorf("查询助力收益失败: %w", err)
+		}
+		return row, nil
+	}
+	return nil, fmt.Errorf("助力查询类型错误")
+}
+
+// Notify 验签后统一处理渠道结果，仅在数据库事务提交后返回成功。
+func (s *SupportServiceImpl) Notify(ctx context.Context, values url.Values) error {
+	cfg := configs.GetConfig().AlipayConfig
+	trade, err := payment.VerifyAlipayNotify(cfg, values)
+	if err != nil {
+		return err
+	}
+	return applySupportTrade(ctx, cfg.Environment, trade)
+}
+
+// applySupportTrade 统一锁定订单再锁权益，处理重复、关闭后晚到成功及并发续期。
+func applySupportTrade(ctx context.Context, environment string, trade *payment.AlipayTrade) error {
+	amount, err := payment.ParseAlipayAmount(trade.Amount)
+	if err != nil {
+		return err
+	}
+	if trade.TradeNo == "" || trade.OrderNo == "" {
+		return fmt.Errorf("支付宝交易标识缺失")
+	}
+	return supportTransaction(ctx, func(tx *gorm.DB) error {
+		dao := userdao.NewSupportDAO(tx)
+		row, err := dao.FindOrder(environment, trade.OrderNo, true)
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			return fmt.Errorf("支付宝通知订单不存在")
+		}
+		if amount != row.AmountFen || trade.SellerID != configs.GetConfig().AlipayConfig.SellerID {
+			return fmt.Errorf("支付宝交易金额或收款方不匹配")
+		}
+		if row.TradeNo != nil && *row.TradeNo != trade.TradeNo {
+			return fmt.Errorf("支付宝交易号与订单不匹配")
+		}
+		now := time.Now()
+		switch trade.Status {
+		case "TRADE_SUCCESS", "TRADE_FINISHED":
+			if row.Status == constants.SupportOrderPaid {
+				return nil
+			}
+			paidAt, err := time.ParseInLocation("2006-01-02 15:04:05", trade.PaidTime, time.FixedZone("CST", 8*3600))
+			if err != nil {
+				return fmt.Errorf("支付宝付款时间格式错误")
+			}
+			entitlement, err := dao.LockEntitlement(environment, row.UserId, row.CreatorId)
+			if err != nil {
+				return err
+			}
+			start := now
+			if entitlement.ExpiresAt != nil && entitlement.ExpiresAt.After(start) {
+				start = *entitlement.ExpiresAt
+			}
+			if err := dao.SaveExpiry(entitlement.Id, start.Add(time.Duration(row.DurationHours)*time.Hour)); err != nil {
+				return err
+			}
+			if err := dao.UpdateOrder(row.Id, map[string]any{"status": constants.SupportOrderPaid, "trade_no": trade.TradeNo, "paid_at": paidAt, "confirmed_at": now, "closed_at": nil, "processing_until": nil, "last_error": ""}); err != nil {
+				return err
+			}
+			return userdao.NewNotificationDAO(tx).CreateNotification(&models.Notification{UserId: row.UserId, ActorId: row.CreatorId, Type: constants.NotificationSupportPaid, Content: "助力付款已确认，30天观看权益已生效。", CreatedAt: now})
+		case "TRADE_CLOSED":
+			if row.Status == constants.SupportOrderPaid {
+				return nil
+			}
+			return dao.UpdateOrder(row.Id, map[string]any{"status": constants.SupportOrderClosed, "trade_no": trade.TradeNo, "closed_at": now, "processing_until": nil, "last_error": ""})
+		case "WAIT_BUYER_PAY":
+			return nil
+		default:
+			return fmt.Errorf("支付宝交易状态不支持")
+		}
+	})
+}
+
+// reconcileSupportOrder 在事务外先查单再关单，未知或网络失败始终保持待确认并继续补偿。
+func reconcileSupportOrder(ctx context.Context, row models.SupportOrder) error {
+	cfg := configs.GetConfig().AlipayConfig
+	trade, err := payment.AlipayRequest(ctx, cfg, "alipay.trade.query", row.OrderNo)
+	if err != nil {
+		return err
+	}
+	if trade.Code == "10000" {
+		if trade.Status != "WAIT_BUYER_PAY" {
+			return applySupportTrade(ctx, row.Environment, trade)
+		}
+		amount, err := payment.ParseAlipayAmount(trade.Amount)
+		if err != nil || amount != row.AmountFen || trade.OrderNo != row.OrderNo || trade.SellerID != cfg.SellerID {
+			return fmt.Errorf("支付宝待付款交易信息不匹配")
+		}
+	} else if trade.SubCode != "ACQ.TRADE_NOT_EXIST" {
+		return fmt.Errorf("支付宝查单未成功，业务代码%s", trade.SubCode)
+	}
+	if row.ExpiresAt.After(time.Now()) {
+		return nil
+	}
+	closed, err := payment.AlipayRequest(ctx, cfg, "alipay.trade.close", row.OrderNo)
+	if err != nil {
+		return err
+	}
+	if closed.Code != "10000" && closed.SubCode != "ACQ.TRADE_NOT_EXIST" && closed.SubCode != "ACQ.TRADE_HAS_CLOSE" {
+		// 关单可能与付款竞争，再查一次，支付成功走同一幂等事务。
+		latest, err := payment.AlipayRequest(ctx, cfg, "alipay.trade.query", row.OrderNo)
+		if err != nil {
+			return err
+		}
+		if latest.Code == "10000" && (latest.Status == "TRADE_SUCCESS" || latest.Status == "TRADE_FINISHED") {
+			return applySupportTrade(ctx, row.Environment, latest)
+		}
+		return fmt.Errorf("支付宝关单结果待确认，业务代码%s", closed.SubCode)
+	}
+	if closed.Code == "10000" && closed.OrderNo != row.OrderNo {
+		return fmt.Errorf("支付宝关单订单号不匹配")
+	}
+	return supportTransaction(ctx, func(tx *gorm.DB) error {
+		dao := userdao.NewSupportDAO(tx)
+		current, err := dao.FindOrder(row.Environment, row.OrderNo, true)
+		if err != nil {
+			return err
+		}
+		if current == nil || current.Status == constants.SupportOrderPaid {
+			return nil
+		}
+		return dao.UpdateOrder(row.Id, map[string]any{"status": constants.SupportOrderClosed, "closed_at": time.Now(), "processing_until": nil, "last_error": ""})
+	})
+}
+
+// StartSupportOrderScanner 启动每分钟持久化查单补偿，进程重启后按领取租约恢复。
+func StartSupportOrderScanner(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(constants.SupportOrderScanInterval)
+		defer ticker.Stop()
+		for {
+			scanSupportOrders(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+// scanSupportOrders 分批领取任务并在事务外查询渠道，失败保留中文上下文。
+func scanSupportOrders(ctx context.Context) {
+	cfg := configs.GetConfig().AlipayConfig
+	// 尚未创建支付订单的环境无需配置渠道；配置缺失不会阻止其他服务启动。
+	var rows []models.SupportOrder
+	err := supportTransaction(ctx, func(tx *gorm.DB) error {
+		var err error
+		rows, err = userdao.NewSupportDAO(tx).ClaimOrders(cfg.Environment, time.Now())
+		return err
+	})
+	if err != nil {
+		zlog.Error("领取助力订单补偿失败: " + err.Error())
+		return
+	}
+	var workers sync.WaitGroup
+	for _, row := range rows {
+		workers.Add(1)
+		// 每批最多20个有界请求，并行处理以确保网络超时不会拖过领取租约。
+		go func(row models.SupportOrder) {
+			defer workers.Done()
+			attemptCtx, cancel := context.WithTimeout(ctx, constants.SupportOrderAttemptTimeout)
+			defer cancel()
+			err := reconcileSupportOrder(attemptCtx, row)
+			message := ""
+			if err != nil {
+				message = err.Error()
+				zlog.Error("助力订单查单补偿失败，订单号=" + row.OrderNo + ": " + message)
+			}
+			if len([]rune(message)) > 300 {
+				message = string([]rune(message)[:300])
+			}
+			if err := userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).FinishAttempt(row, message); err != nil {
+				zlog.Error("保存助力订单补偿结果失败，订单号=" + row.OrderNo + ": " + err.Error())
+			}
+		}(row)
+	}
+	workers.Wait()
 }

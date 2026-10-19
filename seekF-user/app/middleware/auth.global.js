@@ -12,10 +12,10 @@ export default defineNuxtRouteMiddleware((to) => {
     }
 
     // 需要登录的页面列表
-    const protectedRoutes = ['/chat', '/aichat', '/contact', '/discover', '/notification', '/knowledge', '/my']
+    const protectedRoutes = ['/chat', '/aichat', '/contact', '/discover', '/notification', '/knowledge', '/my', '/support']
 
     // 未登录用户访问受保护页面时，跳转到登录页
     if (!user && protectedRoutes.some(route => to.path.startsWith(route))) {
-        return navigateTo(to.path.startsWith('/discover/post/') ? { path: '/login', query: { redirect: to.path } } : '/login')
+        return navigateTo(to.path.startsWith('/support') || to.path.startsWith('/discover/post/') ? { path: '/login', query: { redirect: to.fullPath } } : '/login')
     }
 })

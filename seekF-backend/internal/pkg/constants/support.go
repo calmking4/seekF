@@ -3,6 +3,18 @@ package constants
 import "time"
 
 const (
+	// 助力付款确认通知，可在我的助力中查看。
+	NotificationSupportPaid int8 = 7
+	// 持久化订单补偿扫描与失败重试间隔，单位分钟。
+	SupportOrderScanInterval = time.Minute
+	// 单批领取订单上限，单位笔。
+	SupportOrderScanBatch = 20
+	// 多实例后台任务领取租约，单位分钟。
+	SupportOrderLease = 2 * time.Minute
+	// 每笔订单渠道补偿的总超时，单位秒。
+	SupportOrderAttemptTimeout = 45 * time.Second
+	// 本人订单及权益的分页大小，单位条。
+	SupportOrderPageSize = 20
 	// 每期助力价格下限，单位元。
 	SupportMinPriceYuan = 5
 	// 每期助力价格上限，单位元，只允许整数元。
