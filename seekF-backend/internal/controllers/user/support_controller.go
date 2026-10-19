@@ -138,3 +138,21 @@ func (c *SupportController) SaveActivate(ctx *gin.Context) {
 	}
 	resp.Success(ctx, "助力设置已保存", result)
 }
+
+// RequestRefund 受理当前购买者的首次退款申请。
+func (c *SupportController) RequestRefund(ctx *gin.Context) {
+	ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 8192)
+	var req struct {
+		OrderNo string `json:"order_no"`
+		Reason  string `json:"reason"`
+	}
+	if ctx.ShouldBindJSON(&req) != nil {
+		resp.Error(ctx, "退款申请参数错误", 400)
+		return
+	}
+	if err := c.supportService.RequestRefund(ctx.Request.Context(), ctx.GetString("Uuid"), req.OrderNo, req.Reason); err != nil {
+		resp.Error(ctx, err.Error(), 400)
+		return
+	}
+	resp.Success(ctx, "退款申请已提交，请等待管理员审核", nil)
+}

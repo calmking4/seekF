@@ -60,14 +60,17 @@ func SetupRouter(
 	// 支付宝异步通知独立于用户会话，使用RSA2签名验证。
 	r.POST("/payment/alipay/notify", supportController.AlipayNotify)
 
-	// 管理端使用独立会话，所有数据接口均校验实时管理员权限。
+	// 管理端接口。
 	adminGroup := r.Group("/admin")
 	adminGroup.POST("/login", adminController.Login)
 	adminGroup.POST("/logout", adminController.Logout)
+
+	adminGroup.Use(adminController.RequireAdmin())
 	adminGroup.GET("/me", adminController.Me)
 	adminGroup.GET("/overview", adminController.Overview)
 	adminGroup.GET("/system", adminController.System)
-	adminGroup.Use(adminController.RequireAdmin())
+	adminGroup.POST("/support/orders", adminController.ListSupportOrders)
+	adminGroup.POST("/support/refund/review", adminController.ReviewSupportRefund)
 
 	// 用户端接口
 	userGroup := r.Group("/user")
@@ -197,6 +200,7 @@ func SetupRouter(
 			protectedGroup.POST("/support/order/info", supportController.GetOrder)
 			protectedGroup.POST("/support/order/pay", supportController.PayOrder)
 			protectedGroup.POST("/support/order/list", supportController.ListOrders)
+			protectedGroup.POST("/support/refund/apply", supportController.RequestRefund)
 			protectedGroup.POST("/support/entitlement/list", supportController.ListEntitlements)
 			// 关注
 			protectedGroup.POST("/follow/toggle", followController.ToggleFollow)

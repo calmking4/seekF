@@ -28,6 +28,7 @@ require (
 	github.com/qdrant/go-client v1.17.1
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/segmentio/kafka-go v0.4.50
+	github.com/shopspring/decimal v1.4.0
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.48.0
 	golang.org/x/oauth2 v0.36.0

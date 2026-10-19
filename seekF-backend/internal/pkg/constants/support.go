@@ -3,6 +3,13 @@ package constants
 import "time"
 
 const (
+	// 渠道账单压缩包及解压明细大小上限，单位字节。
+	SupportBillMaxBytes = 20 * 1024 * 1024
+	// 助力全额退款成功通知。
+	NotificationSupportRefund int8 = 8
+	// 已付款订单渠道退款账单核对周期，单位小时。
+	SupportRefundAuditInterval = 24 * time.Hour
+
 	// 助力付款确认通知，可在我的助力中查看。
 	NotificationSupportPaid int8 = 7
 	// 持久化订单补偿扫描与失败重试间隔，单位分钟。
@@ -19,8 +26,8 @@ const (
 	SupportMinPriceYuan = 5
 	// 每期助力价格上限，单位元，只允许整数元。
 	SupportMaxPriceYuan = 100
-	// 默认助力价格，单位分。
-	SupportDefaultPriceFen int64 = 1000
+	// 默认助力价格，单位元。
+	SupportDefaultPriceYuan int64 = 10
 	// 每期权益时长，单位小时，固定30天。
 	SupportDurationHours = 720
 	// 待支付订单有效期，单位分钟。

@@ -178,7 +178,7 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 				info.PostTitle, info.PostCover, info.TargetAvailable = post.Title, covers[targetUuid], true
 			}
 		}
-		if n.Type == constants.NotificationSupportPaid {
+		if n.Type == constants.NotificationSupportPaid || n.Type == constants.NotificationSupportRefund {
 			info.TargetAvailable = true
 		}
 		if n.Type != NotificationTypeFollow && !info.TargetAvailable {
@@ -197,7 +197,7 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 func NotificationCategoryTypes(category string) []int8 {
 	switch category {
 	case "support":
-		return []int8{constants.NotificationSupportPaid}
+		return []int8{constants.NotificationSupportPaid, constants.NotificationSupportRefund}
 	case "comments":
 		return []int8{NotificationTypeCommentPost, NotificationTypeReply}
 	case "likes":
@@ -216,7 +216,7 @@ func (s *NotificationServiceImpl) GetUnreadCounts(ctx context.Context, userId st
 		return nil, fmt.Errorf("查询分类未读数失败: %w", err)
 	}
 	return map[string]int64{
-		"support":  counts[constants.NotificationSupportPaid],
+		"support":  counts[constants.NotificationSupportPaid] + counts[constants.NotificationSupportRefund],
 		"comments": counts[NotificationTypeCommentPost] + counts[NotificationTypeReply],
 		"likes":    counts[NotificationTypeLikePost] + counts[NotificationTypeCollectPost] + counts[NotificationTypeLikeComment],
 		"follows":  counts[NotificationTypeFollow],

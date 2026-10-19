@@ -7,12 +7,26 @@ import (
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 // SupportDAO 助力开通配置、订单及观看权益的数据访问接口。
 type SupportDAO interface {
+	// 分页查询管理端订单及退款状态。
+	ListAdminOrders(environment, orderNo string, refundStatus *int8, page int) ([]models.SupportOrder, int64, error)
+	// 在持锁权益下读取已付款订单以重算截止时间。
+	PaidPairOrders(environment, userId, creatorId string) ([]models.SupportOrder, error)
+	// 写入重算的权益，允许置空。
+	SetExpiry(id int64, expires *time.Time) error
+	// 分批领取退款处理或每日渠道核对任务。
+	ClaimRefundOrders(environment string, now time.Time) ([]models.SupportOrder, error)
+	// 释放本次退款租约并保存处理信息。
+	FinishRefundAttempt(row models.SupportOrder, message string, next time.Time) error
+	// 按领取租约保存明确的退款失败或资金核对差异。
+	FailRefund(row models.SupportOrder, message string) error
+
 	// 查询创作者的助力开通记录。
 	FindActivate(userId string) (*models.SupportActivate, error)
 	// 保存开通记录或更新现有价格，保留首次开通时间。
@@ -50,13 +64,13 @@ type SupportDAO interface {
 // SupportDAOImpl 绑定数据库或业务事务的助力数据访问实现。
 type SupportDAOImpl struct{ db *gorm.DB }
 
-// SupportReceivedOrder 创作者收到的助力查询结果，金额单位为分，不包含渠道凭据。
+// SupportReceivedOrder 创作者收到的助力查询结果，金额单位为元，不包含渠道凭据。
 type SupportReceivedOrder struct {
 	OrderNo       string
 	BuyerId       string
 	BuyerNickname string
 	BuyerAvatar   string
-	AmountFen     int64
+	Amount        decimal.Decimal
 	RefundStatus  int8
 	PaidAt        *time.Time
 	ConfirmedAt   *time.Time
@@ -77,7 +91,7 @@ func (d *SupportDAOImpl) FindActivate(userId string) (*models.SupportActivate, e
 
 // SaveActivate 使用用户唯一键原子保存价格，避免并发首次开通产生重复记录。
 func (d *SupportDAOImpl) SaveActivate(activate *models.SupportActivate) error {
-	return d.db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}}, DoUpdates: clause.AssignmentColumns([]string{"price_fen", "updated_at"})}).Create(activate).Error
+	return d.db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}}, DoUpdates: clause.AssignmentColumns([]string{"price", "updated_at"})}).Create(activate).Error
 }
 
 // ListEntitlements 批量读取权益，观看资格由Service按当前时间判断。
@@ -169,7 +183,7 @@ func (d *SupportDAOImpl) ListReceivedOrders(environment, creatorId string, page 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	err := query.Select("support_order.order_no, support_order.user_id AS buyer_id, COALESCE(user_info.nickname, '') AS buyer_nickname, COALESCE(user_info.avatar, '') AS buyer_avatar, support_order.amount_fen, support_order.refund_status, support_order.paid_at, support_order.confirmed_at").Joins("LEFT JOIN user_info ON user_info.uuid = support_order.user_id AND user_info.deleted_at IS NULL").Order("support_order.id DESC").Offset((page - 1) * constants.SupportOrderPageSize).Limit(constants.SupportOrderPageSize).Scan(&rows).Error
+	err := query.Select("support_order.order_no, support_order.user_id AS buyer_id, COALESCE(user_info.nickname, '') AS buyer_nickname, COALESCE(user_info.avatar, '') AS buyer_avatar, support_order.amount, support_order.refund_status, support_order.paid_at, support_order.confirmed_at").Joins("LEFT JOIN user_info ON user_info.uuid = support_order.user_id AND user_info.deleted_at IS NULL").Order("support_order.id DESC").Offset((page - 1) * constants.SupportOrderPageSize).Limit(constants.SupportOrderPageSize).Scan(&rows).Error
 	return rows, total, err
 }
 
@@ -180,19 +194,19 @@ func (d *SupportDAOImpl) ListMyEntitlements(environment, userId string, page int
 	return rows, err
 }
 
-// SupportIncome 创作者按订单汇总的实收、退款和净额，单位分。
+// SupportIncome 创作者按订单汇总的实收、退款和净额，单位元。
 type SupportIncome struct {
-	GrossFen   int64 `json:"gross_fen"`
-	RefundFen  int64 `json:"refund_fen"`
-	NetFen     int64 `json:"net_fen"`
-	PaidOrders int64 `json:"paid_orders"`
+	GrossAmount  decimal.Decimal `json:"gross_amount"`
+	RefundAmount decimal.Decimal `json:"refund_amount"`
+	NetAmount    decimal.Decimal `json:"net_amount"`
+	PaidOrders   int64           `json:"paid_orders"`
 }
 
 // Income 仅汇总指定环境及本人作为创作者的已付款订单。
 func (d *SupportDAOImpl) Income(environment, creatorId string) (*SupportIncome, error) {
 	var row SupportIncome
-	err := d.db.Model(&models.SupportOrder{}).Select("COALESCE(SUM(amount_fen),0) AS gross_fen, COALESCE(SUM(CASE WHEN refund_status = 4 THEN amount_fen ELSE 0 END),0) AS refund_fen, COUNT(*) AS paid_orders").Where("environment = ? AND creator_id = ? AND status = 1", environment, creatorId).Scan(&row).Error
-	row.NetFen = row.GrossFen - row.RefundFen
+	err := d.db.Model(&models.SupportOrder{}).Select("COALESCE(SUM(amount),0) AS gross_amount, COALESCE(SUM(CASE WHEN refund_status = 4 THEN amount ELSE 0 END),0) AS refund_amount, COUNT(*) AS paid_orders").Where("environment = ? AND creator_id = ? AND status = 1", environment, creatorId).Scan(&row).Error
+	row.NetAmount = row.GrossAmount.Sub(row.RefundAmount)
 	return &row, err
 }
 
@@ -217,4 +231,61 @@ func (d *SupportDAOImpl) ClaimOrders(environment string, now time.Time) ([]model
 // FinishAttempt 只释放仍属于本次租约的待付款任务，避免覆盖并发通知或后续领取结果。
 func (d *SupportDAOImpl) FinishAttempt(row models.SupportOrder, message string) error {
 	return d.db.Model(&models.SupportOrder{}).Where("id = ? AND status = 0 AND processing_until = ?", row.Id, row.ProcessingUntil).Updates(map[string]any{"processing_until": nil, "next_attempt_at": time.Now().Add(constants.SupportOrderScanInterval), "last_error": message}).Error
+}
+
+// ListAdminOrders 按环境、订单号和退款状态分页查询。
+func (d *SupportDAOImpl) ListAdminOrders(environment, orderNo string, refundStatus *int8, page int) ([]models.SupportOrder, int64, error) {
+	rows := make([]models.SupportOrder, 0)
+	q := d.db.Model(&models.SupportOrder{}).Where("environment = ?", environment)
+	if orderNo != "" {
+		q = q.Where("order_no = ?", orderNo)
+	}
+	if refundStatus != nil {
+		q = q.Where("refund_status = ?", *refundStatus)
+	}
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := q.Order("id DESC").Offset((page - 1) * constants.SupportOrderPageSize).Limit(constants.SupportOrderPageSize).Find(&rows).Error
+	return rows, total, err
+}
+
+// PaidPairOrders 在权益锁内读取最新已付款订单以重算权益。
+func (d *SupportDAOImpl) PaidPairOrders(environment, userId, creatorId string) ([]models.SupportOrder, error) {
+	var rows []models.SupportOrder
+	err := d.db.Where("environment = ? AND user_id = ? AND creator_id = ? AND status = ?", environment, userId, creatorId, constants.SupportOrderPaid).Order("confirmed_at, id").Find(&rows).Error
+	return rows, err
+}
+
+// SetExpiry 保存可空的权益截止时间。
+func (d *SupportDAOImpl) SetExpiry(id int64, expires *time.Time) error {
+	return d.db.Model(&models.SupportEntitlement{}).Where("id = ?", id).Update("expires_at", expires).Error
+}
+
+// ClaimRefundOrders 通过持久化租约领取退款和每日核对任务。
+func (d *SupportDAOImpl) ClaimRefundOrders(environment string, now time.Time) ([]models.SupportOrder, error) {
+	rows := make([]models.SupportOrder, 0)
+	err := d.db.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("environment = ? AND status = ? AND refund_status <> ? AND next_attempt_at <= ? AND (processing_until IS NULL OR processing_until < ?)", environment, constants.SupportOrderPaid, constants.SupportRefundSucceeded, now, now).Order("next_attempt_at, id").Limit(constants.SupportOrderScanBatch).Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		until := now.Add(constants.SupportOrderLease).Truncate(time.Millisecond)
+		if err := d.UpdateOrder(rows[i].Id, map[string]any{"processing_until": until, "next_attempt_at": until}); err != nil {
+			return nil, err
+		}
+		rows[i].ProcessingUntil = &until
+	}
+	return rows, nil
+}
+
+// FinishRefundAttempt 仅释放仍属于本次任务的租约，保留并发审核结果。
+func (d *SupportDAOImpl) FinishRefundAttempt(row models.SupportOrder, message string, next time.Time) error {
+	return d.db.Model(&models.SupportOrder{}).Where("id = ? AND status = ? AND refund_status = ? AND processing_until = ?", row.Id, constants.SupportOrderPaid, row.RefundStatus, row.ProcessingUntil).Updates(map[string]any{"processing_until": nil, "next_attempt_at": next, "last_error": message}).Error
+}
+
+// FailRefund 仅更新当前租约，避免覆盖并发审批或全额退款确认。
+func (d *SupportDAOImpl) FailRefund(row models.SupportOrder, message string) error {
+	return d.db.Model(&models.SupportOrder{}).Where("id = ? AND refund_status <> ? AND processing_until = ?", row.Id, constants.SupportRefundSucceeded, row.ProcessingUntil).Updates(map[string]any{"refund_status": constants.SupportRefundFailed, "last_error": message, "processing_until": nil, "next_attempt_at": time.Now().Add(constants.SupportRefundAuditInterval)}).Error
 }

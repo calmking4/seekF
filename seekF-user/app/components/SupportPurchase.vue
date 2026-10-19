@@ -23,7 +23,7 @@
         </div>
         <div class="absolute bottom-0 right-0 flex h-7 w-9 items-center justify-center rounded-tl-2xl bg-blue-400 text-white"><Icon name="mdi:check" /></div>
       </div>
-      <p v-if="order && creator && order.amount_fen !== creator.price_yuan * 100" class="mt-3 text-xs leading-5 text-slate-500">已为你保留此前待支付订单的价格 ¥{{ price }}，本次付款以此金额为准。</p>
+      <p v-if="order && creator && order.amount !== Number(creator.price_yuan).toFixed(2)" class="mt-3 text-xs leading-5 text-slate-500">已为你保留此前待支付订单的价格 ¥{{ price }}，本次付款以此金额为准。</p>
       <p v-if="error" class="mt-4 text-sm text-amber-700" role="alert">{{ error }}</p>
       <button v-if="error && sameUser()" type="button" class="mt-2 text-sm text-blue-500 hover:text-blue-600 focus-visible:outline-blue-500" :disabled="loading" @click="initialize">重新加载</button>
     </div>
@@ -58,7 +58,7 @@ const props = defineProps({ creatorId: { type: String, required: true }, nicknam
 const emit = defineEmits(['paid', 'close'])
 const creator = ref(null), urls = ref(null), loading = ref(false), qrLoaded = ref(false)
 const { order, error, checking, pollingEnded, expired, now, owner, sameUser, request, showError, acceptOrder, refresh } = useSupportPayment(() => emit('paid'))
-const price = computed(() => order.value ? (order.value.amount_fen / 100).toFixed(2) : creator.value ? Number(creator.value.price_yuan).toFixed(2) : '—')
+const price = computed(() => order.value ? order.value.amount : creator.value ? Number(creator.value.price_yuan).toFixed(2) : '—')
 const remaining = computed(() => {
   if (!order.value || expired.value) return ''
   const seconds = Math.max(0, Math.ceil((new Date(order.value.expires_at).getTime() - now.value) / 1000))

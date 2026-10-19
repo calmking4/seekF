@@ -14,23 +14,31 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"seekF-backend/internal/configs"
+
+	"github.com/shopspring/decimal"
 )
 
 // AlipayTrade 支付宝查单或通知中的业务结果。
 type AlipayTrade struct {
-	Code     string `json:"code"`
-	SubCode  string `json:"sub_code"`
-	OrderNo  string `json:"out_trade_no"`
-	TradeNo  string `json:"trade_no"`
-	Status   string `json:"trade_status"`
-	Amount   string `json:"total_amount"`
-	SellerID string `json:"seller_id"`
-	PaidTime string `json:"send_pay_date"`
+	BillURL         string `json:"bill_download_url"`
+	BillFileCode    string `json:"bill_file_code"`
+	RefundFee       string `json:"refund_fee"`
+	RefundAmount    string `json:"refund_amount"`
+	RefundStatus    string `json:"refund_status"`
+	RefundRequestNo string `json:"out_request_no"`
+	RefundTime      string `json:"gmt_refund_pay"`
+	Code            string `json:"code"`
+	SubCode         string `json:"sub_code"`
+	OrderNo         string `json:"out_trade_no"`
+	TradeNo         string `json:"trade_no"`
+	Status          string `json:"trade_status"`
+	Amount          string `json:"total_amount"`
+	SellerID        string `json:"seller_id"`
+	PaidTime        string `json:"send_pay_date"`
 }
 
 // alipayCanonical 对参数按名称排序并拼接未转义的签名原文。
@@ -111,18 +119,18 @@ func alipaySign(cfg configs.AlipayConfig, values url.Values) error {
 }
 
 // AlipayPageURL 生成电脑网站收银台地址，超时时间沿用订单的固定截止时间。
-func AlipayPageURL(cfg configs.AlipayConfig, orderNo string, fen int64, expires time.Time) (string, error) {
-	return alipayPageURL(cfg, orderNo, fen, expires, false)
+func AlipayPageURL(cfg configs.AlipayConfig, orderNo string, amount decimal.Decimal, expires time.Time) (string, error) {
+	return alipayPageURL(cfg, orderNo, amount, expires, false)
 }
 
 // AlipayQRURL 使用电脑网站支付的嵌入式二维码，与网页付款共用同一笔订单。
-func AlipayQRURL(cfg configs.AlipayConfig, orderNo string, fen int64, expires time.Time) (string, error) {
-	return alipayPageURL(cfg, orderNo, fen, expires, true)
+func AlipayQRURL(cfg configs.AlipayConfig, orderNo string, amount decimal.Decimal, expires time.Time) (string, error) {
+	return alipayPageURL(cfg, orderNo, amount, expires, true)
 }
 
 // alipayPageURL 按支付方式生成签名地址，二维码不设置回跳以保留当前作品。
-func alipayPageURL(cfg configs.AlipayConfig, orderNo string, fen int64, expires time.Time, embedded bool) (string, error) {
-	biz := map[string]any{"out_trade_no": orderNo, "total_amount": FormatAlipayAmount(fen), "subject": "创作者30天助力", "product_code": "FAST_INSTANT_TRADE_PAY", "time_expire": expires.In(time.FixedZone("CST", 8*3600)).Format("2006-01-02 15:04:05"), "seller_id": cfg.SellerID}
+func alipayPageURL(cfg configs.AlipayConfig, orderNo string, amount decimal.Decimal, expires time.Time, embedded bool) (string, error) {
+	biz := map[string]any{"out_trade_no": orderNo, "total_amount": FormatAlipayAmount(amount), "subject": "创作者30天助力", "product_code": "FAST_INSTANT_TRADE_PAY", "time_expire": expires.In(time.FixedZone("CST", 8*3600)).Format("2006-01-02 15:04:05"), "seller_id": cfg.SellerID}
 	if embedded {
 		biz["qr_pay_mode"] = "4"
 		biz["qrcode_width"] = 168
@@ -150,7 +158,23 @@ func alipayPageURL(cfg configs.AlipayConfig, orderNo string, fen int64, expires 
 
 // AlipayRequest 执行查单或关单，先验证响应原始JSON签名再读取业务结果。
 func AlipayRequest(ctx context.Context, cfg configs.AlipayConfig, method, orderNo string) (*AlipayTrade, error) {
-	values, err := alipayParameters(cfg, method, map[string]string{"out_trade_no": orderNo})
+	return alipayRequest(ctx, cfg, method, map[string]any{"out_trade_no": orderNo})
+}
+
+// AlipayRefundRequest 按固定请求号发起或查询全额退款。
+func AlipayRefundRequest(ctx context.Context, cfg configs.AlipayConfig, method, orderNo, requestNo string, amount decimal.Decimal) (*AlipayTrade, error) {
+	biz := map[string]any{"out_trade_no": orderNo, "out_request_no": requestNo}
+	if method == "alipay.trade.refund" {
+		biz["refund_amount"] = FormatAlipayAmount(amount)
+	} else {
+		biz["query_options"] = []string{"gmt_refund_pay"}
+	}
+	return alipayRequest(ctx, cfg, method, biz)
+}
+
+// alipayRequest 发送签名请求并校验原始响应。
+func alipayRequest(ctx context.Context, cfg configs.AlipayConfig, method string, biz any) (*AlipayTrade, error) {
+	values, err := alipayParameters(cfg, method, biz)
 	if err != nil {
 		return nil, err
 	}
@@ -225,31 +249,26 @@ func VerifyAlipayNotify(cfg configs.AlipayConfig, values url.Values) (*AlipayTra
 	return &AlipayTrade{OrderNo: values.Get("out_trade_no"), TradeNo: values.Get("trade_no"), Status: values.Get("trade_status"), Amount: values.Get("total_amount"), SellerID: values.Get("seller_id"), PaidTime: values.Get("gmt_payment")}, nil
 }
 
-// FormatAlipayAmount 将整数分转换为两位小数元，避免浮点误差。
-func FormatAlipayAmount(fen int64) string { return fmt.Sprintf("%d.%02d", fen/100, fen%100) }
+// FormatAlipayAmount 将精确十进制元格式化为支付宝要求的两位小数字符串。
+func FormatAlipayAmount(amount decimal.Decimal) string { return amount.StringFixed(2) }
 
-// ParseAlipayAmount 严格解析渠道元金额为整数分。
-func ParseAlipayAmount(value string) (int64, error) {
+// ParseAlipayAmount 严格解析渠道元金额，拒绝负数、指数及超过两位小数的输入。
+func ParseAlipayAmount(value string) (decimal.Decimal, error) {
+	if len(value) == 0 || len(value) > 32 {
+		return decimal.Zero, fmt.Errorf("支付宝金额格式错误")
+	}
 	parts := strings.Split(value, ".")
-	if len(parts) > 2 || parts[0] == "" {
-		return 0, fmt.Errorf("支付宝金额格式错误")
+	if len(parts) > 2 || parts[0] == "" || (len(parts) == 2 && (len(parts[1]) < 1 || len(parts[1]) > 2)) {
+		return decimal.Zero, fmt.Errorf("支付宝金额格式错误")
 	}
 	for _, c := range strings.ReplaceAll(value, ".", "") {
 		if c < '0' || c > '9' {
-			return 0, fmt.Errorf("支付宝金额格式错误")
+			return decimal.Zero, fmt.Errorf("支付宝金额格式错误")
 		}
 	}
-	fraction := "00"
-	if len(parts) == 2 {
-		if len(parts[1]) < 1 || len(parts[1]) > 2 {
-			return 0, fmt.Errorf("支付宝金额格式错误")
-		}
-		fraction = (parts[1] + "0")[:2]
+	amount, err := decimal.NewFromString(value)
+	if err != nil || amount.GreaterThan(decimal.NewFromInt(1000000)) {
+		return decimal.Zero, fmt.Errorf("支付宝金额超出范围")
 	}
-	yuan, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil || yuan > 1000000 {
-		return 0, fmt.Errorf("支付宝金额超出范围")
-	}
-	fen, _ := strconv.ParseInt(fraction, 10, 64)
-	return yuan*100 + fen, nil
+	return amount, nil
 }
