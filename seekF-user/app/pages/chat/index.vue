@@ -1,7 +1,7 @@
 <template>
   <div class="flex h-full bg-gray-100">
     <!-- 左侧：搜索栏 + 私聊会话列表 -->
-    <aside class="bg-white border-r border-gray-200 h-full flex flex-col flex-shrink-0 pr-3 relative" :style="{ width: sidebarWidth + 'px' }">
+    <aside class="bg-white border-r border-gray-200 h-full flex flex-col flex-shrink-0 relative" :style="{ width: sidebarWidth + 'px' }">
       <!-- 拖动条 -->
       <div class="sidebar-resize-handle" @mousedown="startSidebarResize"></div>
       <!-- 顶部搜索栏 -->
@@ -20,9 +20,11 @@
           @click="selectSession(index)"
         >
           <!-- 头像 -->
-          <el-avatar :size="48" :src="item.avatar" class="flex-shrink-0">
-            {{ item.name ? item.name.charAt(0) : '?' }}
-          </el-avatar>
+          <NuxtLink target="_blank" rel="noopener noreferrer" :to="`/user/${encodeURIComponent(item.id)}`" :aria-label="`查看${item.name || '用户'}的个人主页`" class="inline-flex shrink-0 rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400" @click.stop>
+            <el-avatar :size="48" :src="item.avatar" class="flex-shrink-0">
+              {{ item.name ? item.name.charAt(0) : '?' }}
+            </el-avatar>
+          </NuxtLink>
           <!-- 消息内容 -->
           <div class="flex-1 min-w-0">
             <div class="flex justify-between items-start">
@@ -54,14 +56,16 @@
       <template v-else>
         <!-- 聊天头部 -->
         <div class="bg-white border-b border-gray-200 p-3 flex items-center gap-3 flex-shrink-0">
-          <el-avatar :size="40" :src="currentChat.avatar">
-            {{ currentChat.name ? currentChat.name.charAt(0) : '?' }}
-          </el-avatar>
+          <NuxtLink target="_blank" rel="noopener noreferrer" :to="`/user/${encodeURIComponent(currentChat.id)}`" :aria-label="`查看${currentChat.name || '用户'}的个人主页`" class="inline-flex shrink-0 rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400">
+            <el-avatar :size="40" :src="currentChat.avatar">
+              {{ currentChat.name ? currentChat.name.charAt(0) : '?' }}
+            </el-avatar>
+          </NuxtLink>
           <span class="font-medium text-sm">{{ currentChat.name }}</span>
           <div class="flex-1"></div>
           <div class="flex gap-4 text-gray-500">
             <button type="button" :disabled="blockStatusLoading || blockSaving" :aria-busy="blockStatusLoading || blockSaving" class="inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 py-2 text-xs font-medium transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 sm:px-4 sm:text-sm" :class="chatIsBlocked ? 'border-blue-200 bg-blue-50 text-blue-500 hover:border-blue-300 hover:bg-blue-100' : 'border-rose-200 bg-rose-50 text-rose-500 hover:border-rose-300 hover:bg-rose-100'" @click="blockStatusUser === currentChat.id ? handleChatBlock(currentChat.id) : refreshChatBlockStatus()">
-              <Icon :name="blockStatusLoading || blockSaving ? 'uil:spinner' : blockStatusUser !== currentChat.id ? 'mdi:refresh' : chatIsBlocked ? 'mdi:account-check-outline' : 'mdi:account-cancel-outline'" class="text-base" :class="{ 'animate-spin': blockStatusLoading || blockSaving }" aria-hidden="true" />
+              <AccountStatusIcon :loading="blockStatusLoading || blockSaving" :mode="blockStatusUser !== currentChat.id ? 'retry' : chatIsBlocked ? 'unblock' : 'block'" class="text-base" />
               <span>{{ blockSaving ? '处理中…' : blockStatusLoading ? '加载中…' : blockStatusUser !== currentChat.id ? '重试加载' : chatIsBlocked ? '解除拉黑' : '拉黑' }}</span>
             </button>
           </div>
@@ -72,6 +76,7 @@
           <el-scrollbar
             ref="scrollbarRef"
             class="h-full"
+            wrap-class="[overflow-anchor:none]"
             @end-reached="handleEndReached"
           >
             <div class="p-4 space-y-3">
@@ -90,9 +95,9 @@
               <!-- 消息列表 - 倒序显示，最新消息在底部 -->
               <div
                 v-for="msg in messageList"
-                :key="msg.messageId"
+                :key="msg.renderKey || msg.messageId"
                 class="chat-item"
-                :class="{ 'chat-item-self': msg.isSelf }"
+                :class="{ 'chat-item-self': msg.isSelf, 'chat-message-enter': msg.animateEntrance }"
               >
                 <!-- 用户名 - 在消息行外面 -->
                 <div class="user-name" :class="{ 'user-name-self': msg.isSelf }">
@@ -103,9 +108,11 @@
                 <div class="message-row" :class="{ 'message-row-self': msg.isSelf }">
                   <!-- 对方消息：头像在左，气泡在右 -->
                   <template v-if="!msg.isSelf">
-                    <el-avatar class="avatar" :size="50" :src="msg.avatar">
-                      {{ msg.senderName ? msg.senderName.charAt(0) : '?' }}
-                    </el-avatar>
+                    <NuxtLink target="_blank" rel="noopener noreferrer" :to="`/user/${encodeURIComponent(currentChat.id)}`" :aria-label="`查看${msg.senderName || currentChat.name || '用户'}的个人主页`" class="inline-flex shrink-0 rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400">
+                      <el-avatar class="avatar" :size="50" :src="msg.avatar">
+                        {{ msg.senderName ? msg.senderName.charAt(0) : '?' }}
+                      </el-avatar>
+                    </NuxtLink>
                     <div class="bubble bubble-left">
                       <div v-if="msg.isImage || isImageUrl(msg.content)">
                         <img :src="msg.content" class="max-w-full rounded cursor-pointer hover:opacity-90" style="max-height: 200px;" @click="previewImage(msg.content)" />
@@ -124,9 +131,11 @@
                       <p v-else class="text-sm">{{ msg.content }}</p>
                       <p class="msg-time text-xs text-right mt-1">{{ formatTime(msg.sendTime) }}</p>
                     </div>
-                    <el-avatar class="avatar" :size="50" :src="currentUserAvatar">
-                      我
-                    </el-avatar>
+                    <NuxtLink target="_blank" rel="noopener noreferrer" to="/my" aria-label="查看我的个人主页" class="inline-flex shrink-0 rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400">
+                      <el-avatar class="avatar" :size="50" :src="currentUserAvatar">
+                        我
+                      </el-avatar>
+                    </NuxtLink>
                   </template>
                 </div>
               </div>
@@ -358,11 +367,13 @@ const currentPage = ref(1)
 const pageSize = 20
 const totalMessages = ref(0)
 
-const scrollToBottom = () => {
+// scrollToBottom 历史定位直接到达，实时追加使用平滑滚动，减少动态效果时直接定位。
+const scrollToBottom = (smooth = false) => {
   nextTick(() => {
     if (scrollbarRef.value?.wrapRef) {
       const wrap = scrollbarRef.value.wrapRef
-      scrollbarRef.value.setScrollTop(wrap.scrollHeight)
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      wrap.scrollTo({ top: Math.max(0, wrap.scrollHeight - wrap.clientHeight), behavior: smooth && !reducedMotion ? 'smooth' : 'instant' })
     }
   })
 }
@@ -561,6 +572,8 @@ const sendMessage = async () => {
       const tempId = 'temp_' + Date.now()
       messageList.value.push({
         messageId: tempId,
+        renderKey: tempId,
+        animateEntrance: true,
         content: inputMessage.value.trim(),
         senderName: '我',
         avatar: currentUserAvatar.value,
@@ -572,7 +585,7 @@ const sendMessage = async () => {
       session.time = '刚刚'
       inputMessage.value = ''
 
-      scrollToBottom()
+      scrollToBottom(true)
     }
   }
 }
@@ -695,6 +708,8 @@ const uploadAndSendImage = async (file) => {
         const tempId = 'temp_' + Date.now()
         messageList.value.push({
           messageId: tempId,
+          renderKey: tempId,
+          animateEntrance: true,
           content: imageUrl,
           senderName: '我',
           avatar: currentUserAvatar.value,
@@ -706,7 +721,7 @@ const uploadAndSendImage = async (file) => {
         session.lastMsg = '[图片]'
         session.time = '刚刚'
 
-        scrollToBottom()
+        scrollToBottom(true)
         ElMessage.success('图片发送成功')
       }
     } else {
@@ -778,6 +793,7 @@ const handleWebSocketMessage = (data) => {
     const messageContent = data.type === 2 ? data.url : data.content
     const realMessage = {
       messageId: data.uuid,
+      animateEntrance: true,
       content: messageContent,
       senderName: data.send_name,
       avatar: data.send_avatar,
@@ -789,7 +805,9 @@ const handleWebSocketMessage = (data) => {
     if (isSelf) {
       const tempIndex = messageList.value.findIndex(m => m.messageId?.startsWith('temp_') && m.content === messageContent)
       if (tempIndex !== -1) {
-        messageList.value[tempIndex] = realMessage
+        // 服务端回显沿用本地节点且不重复滚动，避免打断正在进行的入场和滚动。
+        messageList.value[tempIndex] = { ...realMessage, renderKey: messageList.value[tempIndex].renderKey || messageList.value[tempIndex].messageId }
+        return
       } else {
         messageList.value.push(realMessage)
       }
@@ -797,7 +815,7 @@ const handleWebSocketMessage = (data) => {
       messageList.value.push(realMessage)
     }
 
-    scrollToBottom()
+    scrollToBottom(true)
   } else {
     console.log('不是当前会话，更新会话列表')
     const sessionIndex = chatList.value.findIndex(item => item.id === peerId)
@@ -857,6 +875,18 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 整条消息统一淡入，不缩放文字或回弹；只改变合成属性，不参与布局计算。 */
+.chat-message-enter {
+  animation: message-arrive 0.24s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+@keyframes message-arrive {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-message-enter { animation: none; }
+}
+
 /* 一条消息 */
 .chat-item {
   display: flex;

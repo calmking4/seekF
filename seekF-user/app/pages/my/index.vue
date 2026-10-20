@@ -16,8 +16,8 @@
             <p class="text-gray-500 text-sm">账号: {{ userInfo.uuid || '加载中...' }}</p>
             <p class="text-gray-600 text-sm">{{ userInfo.signature || '还没有简介' }}</p>
             <div class="flex gap-6 text-sm text-gray-600 mt-1">
-              <span><span class="font-medium">{{ userInfo.followCount || 0 }}</span> 关注</span>
-              <span><span class="font-medium">{{ userInfo.followerCount || 0 }}</span> 粉丝</span>
+              <button type="button" class="transition-colors hover:text-blue-500 focus-visible:outline-blue-400" :disabled="!userInfo.uuid" @click="followListType = 'following'; followListVisible = true"><span class="font-medium">{{ userInfo.followCount || 0 }}</span> 关注</button>
+              <button type="button" class="transition-colors hover:text-blue-500 focus-visible:outline-blue-400" :disabled="!userInfo.uuid" @click="followListType = 'followers'; followListVisible = true"><span class="font-medium">{{ userInfo.followerCount || 0 }}</span> 粉丝</button>
               <span><span class="font-medium">{{ userInfo.likeCount || 0 }}</span> 获赞与收藏</span>
             </div>
           </div>
@@ -28,10 +28,12 @@
           <button type="button" class="inline-flex shrink-0 items-center gap-2 rounded-full border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400" @click="editInfo">
             <Icon name="uil:edit-alt" class="text-base" />编辑信息
           </button>
-          <NuxtLink to="/my/blacklist" class="inline-flex shrink-0 items-center gap-2 rounded-full border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"><Icon name="mdi:account-cancel-outline" class="text-base" />黑名单管理</NuxtLink>
+          <NuxtLink to="/my/blacklist" class="inline-flex shrink-0 items-center gap-2 rounded-full border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"><AccountStatusIcon class="text-base" />黑名单管理</NuxtLink>
         </div>
       </div>
     </div>
+
+    <FollowListDialog v-model="followListVisible" :user-id="userInfo.uuid" :type="followListType" />
 
     <!-- 标签切换区 -->
     <div class="max-w-5xl mx-auto">
@@ -384,6 +386,8 @@ useSeoMeta({
 import { useAuthState } from '~/composables/useAuthState'
 
 const activeTab = ref('posts')
+const followListVisible = ref(false)
+const followListType = ref('following')
 const editDialogVisible = ref(false)
 const updating = ref(false)
 

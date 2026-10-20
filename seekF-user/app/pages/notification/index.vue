@@ -49,7 +49,7 @@
             <div class="notification-content">
               <button class="actor-name" :disabled="!item.actor_id" @click="openActor(item)">{{ item.actor_name || '未知用户' }}</button>
               <div class="event-meta"><span>{{ actionText(item.type) }}</span><time :datetime="item.created_at" :title="fullTime(item.created_at)">{{ formatTime(item.created_at) }}</time></div>
-              <NuxtLink v-if="item.type === 7 || item.type === 8" :to="item.type === 8 ? '/discover/support-records' : item.actor_id ? `/user/${encodeURIComponent(item.actor_id)}` : '/discover'" class="mt-2 block text-sm text-blue-500" @click="readItem(item)">{{ item.content }} {{ item.type === 8 ? '查看助力记录' : '查看创作者作品' }}</NuxtLink>
+              <NuxtLink v-if="item.type === 7 || item.type === 8" :to="item.type === 8 ? '/discover/support-records' : item.actor_id ? `/user/${encodeURIComponent(item.actor_id)}` : '/discover'" class="mt-2 block text-sm text-blue-500" @click="readItem(item)">{{ item.type === 8 ? '查看助力记录' : '查看创作者作品' }}</NuxtLink>
               <button v-else-if="item.type !== 4" class="post-message" @click="openPost(item)">
                 <span v-if="isComment(item) || item.type === 6" class="comment-text">{{ commentContent(item) }}</span>
                 <span class="post-reference"><Icon name="uil:file-alt" />{{ item.target_available ? (item.post_title || '查看原帖') : '原帖已删除或不可见' }}</span>

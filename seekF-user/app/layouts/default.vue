@@ -52,7 +52,7 @@
     </aside>
 
     <!-- 右侧主内容区 -->
-    <main class="flex-1 h-full min-w-0" :class="[route.path === '/notification' ? 'overflow-hidden' : 'overflow-y-auto', { '[scrollbar-gutter:stable]': route.path === '/discover' }]">
+    <main class="flex-1 h-full min-w-0" :class="[route.path === '/notification' ? 'overflow-hidden' : 'overflow-y-auto', { '[scrollbar-gutter:stable]': route.path === '/discover' || route.path === '/my' || route.path.startsWith('/user/') }]">
       <slot />
     </main>
 

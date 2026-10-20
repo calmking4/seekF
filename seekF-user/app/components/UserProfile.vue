@@ -20,8 +20,8 @@
               <p class="break-all text-sm text-gray-500">账号：{{ profile.uuid }}</p>
               <p class="break-words text-sm text-gray-600">{{ profile.signature || '还没有简介' }}</p>
               <div class="mt-1 flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-600">
-                <button type="button" class="hover:text-blue-500" @click="navigateTo(`/user/${userId}/following`)"><span class="font-medium">{{ profile.following_count || 0 }}</span> 关注</button>
-                <button type="button" class="hover:text-blue-500" @click="navigateTo(`/user/${userId}/followers`)"><span class="font-medium">{{ profile.follower_count || 0 }}</span> 粉丝</button>
+                <button type="button" class="hover:text-blue-500 focus-visible:outline-blue-400" @click="followListType = 'following'; followListVisible = true"><span class="font-medium">{{ profile.following_count || 0 }}</span> 关注</button>
+                <button type="button" class="hover:text-blue-500 focus-visible:outline-blue-400" @click="followListType = 'followers'; followListVisible = true"><span class="font-medium">{{ profile.follower_count || 0 }}</span> 粉丝</button>
                 <span><span class="font-medium">{{ profile.total_likes || 0 }}</span> 获赞</span>
               </div>
             </div>
@@ -67,6 +67,7 @@
         </ProfileTabs>
       </template>
     </div>
+    <FollowListDialog v-model="followListVisible" :user-id="userId" :type="followListType" />
     <DiscoverDetail v-if="selectedPost" :key="selectedPost.id" :item="selectedPost" @close="selectedPost = null" @like-updated="handleLikeUpdated" @collect-updated="handleCollectUpdated" @follow-updated="handleFollowUpdated" />
   </div>
 </template>
@@ -85,6 +86,8 @@ const userId = computed(() => props.userId)
 const profile = ref(null)
 const isSelf = computed(() => userId.value === auth.getUser()?.uuid)
 const activeTab = ref('posts')
+const followListVisible = ref(false)
+const followListType = ref('following')
 const posts = ref([])
 const loading = ref(true)
 const profileError = ref('')
