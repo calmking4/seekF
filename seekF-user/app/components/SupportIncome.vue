@@ -3,7 +3,8 @@
     <div class="flex items-center justify-between gap-3"><h2 class="text-sm font-medium text-gray-700">助力收益</h2><el-button :loading="loading" @click="load">刷新</el-button></div>
     <p v-if="error" class="text-sm text-amber-600" role="alert">{{ error }}</p>
     <div v-if="income" class="grid gap-4 sm:grid-cols-3"><div v-for="item in metrics" :key="item.key"><p class="text-xs text-gray-400">{{ item.label }}</p><p class="mt-2 text-2xl font-semibold text-gray-700">¥{{ income[item.key] ?? '0.00' }}</p></div></div>
-    <p class="text-xs leading-6 text-gray-400">按已确认付款订单统计。退款处理中仍计入实收，确认全额退款后计入退款金额；以上为助力收款统计，不是可提现余额。本期不支持提现和自动分账。</p>
+    <p class="text-xs leading-6 text-gray-400">按已确认付款订单统计。退款处理中仍计入实收，确认全额退款后计入退款金额；以上为助力收款统计，不是可提现余额。可提现余额和提现记录请前往收益与提现页查看。</p>
+    <NuxtLink to="/discover/support-wallet" class="inline-flex text-sm text-blue-500 hover:text-blue-600 focus-visible:outline-blue-400">查看收益与提现</NuxtLink>
   </section>
 </template>
 <script setup>

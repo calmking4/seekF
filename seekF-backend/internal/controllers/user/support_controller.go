@@ -1,6 +1,7 @@
 package user
 
 import (
+	"errors"
 	"net/http"
 	"seekF-backend/internal/pkg/zlog"
 
@@ -12,6 +13,66 @@ import (
 )
 
 type SupportController struct{ supportService userservice.SupportService }
+
+// SettlementAccount 查询本人脱敏收款信息。
+func (c *SupportController) SettlementAccount(ctx *gin.Context) {
+	result, err := c.supportService.GetSettlementAccount(ctx.Request.Context(), ctx.GetString("Uuid"))
+	if err != nil {
+		resp.Error(ctx, err.Error(), 400)
+		return
+	}
+	resp.Success(ctx, "查询收款信息成功", result)
+}
+
+// BindSettlementAccount 复核本人密码后保存收款声明。
+func (c *SupportController) BindSettlementAccount(ctx *gin.Context) {
+	ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 8192)
+	var req userreq.SupportPayeeRequest
+	if ctx.ShouldBindJSON(&req) != nil {
+		resp.Error(ctx, "收款信息参数错误", 400)
+		return
+	}
+	if err := c.supportService.BindSettlementAccount(ctx.Request.Context(), ctx.GetString("Uuid"), req); err != nil {
+		resp.Error(ctx, err.Error(), 400)
+		return
+	}
+	resp.Success(ctx, "收款信息已保存", nil)
+}
+
+// CreateWithdrawal 幂等创建本人自动提现。
+func (c *SupportController) CreateWithdrawal(ctx *gin.Context) {
+	ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 8192)
+	var req userreq.SupportWithdrawRequest
+	if ctx.ShouldBindJSON(&req) != nil {
+		resp.Error(ctx, "提现参数错误", 400)
+		return
+	}
+	result, err := c.supportService.CreateWithdrawal(ctx.Request.Context(), ctx.GetString("Uuid"), req)
+	if err != nil {
+		if errors.Is(err, userservice.ErrSupportWithdrawalUnconfirmed) {
+			resp.Error(ctx, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		resp.Error(ctx, err.Error(), 400)
+		return
+	}
+	resp.Success(ctx, "提现已受理，请查看渠道确认结果", result)
+}
+
+// ListWithdrawals 查询本人提现列表或详情。
+func (c *SupportController) ListWithdrawals(ctx *gin.Context) {
+	var req userreq.SupportWithdrawRequest
+	if ctx.ShouldBindJSON(&req) != nil {
+		resp.Error(ctx, "提现查询参数错误", 400)
+		return
+	}
+	result, err := c.supportService.ListWithdrawals(ctx.Request.Context(), ctx.GetString("Uuid"), req)
+	if err != nil {
+		resp.Error(ctx, err.Error(), 400)
+		return
+	}
+	resp.Success(ctx, "查询提现记录成功", result)
+}
 
 // SettlementSummary 查询登录创作者的收益账户，不接受客户端指定账户归属。
 func (c *SupportController) SettlementSummary(ctx *gin.Context) {

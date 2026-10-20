@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"seekF-backend/internal/configs"
 	admindao "seekF-backend/internal/dao/admin_dao"
 	adminresp "seekF-backend/internal/dto/admin"
 	"seekF-backend/internal/models"
@@ -42,7 +43,7 @@ func (s *AdminService) Overview(ctx context.Context) (*adminresp.Overview, error
 	if s.cache != nil && time.Since(s.cache.GeneratedAt) < 30*time.Second {
 		return s.cache, nil
 	}
-	result, err := s.dao.Overview(ctx)
+	result, err := s.dao.Overview(ctx, configs.GetConfig().AlipayConfig.Environment)
 	if err != nil {
 		return nil, err
 	}

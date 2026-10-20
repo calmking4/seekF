@@ -10,6 +10,14 @@ export interface DayActivity {
   posts: number;
 }
 export interface Overview {
+
+  supportRevenue: {
+    environment: string;
+    paidAmount: string;
+    platformGrossAmount: string;
+    platformRefundAmount: string;
+    platformNetAmount: string;
+  };
   users: number;
   groups: number;
   posts: number;

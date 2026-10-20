@@ -3,6 +3,22 @@ package constants
 import "time"
 
 const (
+	// 创作者收款及退款抵扣约定版本。
+	SupportTermsVersion = "20261020-v1"
+	// 商家转账的固定产品码与业务场景。
+	SupportTransferProduct = "TRANS_ACCOUNT_NO_PWD"
+	SupportTransferScene   = "DIRECT_TRANSFER"
+	// 新建提现的流水冻结事件。
+	SupportLedgerWithdrawFreeze = "withdraw_freeze"
+	// 渠道确认成功的提现流水事件。
+	SupportLedgerWithdrawSuccess = "withdraw_success"
+	// 渠道确认失败的提现流水事件。
+	SupportLedgerWithdrawFail = "withdraw_fail"
+	// 提现单状态：待提交、处理中（含结果未知）、成功、明确失败。
+	SupportWithdrawPending    int8 = 0
+	SupportWithdrawProcessing int8 = 1
+	SupportWithdrawSucceeded  int8 = 2
+	SupportWithdrawFailed     int8 = 3
 	// 即时收益分配规则版本，0保留为历史不入账订单。
 	SupportSettlementVersion = 1
 	// 默认平台抽成，单位基点，1000表示10%。

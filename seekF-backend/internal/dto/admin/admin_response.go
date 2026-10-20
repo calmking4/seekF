@@ -17,16 +17,26 @@ type DayActivity struct {
 	Posts    int64  `json:"posts"`
 }
 
+// SupportRevenue 平台助力收益汇总，金额单位元，使用两位小数字符串。
+type SupportRevenue struct {
+	Environment          string `json:"environment"`
+	PaidAmount           string `json:"paidAmount"`
+	PlatformGrossAmount  string `json:"platformGrossAmount"`
+	PlatformRefundAmount string `json:"platformRefundAmount"`
+	PlatformNetAmount    string `json:"platformNetAmount"`
+}
+
 // Overview 管理端业务概览，最多缓存三十秒。
 type Overview struct {
-	Users         int64         `json:"users"`
-	Groups        int64         `json:"groups"`
-	Posts         int64         `json:"posts"`
-	TodayMessages int64         `json:"todayMessages"`
-	TodayUsers    int64         `json:"todayUsers"`
-	Knowledge     int64         `json:"knowledge"`
-	Activity      []DayActivity `json:"activity"`
-	GeneratedAt   time.Time     `json:"generatedAt"`
+	Users          int64          `json:"users"`
+	Groups         int64          `json:"groups"`
+	Posts          int64          `json:"posts"`
+	TodayMessages  int64          `json:"todayMessages"`
+	TodayUsers     int64          `json:"todayUsers"`
+	Knowledge      int64          `json:"knowledge"`
+	Activity       []DayActivity  `json:"activity"`
+	GeneratedAt    time.Time      `json:"generatedAt"`
+	SupportRevenue SupportRevenue `json:"supportRevenue"`
 }
 
 // Health 描述单项依赖的即时探测结果。

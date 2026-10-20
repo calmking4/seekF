@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"gorm.io/gorm"
 	adminresp "seekF-backend/internal/dto/admin"
 	"seekF-backend/internal/models"
+	"seekF-backend/internal/pkg/constants"
 )
 
 // AdminDAO 提供管理端只读数据访问。
@@ -33,7 +36,7 @@ func (d *AdminDAO) Ping(ctx context.Context) error {
 }
 
 // Overview 聚合当前业务数量及最近七个自然日的活动。
-func (d *AdminDAO) Overview(ctx context.Context) (*adminresp.Overview, error) {
+func (d *AdminDAO) Overview(ctx context.Context, environment string) (*adminresp.Overview, error) {
 	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	start := today.AddDate(0, 0, -6)
@@ -97,5 +100,33 @@ func (d *AdminDAO) Overview(ctx context.Context) (*adminresp.Overview, error) {
 			}
 		}
 	}
+	revenue, err := d.SupportRevenue(ctx, environment)
+	if err != nil {
+		return nil, err
+	}
+	result.SupportRevenue = *revenue
 	return result, nil
+}
+
+// SupportRevenue 按当前环境的新规则已付款订单汇总抽成，确认退款后冲减原抽成。
+func (d *AdminDAO) SupportRevenue(ctx context.Context, environment string) (*adminresp.SupportRevenue, error) {
+	var totals struct {
+		PaidAmount           decimal.Decimal
+		PlatformGrossAmount  decimal.Decimal
+		PlatformRefundAmount decimal.Decimal
+	}
+	err := d.db.WithContext(ctx).Model(&models.SupportOrder{}).
+		Select("COALESCE(SUM(amount),0) AS paid_amount, COALESCE(SUM(amount - creator_amount),0) AS platform_gross_amount, COALESCE(SUM(CASE WHEN refund_status = ? THEN amount - creator_amount ELSE 0 END),0) AS platform_refund_amount", constants.SupportRefundSucceeded).
+		Where("environment = ? AND status = ? AND settlement_version = ?", environment, constants.SupportOrderPaid, constants.SupportSettlementVersion).
+		Scan(&totals).Error
+	if err != nil {
+		return nil, fmt.Errorf("统计平台助力收益失败: %w", err)
+	}
+	return &adminresp.SupportRevenue{
+		Environment:          environment,
+		PaidAmount:           totals.PaidAmount.StringFixed(2),
+		PlatformGrossAmount:  totals.PlatformGrossAmount.StringFixed(2),
+		PlatformRefundAmount: totals.PlatformRefundAmount.StringFixed(2),
+		PlatformNetAmount:    totals.PlatformGrossAmount.Sub(totals.PlatformRefundAmount).StringFixed(2),
+	}, nil
 }

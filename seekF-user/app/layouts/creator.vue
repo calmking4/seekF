@@ -27,7 +27,7 @@
 <script setup>
 const route = useRoute()
 const creatorNav = [{ path: '/discover/create', label: '发布', icon: 'uil:plus-square' }, { path: '/discover/manage', label: '作品管理', icon: 'uil:clipboard-notes' }]
-const supportNav = [{ path: '/discover/support', label: '助力设置' }, { path: '/discover/support-records', label: '助力记录' }]
+const supportNav = [{ path: '/discover/support', label: '助力设置' }, { path: '/discover/support-records', label: '助力记录' }, { path: '/discover/support-wallet', label: '收益与提现' }]
 const isSupportRoute = computed(() => supportNav.some(item => item.path === route.path))
 const supportOpen = ref(isSupportRoute.value)
 watch(() => route.path, () => { if (isSupportRoute.value) supportOpen.value = true })

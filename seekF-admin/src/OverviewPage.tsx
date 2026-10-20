@@ -188,6 +188,34 @@ export default function OverviewPage({
           icon={Files}
         />
       </div>
+      <Card className="p-5 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-semibold">平台助力收益</h2>
+          <span className="text-xs text-slate-400">
+            {overview?.supportRevenue
+              ? `${overview.supportRevenue.environment === "sandbox" ? "沙箱环境 · 虚拟资金" : "正式环境"} · 单位：元`
+              : "等待收益统计"}
+          </span>
+        </div>
+        <div className="mt-5 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          {([
+            ["paidAmount", "助力总收款"],
+            ["platformGrossAmount", "累计抽成"],
+            ["platformRefundAmount", "退款退回抽成"],
+            ["platformNetAmount", "平台净收益"],
+          ] as const).map(([key, label]) => (
+            <div key={key}>
+              <p className="text-xs text-slate-500">{label}</p>
+              <p className="mt-2 break-all text-2xl font-semibold tabular-nums">
+                {overview?.supportRevenue ? `¥${overview.supportRevenue[key]}` : "—"}
+              </p>
+            </div>
+          ))}
+        </div>
+        <p className="mt-5 text-xs leading-6 text-slate-400">
+          仅统计当前支付环境启用收益分配后的已付款订单，按每单份额快照计算；退款成功后扣除对应抽成，净收益未扣渠道手续费。历史订单不计入，统计最多缓存30秒。
+        </p>
+      </Card>
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <ActivityChart days={overview?.activity ?? []} />
         <div className="space-y-6">

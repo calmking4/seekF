@@ -2,9 +2,15 @@ package userservice
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/mail"
 	"net/url"
 	"strings"
 	"sync"
@@ -12,6 +18,7 @@ import (
 
 	"seekF-backend/internal/configs"
 	userdao "seekF-backend/internal/dao/user_dao"
+	userreq "seekF-backend/internal/dto/user/user_req"
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
@@ -27,6 +34,9 @@ import (
 
 // ErrDiscoverSupportRequired 表示当前用户需要助力后才能访问作品详情及评论。
 var ErrDiscoverSupportRequired = errors.New("助力创作者后才能查看此作品")
+
+// ErrSupportWithdrawalUnconfirmed 表示事务提交结果未知，客户端须复用原请求查询。
+var ErrSupportWithdrawalUnconfirmed = errors.New("提现申请结果尚未确认，请核对原申请")
 
 // requireDiscoverSupport 使用当前业务连接校验作品权益，事务内调用必须传入事务连接。
 func requireDiscoverSupport(ctx context.Context, conn *gorm.DB, userId string, post *models.DiscoverPost) error {
@@ -48,6 +58,14 @@ func requireDiscoverSupport(ctx context.Context, conn *gorm.DB, userId string, p
 
 // SupportService 创作者助力开通、支付及权益业务接口。
 type SupportService interface {
+	// 查询本人收款状态及当前规则。
+	GetSettlementAccount(ctx context.Context, userId string) (any, error)
+	// 保存本人收款声明及加密收款信息。
+	BindSettlementAccount(ctx context.Context, userId string, req userreq.SupportPayeeRequest) error
+	// 冻结本人可用余额并幂等创建自动提现。
+	CreateWithdrawal(ctx context.Context, userId string, req userreq.SupportWithdrawRequest) (any, error)
+	// 查询本人提现列表或详情。
+	ListWithdrawals(ctx context.Context, userId string, req userreq.SupportWithdrawRequest) (any, error)
 	// 提交本人订单的首次退款申请。
 	RequestRefund(ctx context.Context, userId, orderNo, reason string) error
 	// 查询创作者的开通状态、价格和当前用户权益。
@@ -497,6 +515,7 @@ func StartSupportOrderScanner(ctx context.Context) {
 		for {
 			scanSupportOrders(ctx)
 			scanSupportRefunds(ctx)
+			scanSupportWithdrawals(ctx)
 			select {
 			case <-ctx.Done():
 				return
@@ -1042,4 +1061,549 @@ func applySupportSettlement(tx *gorm.DB, row *models.SupportOrder, kind string) 
 		row.RefundReserved = false
 	}
 	return nil
+}
+
+// supportPayeeCipher 创建独立AES-GCM加密器，密钥不从支付私钥或公开配置派生。
+func supportPayeeCipher() (cipher.AEAD, error) {
+	key, err := base64.StdEncoding.DecodeString(configs.GetConfig().SupportSettlementConfig.AccountEncryptionKey)
+	if err != nil || len(key) != 32 {
+		return nil, fmt.Errorf("收款信息加密密钥未配置或格式不正确")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("初始化收款信息加密失败")
+	}
+	return cipher.NewGCM(block)
+}
+
+// sealSupportPayee 加密收款及业务场景快照，绑定环境和本人身份。
+func sealSupportPayee(payee payment.TransferPayee, owner string) (string, error) {
+	aead, err := supportPayeeCipher()
+	if err != nil {
+		return "", err
+	}
+	plain, err := json.Marshal(payee)
+	if err != nil {
+		return "", fmt.Errorf("编码收款信息失败")
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", fmt.Errorf("生成收款随机数失败")
+	}
+	return base64.StdEncoding.EncodeToString(aead.Seal(nonce, nonce, plain, []byte(owner))), nil
+}
+
+// openSupportPayee 仅在提交渠道前解密，不向前端或日志暴露原文。
+func openSupportPayee(encoded, owner string) (payment.TransferPayee, error) {
+	var payee payment.TransferPayee
+	aead, err := supportPayeeCipher()
+	if err != nil {
+		return payee, err
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(raw) < aead.NonceSize() {
+		return payee, fmt.Errorf("收款快照损坏")
+	}
+	plain, err := aead.Open(nil, raw[:aead.NonceSize()], raw[aead.NonceSize():], []byte(owner))
+	if err != nil || json.Unmarshal(plain, &payee) != nil {
+		return payee, fmt.Errorf("收款快照无法解密，请核对加密密钥")
+	}
+	return payee, nil
+}
+
+// maskSupportPayee 隐藏收款账号或姓名中间部分。
+func maskSupportPayee(value string) string {
+	chars := []rune(value)
+	if len(chars) < 2 {
+		return "*"
+	}
+	if len(chars) < 5 {
+		return string(chars[:1]) + "***"
+	}
+	return string(chars[:2]) + "***" + string(chars[len(chars)-2:])
+}
+
+// GetSettlementAccount 返回本人脱敏收款信息，脱敏值从密文读取，不另存重复列。
+func (s *SupportServiceImpl) GetSettlementAccount(ctx context.Context, userId string) (any, error) {
+	if userId == "" {
+		return nil, fmt.Errorf("请先登录")
+	}
+	conn := db.GormDB.WithContext(ctx)
+	user, err := userdao.NewUserInfoDAO(conn).FindUserByUuid(userId)
+	if err != nil || user == nil || user.Status != 0 {
+		return nil, fmt.Errorf("账号不可用")
+	}
+	row, err := userdao.NewSupportSettlementDAO(conn).FindAccount(configs.GetConfig().AlipayConfig.Environment, userId)
+	if err != nil {
+		return nil, err
+	}
+	var payee payment.TransferPayee
+	if row.PayeeCipher != "" {
+		payee, err = openSupportPayee(row.PayeeCipher, configs.GetConfig().AlipayConfig.Environment+":"+userId)
+		if err != nil {
+			return nil, err
+		}
+	}
+	rate := constants.SupportPlatformRateBPS
+	if value := configs.GetConfig().SupportSettlementConfig.PlatformRateBPS; value != nil {
+		rate = *value
+	}
+	accepted := ""
+	if row.AcceptedAt != nil {
+		accepted = constants.SupportTermsVersion
+	}
+	return map[string]any{"bound": row.PayeeCipher != "", "account_mask": maskSupportPayee(payee.Account), "name_mask": maskSupportPayee(payee.Name), "account_version": row.AccountVersion, "terms_version": constants.SupportTermsVersion, "accepted_terms_version": accepted, "requires_password": user.Password != "", "platform_rate_bps": rate}, nil
+}
+
+// BindSettlementAccount 保存本人收款信息，确认时间和版本用于防止换绑后误提至其他账户。
+func (s *SupportServiceImpl) BindSettlementAccount(ctx context.Context, userId string, req userreq.SupportPayeeRequest) error {
+	req.Account = strings.TrimSpace(req.Account)
+	req.Name = strings.TrimSpace(req.Name)
+	if userId == "" || !req.Accepted || req.TermsVersion != constants.SupportTermsVersion {
+		return fmt.Errorf("请确认本人收款账户及收益退款抵扣规则")
+	}
+	if len(req.Account) > 128 || len([]rune(req.Name)) < 2 || len([]rune(req.Name)) > 64 || strings.ContainsAny(req.Name+req.Account, "\r\n\t") {
+		return fmt.Errorf("收款账号或姓名格式错误")
+	}
+	if strings.Contains(req.Account, "@") {
+		address, err := mail.ParseAddress(req.Account)
+		if err != nil || address.Address != req.Account {
+			return fmt.Errorf("请填写有效的支付宝邮箱账号")
+		}
+	} else {
+		if len(req.Account) != 11 {
+			return fmt.Errorf("请填写支付宝手机号或邮箱账号")
+		}
+		for _, c := range req.Account {
+			if c < '0' || c > '9' {
+				return fmt.Errorf("支付宝手机号格式错误")
+			}
+		}
+	}
+	env := configs.GetConfig().AlipayConfig.Environment
+	encoded, err := sealSupportPayee(payment.TransferPayee{Account: req.Account, Name: req.Name}, env+":"+userId)
+	if err != nil {
+		return err
+	}
+	return supportTransaction(ctx, func(tx *gorm.DB) error {
+		user, err := userdao.NewUserInfoDAO(tx).FindUserByUuidForUpdate(userId)
+		if err != nil {
+			return err
+		}
+		if user == nil || user.Status != 0 {
+			return fmt.Errorf("账号不可用")
+		}
+		if user.Password != "" && verifyPassword(user.Password, req.Password) != nil {
+			return fmt.Errorf("登录密码不正确")
+		}
+		dao := userdao.NewSupportSettlementDAO(tx)
+		row, err := dao.LockAccount(env, userId)
+		if err != nil {
+			return err
+		}
+		now := time.Now()
+		row.PayeeCipher = encoded
+		row.AccountVersion++
+		row.AcceptedAt = &now
+		return dao.SavePayee(row)
+	})
+}
+
+// supportWithdrawRespond 返回脱敏收款信息，不暴露密文或完整账号。
+func supportWithdrawRespond(row *models.SupportWithdraw, admin bool) map[string]any {
+	payee, err := openSupportPayee(row.PayeeCipher, row.Environment+":"+row.CreatorId)
+	result := map[string]any{"withdraw_no": row.WithdrawNo, "amount": row.Amount.StringFixed(2), "account_mask": "***", "name_mask": "***", "status": row.Status, "created_at": row.CreatedAt, "has_error": row.LastError != ""}
+	if err == nil {
+		result["account_mask"] = maskSupportPayee(payee.Account)
+		result["name_mask"] = maskSupportPayee(payee.Name)
+	}
+	if admin {
+		result["creator_id"] = row.CreatorId
+		result["last_error"] = row.LastError
+		result["channel_order_id"] = row.ChannelOrderID
+	}
+	return result
+}
+
+// writeSupportWithdrawLedger 与余额同事务记录冻结、成功或失败事件。
+func writeSupportWithdrawLedger(tx *gorm.DB, row *models.SupportWithdraw, account *models.SupportAccount, kind string, before, offset decimal.Decimal) error {
+	if err := checkSupportBalance(account); err != nil {
+		return err
+	}
+	dao := userdao.NewSupportSettlementDAO(tx)
+	if err := dao.SaveAccount(account); err != nil {
+		return err
+	}
+	return dao.CreateLedger(&models.SupportLedger{Environment: row.Environment, CreatorId: row.CreatorId, OrderNo: row.WithdrawNo, Kind: kind, Amount: row.Amount, OffsetAmount: offset, AvailableDelta: account.AvailableAmount.Sub(before), AvailableAfter: account.AvailableAmount})
+}
+
+// CreateWithdrawal 先锁余额并冻结再创建提现，同一个请求键只生成一张单。
+func (s *SupportServiceImpl) CreateWithdrawal(ctx context.Context, userId string, req userreq.SupportWithdrawRequest) (any, error) {
+	amount, err := payment.ParseAlipayAmount(req.Amount)
+	if userId == "" || err != nil || !amount.IsPositive() || len(req.RequestKey) < 8 || len(req.RequestKey) > 64 || strings.TrimSpace(req.RequestKey) != req.RequestKey {
+		return nil, fmt.Errorf("请填写有效提现金额和请求标识")
+	}
+	cfg := configs.GetConfig()
+	var result *models.SupportWithdraw
+	completed := false
+	err = supportTransaction(ctx, func(tx *gorm.DB) (err error) {
+		completed = false
+		defer func() { completed = err == nil }()
+		dao := userdao.NewSupportSettlementDAO(tx)
+		account, err := dao.LockAccount(cfg.AlipayConfig.Environment, userId)
+		if err != nil {
+			return err
+		}
+		existing, err := dao.FindWithdrawRequest(cfg.AlipayConfig.Environment, userId, req.RequestKey)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			snapshot, err := openSupportPayee(existing.PayeeCipher, existing.Environment+":"+userId)
+			if err != nil {
+				return err
+			}
+			if !existing.Amount.Equal(amount) || snapshot.AccountVersion != req.AccountVersion {
+				return fmt.Errorf("提现请求标识已用于其他金额或收款账户")
+			}
+			result = existing
+			return nil
+		}
+		user, err := userdao.NewUserInfoDAO(tx).FindUserByUuid(userId)
+		if err != nil {
+			return err
+		}
+		if user == nil || user.Status != 0 {
+			return fmt.Errorf("账号不可用")
+		}
+		if account.PayeeCipher == "" || account.AccountVersion != req.AccountVersion || account.AcceptedAt == nil {
+			return fmt.Errorf("请先确认或重新绑定收款账户")
+		}
+		if err := checkSupportBalance(account); err != nil {
+			return err
+		}
+		if account.DebtAmount.IsPositive() || amount.GreaterThan(account.AvailableAmount) {
+			return fmt.Errorf("可提现余额不足")
+		}
+		if err := payment.ValidateTransferConfig(cfg.AlipayConfig); err != nil {
+			return err
+		}
+		payee, err := openSupportPayee(account.PayeeCipher, cfg.AlipayConfig.Environment+":"+userId)
+		if err != nil {
+			return err
+		}
+		payee.AppID = cfg.AlipayConfig.AppID
+		payee.SellerID = cfg.AlipayConfig.SellerID
+		payee.AccountVersion = account.AccountVersion
+		encoded, err := sealSupportPayee(payee, cfg.AlipayConfig.Environment+":"+userId)
+		if err != nil {
+			return err
+		}
+		result = &models.SupportWithdraw{Environment: cfg.AlipayConfig.Environment, WithdrawNo: "SW" + strings.ReplaceAll(uuid.NewString(), "-", ""), CreatorId: userId, RequestKey: req.RequestKey, Amount: amount, PayeeCipher: encoded}
+		if err := dao.CreateWithdraw(result); err != nil {
+			return err
+		}
+		before := account.AvailableAmount
+		account.AvailableAmount = account.AvailableAmount.Sub(amount)
+		account.WithdrawFrozenAmount = account.WithdrawFrozenAmount.Add(amount)
+		return writeSupportWithdrawLedger(tx, result, account, constants.SupportLedgerWithdrawFreeze, before, decimal.Zero)
+	})
+	if err != nil {
+		if completed {
+			return nil, ErrSupportWithdrawalUnconfirmed
+		}
+		return nil, fmt.Errorf("申请提现失败: %w", err)
+	}
+	return supportWithdrawRespond(result, false), nil
+}
+
+// ListWithdrawals 只查询当前环境本人记录或详情。
+func (s *SupportServiceImpl) ListWithdrawals(ctx context.Context, userId string, req userreq.SupportWithdrawRequest) (any, error) {
+	if userId == "" {
+		return nil, fmt.Errorf("请先登录")
+	}
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.Page > 100000 || len(req.WithdrawNo) > 64 {
+		return nil, fmt.Errorf("提现查询参数错误")
+	}
+	dao := userdao.NewSupportSettlementDAO(db.GormDB.WithContext(ctx))
+	env := configs.GetConfig().AlipayConfig.Environment
+	if req.WithdrawNo != "" {
+		row, err := dao.FindWithdraw(env, req.WithdrawNo, false)
+		if err != nil {
+			return nil, err
+		}
+		if row == nil || row.CreatorId != userId {
+			return nil, fmt.Errorf("提现单不存在")
+		}
+		return supportWithdrawRespond(row, false), nil
+	}
+	rows, total, err := dao.ListWithdraw(env, userId, "", req.Page)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]map[string]any, 0, len(rows))
+	for i := range rows {
+		result = append(result, supportWithdrawRespond(&rows[i], false))
+	}
+	return map[string]any{"list": result, "total": total}, nil
+}
+
+// applySupportWithdrawResult 确认终态后才扣除冻结或退回金额，重复响应不重复记账。
+func applySupportWithdrawResult(ctx context.Context, row models.SupportWithdraw, result *payment.AlipayTransferResult) error {
+	if result.Code != "10000" || result.OutBizNo != row.WithdrawNo {
+		return fmt.Errorf("转账结果未确认或单号不匹配")
+	}
+	if result.Status != "SUCCESS" && result.Status != "FAIL" && result.Status != "CLOSED" {
+		return fmt.Errorf("转账仍在处理中")
+	}
+	value := result.TransAmount
+	if value == "" {
+		value = result.Amount
+	}
+	if value != "" {
+		amount, err := payment.ParseAlipayAmount(value)
+		if err != nil || !amount.Equal(row.Amount) {
+			return fmt.Errorf("转账金额不匹配，请核对原单")
+		}
+	}
+	success := result.Status == "SUCCESS"
+	if success && result.OrderID == "" {
+		return fmt.Errorf("成功转账缺少渠道单号")
+	}
+	return supportTransaction(ctx, func(tx *gorm.DB) error {
+		dao := userdao.NewSupportSettlementDAO(tx)
+		current, err := dao.FindWithdraw(row.Environment, row.WithdrawNo, true)
+		if err != nil {
+			return err
+		}
+		if current == nil {
+			return fmt.Errorf("提现单不存在")
+		}
+		if current.ChannelOrderID != nil && result.OrderID != "" && *current.ChannelOrderID != result.OrderID {
+			return fmt.Errorf("转账渠道单号不匹配")
+		}
+		if current.Status == constants.SupportWithdrawSucceeded || current.Status == constants.SupportWithdrawFailed {
+			if (current.Status == constants.SupportWithdrawSucceeded) != success {
+				return fmt.Errorf("本地与渠道提现终态不一致，请核对")
+			}
+			return nil
+		}
+		account, err := dao.LockAccount(current.Environment, current.CreatorId)
+		if err != nil {
+			return err
+		}
+		if account.WithdrawFrozenAmount.LessThan(current.Amount) {
+			return fmt.Errorf("提现冻结金额不足，请核对")
+		}
+		before := account.AvailableAmount
+		account.WithdrawFrozenAmount = account.WithdrawFrozenAmount.Sub(current.Amount)
+		kind := constants.SupportLedgerWithdrawSuccess
+		status := constants.SupportWithdrawSucceeded
+		offset := decimal.Zero
+		message := ""
+		if success {
+			account.WithdrawnAmount = account.WithdrawnAmount.Add(current.Amount)
+		} else {
+			kind = constants.SupportLedgerWithdrawFail
+			status = constants.SupportWithdrawFailed
+			message = "渠道已确认失败，金额已退回账户或抵扣欠款"
+			offset = normalizeSupportBalance(account, account.AvailableAmount.Add(account.RefundFrozenAmount).Add(current.Amount))
+		}
+		if err := writeSupportWithdrawLedger(tx, current, account, kind, before, offset); err != nil {
+			return err
+		}
+		var channelID *string
+		if result.OrderID != "" {
+			channelID = &result.OrderID
+		}
+		return dao.UpdateWithdraw(current.Id, map[string]any{"status": status, "channel_order_id": channelID, "last_error": message})
+	})
+}
+
+// querySupportWithdraw 用不可变商户及收款快照查询原单，不受后续换绑影响。
+func querySupportWithdraw(ctx context.Context, row models.SupportWithdraw) (*payment.AlipayTransferResult, payment.TransferPayee, error) {
+	cfg := configs.GetConfig().AlipayConfig
+	payee, err := openSupportPayee(row.PayeeCipher, row.Environment+":"+row.CreatorId)
+	if err != nil {
+		return nil, payee, err
+	}
+	if cfg.Environment != row.Environment || cfg.AppID != payee.AppID || cfg.SellerID != payee.SellerID {
+		return nil, payee, fmt.Errorf("当前商户与提现快照不一致，停止提交")
+	}
+	result, err := payment.AlipayTransfer(ctx, cfg, row.WithdrawNo, row.Amount.StringFixed(2), payee, true)
+	return result, payee, err
+}
+
+// processSupportWithdraw 先查单，未受理才按原号转账，网络异常保留冻结等待下次查询。
+func processSupportWithdraw(ctx context.Context, row *models.SupportWithdraw) error {
+	result, payee, err := querySupportWithdraw(ctx, *row)
+	if err != nil {
+		return err
+	}
+	if result.Code == "10000" {
+		return applySupportWithdrawResult(ctx, *row, result)
+	}
+	if result.SubCode != "ORDER_NOT_EXIST" && result.SubCode != "ORDER_NOT_EXISTS" {
+		return fmt.Errorf("渠道未确认原提现，请继续查询")
+	}
+	// 只有还持有本次处理状态的任务能提交；超过2分钟后其他进程可以恢复查询。
+	now := time.Now().Truncate(time.Millisecond)
+	if !now.After(row.UpdatedAt) {
+		now = row.UpdatedAt.Add(time.Millisecond)
+	}
+	ok, err := userdao.NewSupportSettlementDAO(db.GormDB.WithContext(ctx)).RenewWithdraw(row.Id, row.UpdatedAt, now)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("提现处理状态已变更")
+	}
+	row.UpdatedAt = now
+	result, err = payment.AlipayTransfer(ctx, configs.GetConfig().AlipayConfig, row.WithdrawNo, row.Amount.StringFixed(2), payee, false)
+	if err != nil {
+		return err
+	}
+	if result.Code != "10000" {
+		// 仅提交接口验签通过且明确拒绝的请求可以解冻；系统异常及查询失败仍保留冻结。
+		switch result.SubCode {
+		case "isv.invalid-signature", "isv.invalid-parameter", "isv.missing-parameter", "isv.insufficient-isv-permissions", "PAYEE_NOT_EXIST", "PAYEE_USER_INFO_ERROR", "PAYER_BALANCE_NOT_ENOUGH":
+			return applySupportWithdrawResult(ctx, *row, &payment.AlipayTransferResult{Code: "10000", OutBizNo: row.WithdrawNo, Status: "FAIL"})
+		}
+		return fmt.Errorf("渠道未确认转账，请继续查询原单")
+	}
+	return applySupportWithdrawResult(ctx, *row, result)
+}
+
+// scanSupportWithdrawals 沿用每分钟扫描，状态及更新时间支持重启恢复，不扫描成功单。
+func scanSupportWithdrawals(ctx context.Context) {
+	dao := userdao.NewSupportSettlementDAO(db.GormDB.WithContext(ctx))
+	rows, err := dao.ListPendingWithdraw(configs.GetConfig().AlipayConfig.Environment)
+	if err != nil {
+		zlog.Error("查询待处理提现失败: " + err.Error())
+		return
+	}
+	var workers sync.WaitGroup
+	for _, row := range rows {
+		workers.Add(1)
+		go func(row models.SupportWithdraw) {
+			defer workers.Done()
+			now := time.Now().Truncate(time.Millisecond)
+			claimed, err := dao.ClaimWithdraw(row.Id, now)
+			if err != nil {
+				zlog.Error("领取提现处理失败: " + err.Error())
+				return
+			}
+			if !claimed {
+				return
+			}
+			row.UpdatedAt = now
+			attempt, cancel := context.WithTimeout(ctx, constants.SupportOrderAttemptTimeout)
+			defer cancel()
+			if err := processSupportWithdraw(attempt, &row); err != nil {
+				message := err.Error()
+				if len([]rune(message)) > 300 {
+					message = string([]rune(message)[:300])
+				}
+				if err := dao.FinishWithdraw(row, message); err != nil {
+					zlog.Error("保存提现处理说明失败: " + err.Error())
+				}
+			}
+		}(row)
+	}
+	workers.Wait()
+}
+
+// checkSupportAccount 按需核对账户与已有订单流水，不保存额外对账字段或自动调账。
+func checkSupportAccount(ctx context.Context, id int64) (string, error) {
+	var message string
+	err := supportTransaction(ctx, func(tx *gorm.DB) error {
+		dao := userdao.NewSupportSettlementDAO(tx)
+		row, err := dao.LockExistingAccount(configs.GetConfig().AlipayConfig.Environment, id)
+		if err != nil {
+			return err
+		}
+		message, err = dao.AuditAccount(row)
+		if err != nil {
+			return err
+		}
+		if err := checkSupportBalance(row); err != nil {
+			message = err.Error()
+		}
+		return nil
+	})
+	return message, err
+}
+
+// AdminSupportSettlement 只提供提现查询和手动核对，不增加审批或独立后台核对流程。
+func AdminSupportSettlement(ctx context.Context, adminId, action, no string, id int64, page int) (any, error) {
+	conn := db.GormDB.WithContext(ctx)
+	user, err := userdao.NewUserInfoDAO(conn).FindUserByUuid(adminId)
+	if err != nil || user == nil || user.IsAdmin != 1 || user.Status != 0 {
+		return nil, fmt.Errorf("管理员账号不可用")
+	}
+	if page < 1 {
+		page = 1
+	}
+	if page > 100000 || len(no) > 64 {
+		return nil, fmt.Errorf("查询参数错误")
+	}
+	env := configs.GetConfig().AlipayConfig.Environment
+	dao := userdao.NewSupportSettlementDAO(conn)
+	switch action {
+	case "withdrawals":
+		rows, total, err := dao.ListWithdraw(env, "", no, page)
+		if err != nil {
+			return nil, err
+		}
+		list := make([]map[string]any, 0, len(rows))
+		for i := range rows {
+			list = append(list, supportWithdrawRespond(&rows[i], true))
+		}
+		return map[string]any{"list": list, "total": total}, nil
+	case "accounts":
+		rows, total, err := dao.ListAuditAccounts(env, page)
+		if err != nil {
+			return nil, err
+		}
+		list := make([]map[string]any, 0, len(rows))
+		for _, row := range rows {
+			message, err := checkSupportAccount(ctx, row.Id)
+			if err != nil {
+				return nil, err
+			}
+			list = append(list, map[string]any{"id": row.Id, "creator_id": row.CreatorId, "available_amount": row.AvailableAmount.StringFixed(2), "withdraw_frozen_amount": row.WithdrawFrozenAmount.StringFixed(2), "refund_frozen_amount": row.RefundFrozenAmount.StringFixed(2), "debt_amount": row.DebtAmount.StringFixed(2), "reconcile_error": message, "checked_at": time.Now()})
+		}
+		return map[string]any{"list": list, "total": total}, nil
+	case "reconcile":
+		if no != "" {
+			row, err := dao.FindWithdraw(env, no, false)
+			if err != nil {
+				return nil, err
+			}
+			if row == nil {
+				return nil, fmt.Errorf("提现单不存在")
+			}
+			result, _, err := querySupportWithdraw(ctx, *row)
+			if err != nil {
+				return nil, err
+			}
+			if err := applySupportWithdrawResult(ctx, *row, result); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
+		if id <= 0 {
+			return nil, fmt.Errorf("请指定账户")
+		}
+		message, err := checkSupportAccount(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"difference": message}, nil
+	default:
+		return nil, fmt.Errorf("核对操作无效")
+	}
 }

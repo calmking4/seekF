@@ -58,7 +58,8 @@ type OSSConfig struct {
 
 // SupportSettlementConfig 创作者收益分配配置，比例单位为基点。
 type SupportSettlementConfig struct {
-	PlatformRateBPS *int `toml:"platformRateBPS"`
+	PlatformRateBPS      *int   `toml:"platformRateBPS"`
+	AccountEncryptionKey string `toml:"-"`
 }
 
 // AlipayConfig 支付宝支付配置
@@ -220,6 +221,7 @@ var config *Config
 
 // loadEnvConfig 从环境变量加载敏感配置
 func loadEnvConfig(cfg *Config) {
+	cfg.SupportSettlementConfig.AccountEncryptionKey = strings.TrimSpace(os.Getenv("SUPPORT_ACCOUNT_ENCRYPTION_KEY"))
 	// 支付宝配置，密钥仅从环境变量读取。
 	if v, ok := os.LookupEnv("ALIPAY_ENVIRONMENT"); ok {
 		cfg.AlipayConfig.Environment = strings.TrimSpace(v)

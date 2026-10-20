@@ -13,6 +13,11 @@ import (
 	userservice "seekF-backend/internal/services/user_service"
 )
 
+// SupportSettlement 查询或调度资金核对，业务层再次检查管理员资格。
+func (s *AdminService) SupportSettlement(ctx context.Context, adminId, action, no string, id int64, page int) (any, error) {
+	return userservice.AdminSupportSettlement(ctx, adminId, action, no, id, page)
+}
+
 // ListSupportOrders 分页查询当前环境的订单及退款申请。
 func (s *AdminService) ListSupportOrders(ctx context.Context, orderNo string, status *int8, page int) (any, error) {
 	if page < 1 {

@@ -70,6 +70,9 @@ func SetupRouter(
 	adminGroup.GET("/overview", adminController.Overview)
 	adminGroup.GET("/system", adminController.System)
 	adminGroup.POST("/support/orders", adminController.ListSupportOrders)
+	adminGroup.POST("/support/withdrawals", adminController.SupportWithdrawals)
+	adminGroup.POST("/support/accounts", adminController.SupportAccounts)
+	adminGroup.POST("/support/reconcile", adminController.ReconcileSupportSettlement)
 	adminGroup.POST("/support/refund/review", adminController.ReviewSupportRefund)
 
 	// 用户端接口
@@ -193,6 +196,10 @@ func SetupRouter(
 			protectedGroup.POST("/discover/collected-list", discoverController.ListCollectedPosts)
 			// 创作者助力
 			protectedGroup.POST("/support/settlement/summary", supportController.SettlementSummary)
+			protectedGroup.POST("/support/settlement/account", supportController.SettlementAccount)
+			protectedGroup.POST("/support/settlement/bind", supportController.BindSettlementAccount)
+			protectedGroup.POST("/support/withdraw/create", supportController.CreateWithdrawal)
+			protectedGroup.POST("/support/withdraw/list", supportController.ListWithdrawals)
 			protectedGroup.POST("/support/settlement/ledger", supportController.SettlementLedger)
 			protectedGroup.POST("/support/creator/info", supportController.GetCreator)
 			protectedGroup.POST("/support/creator/save", supportController.SaveActivate)

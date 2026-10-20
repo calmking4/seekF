@@ -8,6 +8,9 @@ import (
 
 // SupportAccount 创作者按环境隔离的收益账户，所有金额单位为元。
 type SupportAccount struct {
+	PayeeCipher          string          `gorm:"column:payee_cipher;type:text;comment:支付宝收款账号及姓名AES-GCM密文，不存明文"`
+	AccountVersion       int64           `gorm:"column:account_version;not null;default:0;comment:收款账号版本，换绑递增，不修改既有提现快照"`
+	AcceptedAt           *time.Time      `gorm:"column:accepted_at;type:datetime(3);comment:本人确认收款及退款抵扣规则的时间"`
 	Id                   int64           `gorm:"column:id;primaryKey;comment:自增ID"`
 	Environment          string          `gorm:"column:environment;type:varchar(16);not null;uniqueIndex:uk_support_account,priority:1;comment:支付环境，sandbox沙箱，production正式"`
 	CreatorId            string          `gorm:"column:creator_id;type:char(20);not null;uniqueIndex:uk_support_account,priority:2;comment:创作者用户UUID"`

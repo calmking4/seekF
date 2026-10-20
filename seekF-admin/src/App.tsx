@@ -1,3 +1,4 @@
+import { SettlementPage } from "./SettlementPage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
@@ -206,6 +207,7 @@ function Console({ user, onLogout }: { user: Identity; onLogout: () => void }) {
             { path: "/", title: "系统概览", icon: LayoutDashboard },
             { path: "/observability", title: "可观测性", icon: Activity },
             { path: "/support", title: "助力订单与退款", icon: ShieldCheck },
+            { path: "/settlement", title: "收益与提现核对", icon: ShieldCheck },
           ].map((item) => (
             <NavLink
               end={item.path === "/"}
@@ -289,7 +291,7 @@ function Console({ user, onLogout }: { user: Identity; onLogout: () => void }) {
               <span className="text-slate-400">管理控制台</span>
               <span className="text-slate-300">/</span>
               <span className="font-medium text-slate-600">
-                {location.pathname === "/support" ? "助力订单与退款" : location.pathname === "/observability"
+                {location.pathname === "/settlement" ? "收益与提现核对" : location.pathname === "/support" ? "助力订单与退款" : location.pathname === "/observability"
                   ? "可观测性"
                   : "系统概览"}
               </span>
@@ -327,6 +329,7 @@ function Console({ user, onLogout }: { user: Identity; onLogout: () => void }) {
               element={<ObservabilityPage system={system} />}
             />
             <Route path="/support" element={<SupportPage />} />
+            <Route path="/settlement" element={<SettlementPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 pt-6 text-[11px] text-slate-400">
