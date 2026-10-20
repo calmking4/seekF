@@ -22,6 +22,7 @@ import { clock, ErrorNotice, Spinner, ToolLink } from "./components";
 import Login from "./Login";
 import OverviewPage from "./OverviewPage";
 import SupportPage from "./SupportPage";
+import PostReviewPage from "./PostReviewPage";
 import ObservabilityPage from "./ObservabilityPage";
 import type { Identity, Overview, System } from "./types";
 
@@ -208,6 +209,7 @@ function Console({ user, onLogout }: { user: Identity; onLogout: () => void }) {
             { path: "/observability", title: "可观测性", icon: Activity },
             { path: "/support", title: "助力订单与退款", icon: ShieldCheck },
             { path: "/settlement", title: "收益与提现核对", icon: ShieldCheck },
+            { path: "/posts", title: "帖子审核", icon: ShieldCheck },
           ].map((item) => (
             <NavLink
               end={item.path === "/"}
@@ -291,7 +293,7 @@ function Console({ user, onLogout }: { user: Identity; onLogout: () => void }) {
               <span className="text-slate-400">管理控制台</span>
               <span className="text-slate-300">/</span>
               <span className="font-medium text-slate-600">
-                {location.pathname === "/settlement" ? "收益与提现核对" : location.pathname === "/support" ? "助力订单与退款" : location.pathname === "/observability"
+                {location.pathname === "/posts" ? "帖子审核" : location.pathname === "/settlement" ? "收益与提现核对" : location.pathname === "/support" ? "助力订单与退款" : location.pathname === "/observability"
                   ? "可观测性"
                   : "系统概览"}
               </span>
@@ -330,6 +332,7 @@ function Console({ user, onLogout }: { user: Identity; onLogout: () => void }) {
             />
             <Route path="/support" element={<SupportPage />} />
             <Route path="/settlement" element={<SettlementPage />} />
+            <Route path="/posts" element={<PostReviewPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 pt-6 text-[11px] text-slate-400">

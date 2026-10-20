@@ -37,7 +37,7 @@ func (d *DiscoverOutboxDAO) Create(post *models.DiscoverPost, distribute bool) e
 	if !distribute {
 		return nil
 	}
-	// 仅Service确定的新公开帖子创建关注分发任务，编辑与历史内容由读取补查。
+	// 仅业务确认可公开发布的帖子创建关注分发任务，待审及下架只同步搜索状态。
 	event.Id = 0
 	event.Target = constants.DiscoverTargetFeed
 	return d.db.Create(&event).Error

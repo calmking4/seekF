@@ -909,8 +909,8 @@ const handlePublish = async () => {
     const response = await useApi$(editingId.value ? '/user/discover/update' : '/user/discover/create', { body: { ...body, request_key: requestKey.value, ...(editingId.value ? { post_uuid: editingId.value } : {}), version: editingVersion.value }, retry: 0 })
     if (response.code !== 200) throw new Error(response.message || '保存失败')
     if (draftId.value) clearDiscoverDraft(draftId.value)
-    ElMessage.success(editingId.value ? '作品已更新' : '发布成功')
-    await navigateTo('/discover/manage')
+    ElMessage.success('作品已提交，请等待管理员审核')
+    await navigateTo('/discover/manage?status=2')
   } catch (error) { ElMessage.error(error?.data?.message || error.message || '保存失败，输入已保留') }
   finally { publishing.value = false }
 }
