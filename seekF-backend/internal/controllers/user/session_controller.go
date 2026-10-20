@@ -15,6 +15,40 @@ type SessionController struct {
 	sessionService userservice.SessionService
 }
 
+// Unread 获取当前用户的私聊未读统计。
+func (c *SessionController) Unread(ctx *gin.Context) {
+	userId, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+	result, err := c.sessionService.GetUnreadSessions(userId.(string))
+	if err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+	resp.Success(ctx, "获取成功", result)
+}
+
+// Read 标记当前用户已展示的私聊消息为已读。
+func (c *SessionController) Read(ctx *gin.Context) {
+	userId, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+	var request userreq.SessionReadRequest
+	if err := ctx.ShouldBindJSON(&request); err != nil {
+		resp.Error(ctx, "会话编号或已读消息边界无效", http.StatusBadRequest)
+		return
+	}
+	if err := c.sessionService.ReadSession(ctx.Request.Context(), userId.(string), request.SessionId, request.MessageId); err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+	resp.Success(ctx, "标记已读成功", nil)
+}
+
 func NewSessionController(sessionService userservice.SessionService) *SessionController {
 	return &SessionController{
 		sessionService: sessionService,

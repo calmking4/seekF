@@ -150,12 +150,13 @@
                 class="liked-card fade-in bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow cursor-pointer"
                 @click="handleCollectedItemClick(item)"
               >
-                <div class="w-full h-48 bg-gray-100">
+                <div class="relative w-full h-48 bg-gray-100">
                   <div v-if="item.is_blocked_by" class="flex h-full flex-col items-center justify-center gap-2 text-gray-400"><Icon name="mdi:account-lock-outline" class="text-3xl" /><span class="text-xs">内容暂不可见</span></div>
                   <img v-else-if="item.first_url" :src="item.first_url" :alt="item.title" class="w-full h-full object-cover" />
                   <div v-else class="w-full h-full flex items-center justify-center text-gray-400">
                     <Icon name="uil:image" class="text-3xl" />
                   </div>
+                  <span v-if="item.support_only === 1" class="pointer-events-none absolute right-2 top-2 inline-flex h-6 items-center justify-center gap-1 rounded-md bg-[#60A5FA] pl-1.5 pr-2 text-xs font-semibold text-white"><Icon name="mdi:lightning-bolt" class="block shrink-0 text-base" aria-hidden="true" /><span class="block leading-none">{{ discoverSupportLabel(item) }}</span></span>
                 </div>
                 <div class="p-3">
                   <h3 class="text-sm font-medium line-clamp-2 mb-2">{{ item.title }}</h3>
@@ -205,7 +206,7 @@
                 @click="handleLikedItemClick(item)"
               >
                 <!-- 图片 -->
-                <div class="w-full h-48 bg-gray-100">
+                <div class="relative w-full h-48 bg-gray-100">
                   <div v-if="item.is_blocked_by" class="flex h-full flex-col items-center justify-center gap-2 text-gray-400"><Icon name="mdi:account-lock-outline" class="text-3xl" /><span class="text-xs">内容暂不可见</span></div>
                   <img
                     v-else-if="item.first_url"
@@ -216,6 +217,7 @@
                   <div v-else class="w-full h-full flex items-center justify-center text-gray-400">
                     <Icon name="uil:image" class="text-3xl" />
                   </div>
+                  <span v-if="item.support_only === 1" class="pointer-events-none absolute right-2 top-2 inline-flex h-6 items-center justify-center gap-1 rounded-md bg-[#60A5FA] pl-1.5 pr-2 text-xs font-semibold text-white"><Icon name="mdi:lightning-bolt" class="block shrink-0 text-base" aria-hidden="true" /><span class="block leading-none">{{ discoverSupportLabel(item) }}</span></span>
                 </div>
                 <!-- 内容 -->
                 <div class="p-3">
@@ -377,6 +379,7 @@
 import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { useApi$ } from '~/composables/useApi'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { discoverSupportLabel } from '~/utils/discover'
 
 // 页面级 SEO
 useSeoMeta({

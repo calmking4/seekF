@@ -6,7 +6,7 @@
       <video v-else-if="post.type === 'video' && post.src && !mediaFailed" :src="post.src" class="h-full w-full object-cover" preload="metadata" muted playsinline @error="mediaFailed = true" />
       <div v-else class="flex h-full items-center justify-center text-gray-400"><Icon name="mdi:image-outline" class="text-3xl" /><span class="sr-only">媒体暂时无法显示</span></div>
       <span v-if="post.type === 'video'" aria-hidden="true" class="pointer-events-none absolute right-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/40 text-white" :class="post.support_only === 1 ? 'bottom-2' : 'top-2'"><Icon name="mdi:play" class="text-base" /></span>
-      <span v-if="post.support_only === 1" class="pointer-events-none absolute right-2 top-2 inline-flex h-6 items-center justify-center gap-1 rounded-md bg-[#60A5FA] pl-1.5 pr-2 text-xs font-semibold text-white"><Icon name="mdi:lightning-bolt" class="block shrink-0 text-base" aria-hidden="true" /><span class="block leading-none">助力专属</span></span>
+      <span v-if="post.support_only === 1" class="pointer-events-none absolute right-2 top-2 inline-flex h-6 items-center justify-center gap-1 rounded-md bg-[#60A5FA] pl-1.5 pr-2 text-xs font-semibold text-white"><Icon name="mdi:lightning-bolt" class="block shrink-0 text-base" aria-hidden="true" /><span class="block leading-none">{{ discoverSupportLabel(post) }}</span></span>
     </button>
     <div class="p-3">
       <button type="button" class="text-sm font-medium line-clamp-2 mb-2 block w-full text-left focus-visible:outline-blue-500" @click.stop="openPost"><span class="line-clamp-2">{{ post.title }}</span></button>
@@ -39,7 +39,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { discoverAspectRatio } from '~/utils/discover'
+import { discoverAspectRatio, discoverSupportLabel } from '~/utils/discover'
 const props = defineProps({ post: { type: Object, required: true }, feedbackEnabled: { type: Boolean, default: false }, source: { type: String, default: 'profile' } })
 const emit = defineEmits(['open', 'like-updated', 'feedback'])
 const { setLike, isPending } = useDiscoverLike()

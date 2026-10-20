@@ -29,6 +29,10 @@ type OpenSessionResult struct {
 }
 
 type SessionService interface {
+	// 获取本人有效私聊会话的未读数。
+	GetUnreadSessions(userId string) (*userresp.SessionUnreadRespond, error)
+	// 校验实际入站消息后单调推进已读边界。
+	ReadSession(ctx context.Context, userId string, sessionId string, messageId int64) error
 	// 锁定双方用户并复核拉黑状态后保存私信。
 	SavePrivateMessage(ctx context.Context, message *models.Message) error
 	OpenSession(sendId string, receiveId string) (string, error)
@@ -37,6 +41,51 @@ type SessionService interface {
 	GetSessionList(userId string) ([]userresp.GetSessionListRespond, error)
 	DeleteSession(userId string, sessionId string) error
 	CheckOpenSessionAllowed(sendId string, receiveId string) (bool, error)
+}
+
+// GetUnreadSessions 获取私聊未读统计，不读取会话列表缓存，避免返回过期计数。
+func (s *SessionServiceImpl) GetUnreadSessions(userId string) (*userresp.SessionUnreadRespond, error) {
+	rows, err := s.sessionDAO.GetUnreadSessions(userId)
+	if err != nil {
+		return nil, fmt.Errorf("查询私聊未读数失败: %w", err)
+	}
+	result := &userresp.SessionUnreadRespond{List: make([]userresp.SessionUnreadItem, 0, len(rows))}
+	for _, row := range rows {
+		result.List = append(result.List, userresp.SessionUnreadItem{SessionId: row.SessionId, PeerId: row.PeerId, UnreadCount: row.UnreadCount, LatestMessageId: row.LatestMessageId, LastReadMessageId: row.LastReadMessageId})
+		result.Total += row.UnreadCount
+	}
+	return result, nil
+}
+
+// ReadSession 在事务内锁定本人会话并核验消息范围，只确认客户端实际展示的边界。
+func (s *SessionServiceImpl) ReadSession(ctx context.Context, userId string, sessionId string, messageId int64) error {
+	if sessionId == "" || messageId <= 0 {
+		return fmt.Errorf("已读会话或消息边界无效")
+	}
+	return db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		dao := userdao.NewSessionDAO(tx)
+		session, err := dao.GetOwnedSessionForUpdate(userId, sessionId)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("私聊会话不存在或无权访问")
+		}
+		if err != nil {
+			return fmt.Errorf("查询私聊会话失败: %w", err)
+		}
+		if !strings.HasPrefix(session.ReceiveId, "U") {
+			return fmt.Errorf("只能标记用户私聊为已读")
+		}
+		valid, err := dao.HasIncomingMessage(userId, session.ReceiveId, messageId)
+		if err != nil {
+			return fmt.Errorf("核验私聊已读消息失败: %w", err)
+		}
+		if !valid {
+			return fmt.Errorf("已读消息不属于该会话的入站私信")
+		}
+		if err := dao.AdvanceRead(userId, sessionId, messageId); err != nil {
+			return fmt.Errorf("更新私聊阅读进度失败: %w", err)
+		}
+		return nil
+	})
 }
 
 // SavePrivateMessage 与拉黑操作采用相同用户锁顺序，防止校验后并发拉黑仍写入新私信。
@@ -227,9 +276,9 @@ func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessio
 
 // DeleteSession 删除会话
 func (s *SessionServiceImpl) DeleteSession(userId string, sessionId string) error {
-	// 从数据库中删除会话
-	if err := s.sessionDAO.DeleteSession(sessionId); err != nil {
-		zlog.Error(err.Error())
+	// 仅软删除本人私聊会话，保留对方会话和历史消息。
+	if err := s.sessionDAO.DeleteSession(userId, sessionId); err != nil {
+		zlog.Error("删除私聊会话失败，用户=" + userId + "，会话=" + sessionId + ": " + err.Error())
 		return fmt.Errorf("系统错误")
 	}
 

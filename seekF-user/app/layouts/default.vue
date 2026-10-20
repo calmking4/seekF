@@ -34,6 +34,7 @@
             >
               {{ unreadCount > 99 ? '99+' : unreadCount }}
             </span>
+            <span v-if="item.path === '/chat' && totalUnread > 0" class="absolute -top-1 -right-2 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white" :aria-label="`${totalUnread}条未读私信`">{{ totalUnread > 99 ? '99+' : totalUnread }}</span>
           </div>
           <span class="font-medium">{{ item.label }}</span>
         </NuxtLink>
@@ -69,6 +70,19 @@ const ws = useWebSocket()
 
 // 引入通知未读数
 const { unreadCount, fetchUnreadCount } = useNotification()
+const { ownerId, totalUnread, refreshUnread, resetUnread } = useChatUnread()
+let unreadTimer = null
+let stopUnreadMessages = null
+
+// refreshVisibleUnread 页面重新可见或轮询时补偿离线、重连和跨标签页的未读状态。
+const refreshVisibleUnread = () => {
+  if (document.visibilityState === 'visible') refreshUnread()
+}
+
+watch(ownerId, () => {
+  resetUnread()
+  if (import.meta.client && ownerId.value) refreshUnread()
+})
 
 // 导航栏引用和指示器位置
 const navRef = ref(null)
@@ -162,6 +176,20 @@ onMounted(async () => {
 
   // 获取通知未读数
   fetchUnreadCount()
+  refreshUnread()
+  stopUnreadMessages = ws.onMessage(data => {
+    if ((data?.type === 0 || data?.type === 2) && data.receive_id === ownerId.value && data.send_id?.startsWith('U')) refreshUnread()
+  })
+  unreadTimer = setInterval(refreshVisibleUnread, 15000)
+  document.addEventListener('visibilitychange', refreshVisibleUnread)
+  window.addEventListener('focus', refreshVisibleUnread)
+})
+
+onUnmounted(() => {
+  clearInterval(unreadTimer)
+  stopUnreadMessages?.()
+  document.removeEventListener('visibilitychange', refreshVisibleUnread)
+  window.removeEventListener('focus', refreshVisibleUnread)
 })
 
 const logout = async () => {

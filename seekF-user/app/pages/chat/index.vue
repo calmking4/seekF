@@ -12,10 +12,11 @@
         <div v-if="chatList.length === 0" class="p-8 text-center text-gray-400">
           暂无会话
         </div>
+        <TransitionGroup name="session-list" tag="div" class="relative">
         <div
           v-for="(item, index) in chatList"
           :key="item.sessionId"
-          class="flex items-center gap-3 px-3 py-3 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100"
+          class="group/session relative flex items-center gap-3 overflow-hidden px-3 py-3 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100"
           :class="{ 'bg-gray-100': activeIndex === index }"
           @click="selectSession(index)"
         >
@@ -31,15 +32,20 @@
               <div class="flex items-center gap-2">
                 <h3 class="font-medium text-sm truncate">{{ item.name }}</h3>
               </div>
-              <span class="text-xs text-gray-400">{{ item.time }}</span>
+              <span class="text-xs text-gray-400 transition-transform duration-200 group-hover/session:-translate-x-9 group-focus-within/session:-translate-x-9 motion-reduce:transition-none">{{ item.time }}</span>
             </div>
             <p class="text-xs text-gray-500 truncate">{{ item.lastMsg }}</p>
           </div>
           <!-- 未读红点 -->
-          <div v-if="item.unread" class="w-5 h-5 rounded-full bg-red-500 text-white text-xs flex items-center justify-center">
-            {{ item.unread }}
+          <div v-if="unreadFor(item.sessionId)" class="h-5 min-w-[20px] shrink-0 rounded-full bg-red-500 px-1 text-white text-xs flex items-center justify-center transition-transform duration-200 group-hover/session:-translate-x-9 group-focus-within/session:-translate-x-9 motion-reduce:transition-none" :aria-label="`${unreadFor(item.sessionId)}条未读消息`">
+            {{ unreadFor(item.sessionId) > 99 ? '99+' : unreadFor(item.sessionId) }}
           </div>
+          <button type="button" :aria-label="`删除与${item.name || '用户'}的会话`" title="删除会话" :disabled="deletingSessions.has(item.sessionId)" :aria-busy="deletingSessions.has(item.sessionId)" class="pointer-events-none absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 translate-x-4 items-center justify-center text-gray-400 opacity-0 transition-[transform,opacity,color] duration-200 ease-out hover:text-gray-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400 group-hover/session:pointer-events-auto group-hover/session:translate-x-0 group-hover/session:opacity-100 group-focus-within/session:pointer-events-auto group-focus-within/session:translate-x-0 group-focus-within/session:opacity-100 disabled:cursor-wait motion-reduce:transition-none [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:translate-x-0 [@media(hover:none)]:opacity-100" @click.stop="deleteSession(item)">
+            <svg v-if="!deletingSessions.has(item.sessionId)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="h-4 w-4" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+            <AccountStatusIcon v-else loading class="text-sm" />
+          </button>
         </div>
+        </TransitionGroup>
       </div>
     </aside>
 
@@ -225,6 +231,8 @@ const route = useRoute()
 const router = useRouter()
 
 const ws = useWebSocket()
+const { ownerId: unreadOwnerId, unreadFor, unreadRevision, refreshUnread, removeUnreadSession, markRead } = useChatUnread()
+const chatPageActive = ref(true)
 
 const currentUserAvatar = ref('')
 const currentUserId = ref('')
@@ -232,6 +240,9 @@ const currentUserId = ref('')
 const chatList = ref([])
 const activeIndex = ref(-1)
 const messageList = ref([])
+const deletingSessions = ref(new Set())
+let messageRequestVersion = 0
+let sessionListVersion = 0
 const inputMessage = ref('')
 const pendingImages = ref([]) // 待发送的图片列表
 
@@ -409,8 +420,10 @@ const getCurrentUserInfo = async () => {
 }
 
 const loadSessionList = async () => {
+  const version = sessionListVersion
   try {
     const data = await useApi$('/user/session/getSessionList', { method: 'POST' })
+    if (chatDisposed || version !== sessionListVersion) return
     if (data?.code === 200) {
       const sessions = (data.data || []).filter(session => session.id?.startsWith('U'))
       const selectedId = currentChat.value?.id
@@ -421,7 +434,6 @@ const loadSessionList = async () => {
         avatar: session.avatar,
         lastMsg: session.last_message || '点击开始聊天',
         time: session.last_message_at || '',
-        unread: 0
       }))
 
       activeIndex.value = chatList.value.findIndex(item => item.id === selectedId)
@@ -461,7 +473,41 @@ const selectSessionByParams = (sessionId, receiveId) => {
   }
 }
 
+// deleteSession 删除本人列表中的会话，保留消息记录并维持其他会话的选中状态。
+const deleteSession = async (item) => {
+  const sessionId = item.sessionId
+  const owner = currentUserId.value
+  if (!sessionId || deletingSessions.value.has(sessionId)) return
+  deletingSessions.value.add(sessionId)
+  try {
+    const res = await useApi$('/user/session/deleteSession', { body: { session_id: sessionId } })
+    if (chatDisposed || owner !== currentUserId.value) return
+    if (res.code !== 200) throw new Error(res.message || '删除会话失败')
+    const selected = currentChat.value?.sessionId
+    sessionListVersion++
+    chatList.value = chatList.value.filter(session => session.sessionId !== sessionId)
+    removeUnreadSession(sessionId)
+    refreshUnread()
+    activeIndex.value = chatList.value.findIndex(session => session.sessionId === selected)
+    if (selected === sessionId) {
+      messageRequestVersion++
+      messageList.value = []
+      currentPage.value = 1
+      hasMore.value = false
+      loadingMore.value = false
+      inputMessage.value = ''
+      pendingImages.value.forEach(image => URL.revokeObjectURL(image.preview))
+      pendingImages.value = []
+    }
+  } catch (error) {
+    if (!chatDisposed && owner === currentUserId.value) ElMessage.error(error.message || '删除会话失败，请重试')
+  } finally {
+    deletingSessions.value.delete(sessionId)
+  }
+}
+
 const selectSession = async (index) => {
+  const version = ++messageRequestVersion
   activeIndex.value = index
   const session = chatList.value[index]
   if (!session) return
@@ -472,6 +518,7 @@ const selectSession = async (index) => {
   messageList.value = []
 
   await loadMessageList(session.id)
+  if (version !== messageRequestVersion) return
   scrollToBottom()
 
   if (route.query.session_id || route.query.receive_id || route.query.userId) {
@@ -480,6 +527,7 @@ const selectSession = async (index) => {
 }
 
 const loadMessageList = async (receiveId, page = 1) => {
+  const version = messageRequestVersion
   try {
     if (!receiveId) return
 
@@ -488,6 +536,7 @@ const loadMessageList = async (receiveId, page = 1) => {
       body: { user_one_id: currentUserId.value, user_two_id: receiveId, page, page_size: pageSize }
     })
 
+    if (chatDisposed || version !== messageRequestVersion) return
     if (data?.code === 200) {
       const list = data.data?.list || []
       totalMessages.value = data.data?.total || 0
@@ -498,6 +547,7 @@ const loadMessageList = async (receiveId, page = 1) => {
         const messageContent = isFileMsg ? (msg.url || msg.content) : msg.content
         return {
           messageId: msg.uuid || msg.messageId,
+          readId: msg.id || '0',
           content: messageContent,
           senderName: msg.send_name || msg.senderName,
           avatar: msg.send_avatar || msg.avatar,
@@ -514,6 +564,7 @@ const loadMessageList = async (receiveId, page = 1) => {
       }
 
       hasMore.value = messageList.value.length < totalMessages.value
+      nextTick(markCurrentChatRead)
     }
   } catch (error) {
     console.error('获取消息列表失败:', error)
@@ -522,14 +573,17 @@ const loadMessageList = async (receiveId, page = 1) => {
 
 const loadMoreMessages = async () => {
   if (loadingMore.value || !hasMore.value) return
+  const version = messageRequestVersion
   loadingMore.value = true
 
   const oldScrollHeight = scrollbarRef.value?.wrapRef?.scrollHeight || 0
 
   currentPage.value++
   await loadMessageList(currentChat.value.id, currentPage.value)
+  if (version !== messageRequestVersion) return
 
   nextTick(() => {
+    if (version !== messageRequestVersion) return
     if (scrollbarRef.value?.wrapRef) {
       const newScrollHeight = scrollbarRef.value.wrapRef.scrollHeight
       scrollbarRef.value.setScrollTop(newScrollHeight - oldScrollHeight)
@@ -793,6 +847,7 @@ const handleWebSocketMessage = (data) => {
     const messageContent = data.type === 2 ? data.url : data.content
     const realMessage = {
       messageId: data.uuid,
+      readId: data.id || '0',
       animateEntrance: true,
       content: messageContent,
       senderName: data.send_name,
@@ -816,6 +871,7 @@ const handleWebSocketMessage = (data) => {
     }
 
     scrollToBottom(true)
+    nextTick(markCurrentChatRead)
   } else {
     console.log('不是当前会话，更新会话列表')
     const sessionIndex = chatList.value.findIndex(item => item.id === peerId)
@@ -824,7 +880,6 @@ const handleWebSocketMessage = (data) => {
     const lastMsg = data.type === 2 ? '[图片]' : data.content
 
     if (sessionIndex !== -1) {
-      chatList.value[sessionIndex].unread++
       chatList.value[sessionIndex].lastMsg = lastMsg
       chatList.value[sessionIndex].time = '刚刚'
       // 将会话移到顶部
@@ -860,6 +915,7 @@ watch(() => route.query.userId, (userId) => {
 })
 
 onMounted(async () => {
+  document.addEventListener('visibilitychange', handleChatVisibility)
   await getCurrentUserInfo()
   await loadSessionList()
   await openPrivateChat(route.query.userId)
@@ -867,14 +923,47 @@ onMounted(async () => {
   ws.onMessage(handleWebSocketMessage)
 })
 
+// markCurrentChatRead 仅在聊天页可见且消息已经加载时确认实际入站消息的最大边界。
+const markCurrentChatRead = () => {
+  if (chatDisposed || currentUserId.value !== unreadOwnerId.value || !chatPageActive.value || route.path !== '/chat' || document.visibilityState !== 'visible' || !currentChat.value) return
+  const boundary = messageList.value.reduce((max, message) => !message.isSelf && BigInt(message.readId || '0') > BigInt(max) ? message.readId : max, '0')
+  markRead(currentChat.value.sessionId, boundary)
+}
+
+// handleChatVisibility 窗口恢复可见后确认已展示的消息。
+const handleChatVisibility = () => {
+  if (document.visibilityState === 'visible') nextTick(markCurrentChatRead)
+}
+
+watch(unreadRevision, () => nextTick(markCurrentChatRead))
+onActivated(() => {
+  chatPageActive.value = true
+  refreshUnread()
+  nextTick(markCurrentChatRead)
+})
+onDeactivated(() => { chatPageActive.value = false })
+
 onUnmounted(() => {
   chatDisposed = true
   blockStatusRequest++
   ws.removeMessageCallback(handleWebSocketMessage)
+  document.removeEventListener('visibilitychange', handleChatVisibility)
 })
 </script>
 
 <style scoped>
+/* 删除时保留离场行的位置，其余会话平滑补位，按钮本身使用工具类完成滑入。 */
+.session-list-move,
+.session-list-leave-active {
+  transition: transform 0.22s ease, opacity 0.18s ease;
+}
+.session-list-leave-active { position: absolute; width: 100%; pointer-events: none; }
+.session-list-leave-to { opacity: 0; transform: translateX(-12px); }
+@media (prefers-reduced-motion: reduce) {
+  .session-list-move,
+  .session-list-leave-active { transition: none; }
+}
+
 /* 整条消息统一淡入，不缩放文字或回弹；只改变合成属性，不参与布局计算。 */
 .chat-message-enter {
   animation: message-arrive 0.24s cubic-bezier(0.22, 1, 0.36, 1) backwards;

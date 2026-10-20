@@ -15,6 +15,12 @@ export function normalizeDiscoverPost(post) {
   }
 }
 
+// 仅有效助力权益显示已助力，作者自身的观看权限不代表购买过权益。
+export function discoverSupportLabel(post) {
+  const expiresAt = Date.parse(post.support_expires_at || '')
+  return post.can_play === true && expiresAt > Date.now() ? '已助力' : '助力专属'
+}
+
 // 未知尺寸使用稳定比例，长图限制在 3:4，视频默认 16:9。
 export function discoverAspectRatio(post) {
   const ratio = post.width > 0 && post.height > 0 ? post.width / post.height : (post.type === 'video' ? 16 / 9 : 4 / 3)

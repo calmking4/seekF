@@ -2,7 +2,8 @@ package userresp
 
 // GetMessageListRespond 表示历史记录与实时投递的聊天消息。
 type GetMessageListRespond struct {
-	Uuid       string `json:"uuid"` // 消息唯一编号，用于历史记录和实时回显去重。
+	Id         int64  `json:"id,string"` // 消息主键，供客户端确认已展示的入站私信边界。
+	Uuid       string `json:"uuid"`      // 消息唯一编号，用于历史记录和实时回显去重。
 	SessionId  string `json:"session_id"`
 	SendId     string `json:"send_id"`
 	SendName   string `json:"send_name"`

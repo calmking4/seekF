@@ -6,15 +6,25 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // SessionDAO 会话DAO接口
 type SessionDAO interface {
+	// 查询本人未删除私聊会话的未读数及消息边界。
+	GetUnreadSessions(userId string) ([]SessionUnreadRow, error)
+	// 锁定当前用户拥有的未删除会话。
+	GetOwnedSessionForUpdate(userId string, sessionId string) (models.Session, error)
+	// 验证阅读边界是该会话中的入站私信。
+	HasIncomingMessage(userId string, peerId string, messageId int64) (bool, error)
+	// 单调推进本人会话的阅读边界。
+	AdvanceRead(userId string, sessionId string, messageId int64) error
 	GetSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error)
 	GetDeletedSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error)
 	RestoreSession(sessionId string) error
 	CreateSession(session *models.Session) error
-	DeleteSession(sessionId string) error
+	// 软删除当前用户拥有的私聊会话，保留消息记录。
+	DeleteSession(userId string, sessionId string) error
 	GetSessionListBySendId(userId string) ([]models.Session, error)
 	GetSessionByUuid(uuid string) (models.Session, error)
 	UpdateSessionLastMessage(sessionId string, lastMessage string, lastMessageAt time.Time) error
@@ -24,6 +34,46 @@ type SessionDAO interface {
 	GetAISessionByUuid(uuid string) (*models.Session, error)
 	DeleteAISession(uuid string) error
 	UpdateSessionFirstMessage(sessionId string, firstMessage string) error
+}
+
+// SessionUnreadRow 私聊会话未读聚合结果，不作为数据库表模型。
+type SessionUnreadRow struct {
+	SessionId         string
+	PeerId            string
+	UnreadCount       int64
+	LatestMessageId   int64
+	LastReadMessageId int64
+}
+
+// GetUnreadSessions 在同一查询快照内统计本人私聊会话的入站消息和未读数。
+func (d *SessionDAOImpl) GetUnreadSessions(userId string) ([]SessionUnreadRow, error) {
+	rows := make([]SessionUnreadRow, 0)
+	err := d.db.Table("session AS s").Select(`s.uuid AS session_id, s.receive_id AS peer_id,
+		s.last_read_message_id, COALESCE(MAX(m.id), 0) AS latest_message_id,
+		COALESCE(SUM(CASE WHEN m.id > s.last_read_message_id THEN 1 ELSE 0 END), 0) AS unread_count`).
+		Joins("LEFT JOIN message AS m ON m.send_id = s.receive_id AND m.receive_id = s.send_id AND m.type IN (0, 2)").
+		Where("s.send_id = ? AND s.receive_id LIKE ? AND s.deleted_at IS NULL", userId, "U%").
+		Group("s.uuid, s.receive_id, s.last_read_message_id").Scan(&rows).Error
+	return rows, err
+}
+
+// GetOwnedSessionForUpdate 锁定本人会话，串行处理已读确认和删除。
+func (d *SessionDAOImpl) GetOwnedSessionForUpdate(userId string, sessionId string) (models.Session, error) {
+	var session models.Session
+	err := d.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ? AND send_id = ?", sessionId, userId).First(&session).Error
+	return session, err
+}
+
+// HasIncomingMessage 校验指定主键属于当前私聊的文字或文件入站消息。
+func (d *SessionDAOImpl) HasIncomingMessage(userId string, peerId string, messageId int64) (bool, error) {
+	var count int64
+	err := d.db.Model(&models.Message{}).Where("id = ? AND send_id = ? AND receive_id = ? AND type IN (0, 2)", messageId, peerId, userId).Count(&count).Error
+	return count > 0, err
+}
+
+// AdvanceRead 通过条件更新保证重复或乱序的确认不会使阅读进度倒退。
+func (d *SessionDAOImpl) AdvanceRead(userId string, sessionId string, messageId int64) error {
+	return d.db.Model(&models.Session{}).Where("uuid = ? AND send_id = ? AND last_read_message_id < ?", sessionId, userId, messageId).Update("last_read_message_id", messageId).Error
 }
 
 type SessionDAOImpl struct {
@@ -60,9 +110,9 @@ func (d *SessionDAOImpl) CreateSession(session *models.Session) error {
 	return result.Error
 }
 
-// DeleteSession 删除会话
-func (d *SessionDAOImpl) DeleteSession(sessionId string) error {
-	result := d.db.Delete(&models.Session{}, "uuid = ?", sessionId)
+// DeleteSession 按归属软删除私聊会话，重复删除保持幂等。
+func (d *SessionDAOImpl) DeleteSession(userId string, sessionId string) error {
+	result := d.db.Where("send_id = ? AND receive_id LIKE ?", userId, "U%").Delete(&models.Session{}, "uuid = ?", sessionId)
 	return result.Error
 }
 

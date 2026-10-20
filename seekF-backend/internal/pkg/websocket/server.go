@@ -211,6 +211,7 @@ func (s *Server) handleTextMessage(chatMessageReq *userreq.ChatMessageRequest) {
 
 	// 构建响应消息
 	messageRsp := userresp.GetMessageListRespond{
+		Id:         message.Id,
 		Uuid:       message.Uuid,
 		SessionId:  message.SessionId,
 		SendId:     message.SendId,
@@ -280,6 +281,7 @@ func (s *Server) handleFileMessage(chatMessageReq *userreq.ChatMessageRequest) {
 
 	// 构建响应消息
 	messageRsp := userresp.GetMessageListRespond{
+		Id:         message.Id,
 		Uuid:       message.Uuid,
 		SessionId:  message.SessionId,
 		SendId:     message.SendId,

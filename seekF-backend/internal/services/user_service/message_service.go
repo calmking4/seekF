@@ -62,6 +62,7 @@ func (s *MessageServiceImpl) GetUserMessageList(userOneId string, userTwoId stri
 	var rspList []userresp.GetMessageListRespond
 	for _, message := range messageList {
 		rspList = append(rspList, userresp.GetMessageListRespond{
+			Id:         message.Id,
 			Uuid:       message.Uuid,
 			SessionId:  message.SessionId,
 			SendId:     message.SendId,
@@ -112,6 +113,7 @@ func (s *MessageServiceImpl) SearchMessages(userId string, sessionId string, key
 	var rspList []userresp.GetMessageListRespond
 	for _, message := range messages {
 		rspList = append(rspList, userresp.GetMessageListRespond{
+			Id:         message.Id,
 			Uuid:       message.Uuid,
 			SessionId:  message.SessionId,
 			SendId:     message.SendId,
