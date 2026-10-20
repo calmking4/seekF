@@ -1,6 +1,6 @@
 这是一套基于**阿里云 OSS Go SDK V2 版本**封装的通用文件上传工具，核心能力：
 
-1. 支持按「业务分类」（用户头像 / 群头像 / 消息图片等）自动生成规范的 OSS 存储路径；
+1. 支持按「业务分类」（用户头像 / 消息图片等）自动生成规范的 OSS 存储路径；
 2. 提供两种上传方式：基于 `io.Reader` 上传（通用流上传）、基于 `multipart.FileHeader` 上传（适配 Gin 等框架的文件上传场景）；
 3. 单例模式初始化 OSS 客户端（避免重复创建连接）；
 4. 自动生成唯一文件名（防止重复覆盖），并返回 OSS 文件的存储键和访问 URL。
@@ -16,7 +16,6 @@ type FileCategory string
 // 定义不同业务类型的常量（相当于给字符串起“别名”，避免硬编码出错）
 const (
 	UserAvatar    FileCategory = "user_avatar"    // 用户头像
-	GroupAvatar   FileCategory = "group_avatar"   // 群头像
 	MessageImage  FileCategory = "message_image"  // 消息图片
 	MessageVideo  FileCategory = "message_video"  // 消息视频
 	MessageAudio  FileCategory = "message_audio"  // 消息音频
@@ -25,7 +24,6 @@ const (
 // OSS 路径前缀（不同业务文件存在不同目录，规范存储结构）
 const (
 	avatarDirPrefix       = "common/user_avatars"   // 用户头像根目录
-	groupAvatarDirPrefix  = "common/group_avatars"  // 群头像根目录
 	messageImageDirPrefix = "messages/images"       // 消息图片根目录
 	messageVideoDirPrefix = "messages/videos"       // 消息视频根目录
 	messageAudioDirPrefix = "messages/audios"       // 消息音频根目录
@@ -115,8 +113,6 @@ func dirForCategory(cat FileCategory) string {
 	switch cat {
 	case UserAvatar:
 		return avatarDirPrefix
-	case GroupAvatar:
-		return groupAvatarDirPrefix
 	case MessageImage:
 		return messageImageDirPrefix
 	case MessageVideo:

@@ -227,8 +227,6 @@ func ParseFileCategory(fileTypeStr string) FileCategory {
 	switch fileTypeStr {
 	case "user_avatar":
 		return UserAvatar
-	case "group_avatar":
-		return GroupAvatar
 	case "message_image":
 		return MessageImage
 	case "message_video":

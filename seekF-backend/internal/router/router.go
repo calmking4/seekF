@@ -16,8 +16,6 @@ import (
 func SetupRouter(
 	authController *user.AuthController,
 	userInfoController *user.UserInfoController,
-	groupController *user.GroupController,
-	contactController *user.ContactController,
 	sessionController *user.SessionController,
 	messageController *user.MessageController,
 	fileController *user.FileController,
@@ -101,33 +99,7 @@ func SetupRouter(
 			protectedGroup.POST("/userinfo/getUserinfo", userInfoController.GetUserInfo)
 			protectedGroup.POST("/userinfo/getMyInfo", userInfoController.GetMyInfo)
 			protectedGroup.POST("/userinfo/updateUserInfo", userInfoController.UpdateUserInfo)
-			// 群组
-			protectedGroup.POST("/group/createGroup", groupController.CreateGroup)
-			protectedGroup.POST("/group/loadMyGroup", groupController.LoadMyGroup)
-			protectedGroup.POST("/group/loadMyJoinedGroup", groupController.LoadMyJoinedGroup)
-			protectedGroup.POST("/group/checkGroupAddMode", groupController.CheckGroupAddMode)
-			protectedGroup.POST("/group/getGroupInfo", groupController.GetGroupInfo)
-			protectedGroup.POST("/group/updateGroupInfo", groupController.UpdateGroupInfo)
-			protectedGroup.POST("/group/getGroupMemberList", groupController.GetGroupMemberList)
-			protectedGroup.POST("/group/removeGroupMembers", groupController.RemoveGroupMembers)
-			protectedGroup.POST("/group/enterGroupDirectly", groupController.EnterGroupDirectly)
-			protectedGroup.POST("/group/leaveGroup", groupController.LeaveGroup)
-			protectedGroup.POST("/group/dismissGroup", groupController.DismissGroup)
-			protectedGroup.POST("/group/searchGroups", groupController.SearchGroups)
-			// 联系人
-			protectedGroup.POST("/contact/getUserList", contactController.GetUserList)
-			protectedGroup.POST("/contact/getContactInfo", contactController.GetContactInfo)
-			protectedGroup.POST("/contact/deleteContact", contactController.DeleteContact)
-			protectedGroup.POST("/contact/applyContact", contactController.ApplyContact)
-			protectedGroup.POST("/contact/getNewContactList", contactController.GetNewContactList)
-			protectedGroup.POST("/contact/passContactApply", contactController.PassContactApply)
-			protectedGroup.POST("/contact/blackContact", contactController.BlackContact)
-			protectedGroup.POST("/contact/cancelBlackContact", contactController.CancelBlackContact)
-			protectedGroup.POST("/contact/getApplyGroupList", contactController.GetApplyGroupList)
-			protectedGroup.POST("/contact/refuseContactApply", contactController.RefuseContactApply)
-			protectedGroup.POST("/contact/blackApply", contactController.BlackApply)
-			protectedGroup.POST("/contact/searchUsers", contactController.SearchUsers)
-			protectedGroup.POST("/contact/getMyApplyList", contactController.GetMyApplyList)
+
 			// 会话
 			protectedGroup.POST("/session/openSession", sessionController.OpenSession)
 			protectedGroup.POST("/session/getSessionList", sessionController.GetSessionList)
@@ -135,7 +107,7 @@ func SetupRouter(
 			protectedGroup.POST("/session/checkOpenSessionAllowed", sessionController.CheckOpenSessionAllowed)
 			// 消息
 			protectedGroup.POST("/message/getUserMessageList", messageController.GetUserMessageList)
-			protectedGroup.POST("/message/getGroupMessageList", messageController.GetGroupMessageList)
+
 			protectedGroup.POST("/message/search", messageController.SearchMessages)
 			protectedGroup.POST("/message/searchSuggestions", messageController.SearchMessageSuggestions)
 			// 文件上传

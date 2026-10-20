@@ -19,7 +19,6 @@ export interface Overview {
     platformNetAmount: string;
   };
   users: number;
-  groups: number;
   posts: number;
   todayMessages: number;
   todayUsers: number;

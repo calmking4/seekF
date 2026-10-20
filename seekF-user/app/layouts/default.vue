@@ -56,28 +56,6 @@
       <slot />
     </main>
 
-    <!-- 来电弹窗 - 全局 -->
-    <AVCallDialog
-      :visible="avCall.callStatus.value === 'ringing' && avCall.isIncoming.value"
-      :caller-info="avCall.callerInfo.value || { id: '', name: '', avatar: '' }"
-      @accept="acceptCall"
-      @reject="rejectCall"
-    />
-
-    <!-- 通话界面 - 全局 -->
-    <AVCallOverlay
-      :visible="avCall.callStatus.value === 'calling' || avCall.callStatus.value === 'connected'"
-      :local-stream="avCall.localStream.value"
-      :remote-stream="avCall.remoteStream.value"
-      :remote-name="avCall.callerInfo.value?.name || ''"
-      :remote-avatar="avCall.callerInfo.value?.avatar || ''"
-      :format-duration="avCall.formatDuration.value"
-      :is-muted="avCall.isMuted.value"
-      :is-camera-off="avCall.isCameraOff.value"
-      @end-call="endCall"
-      @toggle-mute="avCall.toggleMute"
-      @toggle-camera="avCall.toggleCamera"
-    />
   </div>
 </template>
 
@@ -86,9 +64,8 @@
 // 引入路由对象，用于判断当前激活的导航项
 const route = useRoute()
 
-// 引入WebSocket和通话管理
+// 引入WebSocket连接管理
 const ws = useWebSocket()
-const avCall = useAVCall()
 
 // 引入通知未读数
 const { unreadCount, fetchUnreadCount } = useNotification()
@@ -110,7 +87,6 @@ const navItems = [
   { path: '/discover/create', label: '发布', icon: 'uil:plus-square', newTab: true },
   { path: '/notification', label: '通知', icon: 'uil:bell', showBadge: true },
   { path: '/chat', label: '消息', icon: 'uil:comment-alt' },
-  { path: '/contact', label: '联系人', icon: 'uil:users-alt' },
   { path: '/aichat', label: 'AIChat', icon: 'uil:robot' },
   { path: '/my', label: '我', icon: 'uil:user' }
 ]
@@ -172,27 +148,6 @@ watch(() => route.path, (newPath, oldPath) => {
   }, 200)
 })
 
-// 处理音视频通话消息
-const handleAVCallMessage = (data) => {
-  console.log('收到音视频通话消息:', data)
-  avCall.handleSignal(data)
-}
-
-// 接受通话
-const acceptCall = () => {
-  avCall.acceptCall()
-}
-
-// 拒绝通话
-const rejectCall = () => {
-  avCall.rejectCall()
-}
-
-// 挂断通话
-const endCall = () => {
-  avCall.endCall()
-}
-
 // 页面加载时连接WebSocket
 onMounted(async () => {
   console.log('WebSocket 连接状态:', ws.isConnected.value)
@@ -201,9 +156,6 @@ onMounted(async () => {
     console.log('WebSocket 未连接，尝试连接...')
     ws.connect()
   }
-
-  // 注册音视频通话回调
-  ws.onAVCall(handleAVCallMessage)
 
   // 初始化指示器位置
   nextTick(updateIndicator)
@@ -236,8 +188,6 @@ const logout = async () => {
     ElMessage.error(err?.data?.message || err?.message || '退出登录失败');
     // 即使后端请求失败，也要清除本地信息
   } finally {
-    // 结束通话
-    avCall.endCall();
     // 清除回调
     ws.clearCallbacks();
     // 清除用户信息和token

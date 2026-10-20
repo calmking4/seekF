@@ -27,6 +27,11 @@ func (c *WsController) WsLogin(ctx *gin.Context) {
 		resp.Error(ctx, "clientId获取失败", http.StatusBadRequest)
 		return
 	}
+	// 连接身份必须与登录态一致，不能通过查询参数冒充其他私聊用户。
+	if clientId != ctx.GetString("Uuid") {
+		resp.Error(ctx, "不能使用其他用户身份连接私聊", http.StatusForbidden)
+		return
+	}
 	if err := websocket.NewClientInit(ctx, clientId); err != nil {
 		zlog.Error("WebSocket连接失败: " + err.Error())
 		resp.Error(ctx, "WebSocket连接失败", http.StatusInternalServerError)

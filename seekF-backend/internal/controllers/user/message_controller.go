@@ -33,34 +33,16 @@ func (c *MessageController) GetUserMessageList(ctx *gin.Context) {
 		return
 	}
 
+	// 私聊记录只允许会话参与者读取，发送给服务层的用户身份来自登录态。
+	currentUser := ctx.GetString("Uuid")
+	if currentUser == "" || (req.UserOneId != currentUser && req.UserTwoId != currentUser) {
+		resp.Error(ctx, "无权查看其他用户的私聊记录", http.StatusForbidden)
+		return
+	}
 	// 调用服务层方法
 	messageList, total, err := c.messageService.GetUserMessageList(req.UserOneId, req.UserTwoId, req.Page, req.PageSize)
 	if err != nil {
 		zlog.Info("获取用户消息列表服务错误: " + err.Error())
-		resp.Error(ctx, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	resp.Success(ctx, "获取聊天记录成功", gin.H{
-		"list":  messageList,
-		"total": total,
-	})
-}
-
-// GetGroupMessageList 获取群聊消息记录
-func (c *MessageController) GetGroupMessageList(ctx *gin.Context) {
-	// 绑定请求参数
-	var req userreq.GetGroupMessageListRequest
-	if err := ctx.BindJSON(&req); err != nil {
-		zlog.Error(err.Error())
-		resp.Error(ctx, "系统错误", http.StatusBadRequest)
-		return
-	}
-
-	// 调用服务层方法
-	messageList, total, err := c.messageService.GetGroupMessageList(req.GroupId, req.Page, req.PageSize)
-	if err != nil {
-		zlog.Info("获取群组消息列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -80,7 +62,7 @@ func (c *MessageController) SearchMessages(ctx *gin.Context) {
 		return
 	}
 
-	messageList, total, err := c.messageService.SearchMessages(req.SessionId, req.Keyword, req.Page, req.PageSize)
+	messageList, total, err := c.messageService.SearchMessages(ctx.GetString("Uuid"), req.SessionId, req.Keyword, req.Page, req.PageSize)
 	if err != nil {
 		zlog.Info("搜索消息服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)

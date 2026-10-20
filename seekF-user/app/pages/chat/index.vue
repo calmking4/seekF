@@ -1,13 +1,13 @@
 <template>
   <div class="flex h-full bg-gray-100">
-    <!-- 左侧：搜索栏 + 联系人/会话列表 -->
+    <!-- 左侧：搜索栏 + 私聊会话列表 -->
     <aside class="bg-white border-r border-gray-200 h-full flex flex-col flex-shrink-0 pr-3 relative" :style="{ width: sidebarWidth + 'px' }">
       <!-- 拖动条 -->
       <div class="sidebar-resize-handle" @mousedown="startSidebarResize"></div>
       <!-- 顶部搜索栏 -->
       <SearchBar @search-select="handleSearchSelect" />
 
-      <!-- 联系人/会话列表 -->
+      <!-- 私聊会话列表 -->
       <div class="flex-1 overflow-y-auto">
         <div v-if="chatList.length === 0" class="p-8 text-center text-gray-400">
           暂无会话
@@ -28,13 +28,6 @@
             <div class="flex justify-between items-start">
               <div class="flex items-center gap-2">
                 <h3 class="font-medium text-sm truncate">{{ item.name }}</h3>
-                <!-- 非好友标签 -->
-                <span
-                  v-if="!item.isFriend && !item.id?.startsWith('G')"
-                  class="text-xs text-orange-500 border border-orange-300 rounded px-1 flex-shrink-0"
-                >
-                  非好友
-                </span>
               </div>
               <span class="text-xs text-gray-400">{{ item.time }}</span>
             </div>
@@ -65,31 +58,10 @@
             {{ currentChat.name ? currentChat.name.charAt(0) : '?' }}
           </el-avatar>
           <span class="font-medium text-sm">{{ currentChat.name }}</span>
-          <!-- 非好友标签 -->
-          <span
-            v-if="!currentChat.isFriend && !currentChat.id?.startsWith('G')"
-            class="text-xs text-orange-500 border border-orange-300 rounded px-2 py-0.5"
-          >
-            非好友
-          </span>
           <div class="flex-1"></div>
           <div class="flex gap-4 text-gray-500">
             <button><Icon name="uil:ellipsis-h" /></button>
           </div>
-        </div>
-
-        <!-- 非好友提示条 -->
-        <div
-          v-if="!currentChat.isFriend && !currentChat.id?.startsWith('G')"
-          class="bg-orange-50 border-b border-orange-200 px-4 py-2 text-sm text-orange-600 flex items-center justify-between flex-shrink-0"
-        >
-          <span>对方还不是你的好友，只能发送一条文字消息</span>
-          <button
-            class="text-orange-500 hover:text-orange-700 font-medium underline"
-            @click="navigateTo('/contact')"
-          >
-            添加好友
-          </button>
         </div>
 
         <!-- 聊天内容区 - 自适应高度 -->
@@ -189,9 +161,7 @@
                 <button class="toolbar-btn" title="表情">
                   <Icon name="uil:smile" class="text-base" />
                 </button>
-                <!-- 非好友时隐藏图片上传按钮 -->
                 <button
-                  v-if="currentChat.isFriend || currentChat.id?.startsWith('G')"
                   class="toolbar-btn"
                   title="发送图片"
                   @click="triggerImageUpload"
@@ -205,23 +175,14 @@
                   class="hidden"
                   @change="handleImageUpload"
                 />
-                <!-- 非好友时隐藏音视频通话按钮 -->
-                <button
-                  v-if="currentChat && !currentChat.id?.startsWith('G') && currentChat.isFriend"
-                  class="toolbar-btn"
-                  title="语音通话"
-                  @click="startCall"
-                >
-                  <Icon name="fluent:call-24-regular" class="text-base" />
-                </button>
               </div>
               <button
                 class="send-btn"
-                :disabled="(!inputMessage.trim() && pendingImages.length === 0) || !ws.isConnected || isNonFriendRestricted"
+                :disabled="(!inputMessage.trim() && pendingImages.length === 0) || !ws.isConnected"
                 @click="sendMessage"
               >
                 <Icon name="uil:message" class="text-base" />
-                <span>{{ isNonFriendRestricted ? '等待回复' : '发送' }}</span>
+                <span>发送</span>
               </button>
             </div>
           </div>
@@ -244,14 +205,13 @@
 // 页面级 SEO
 useSeoMeta({
   title: '消息',
-  description: '与好友进行即时聊天，支持文字、图片、文件等多种消息类型。',
+  description: '与其他用户进行私聊，支持文字、图片、文件等多种消息类型。',
 })
 
 const route = useRoute()
 const router = useRouter()
 
 const ws = useWebSocket()
-const avCall = useAVCall()
 
 const currentUserAvatar = ref('')
 const currentUserId = ref('')
@@ -265,16 +225,6 @@ const pendingImages = ref([]) // 待发送的图片列表
 const currentChat = computed(() => {
   if (activeIndex.value === -1) return {}
   return chatList.value[activeIndex.value]
-})
-
-// 判断非好友是否已发过消息（限制只能发一条）
-const isNonFriendRestricted = computed(() => {
-  if (!currentChat.value || currentChat.value.isFriend || currentChat.value.id?.startsWith('G')) {
-    return false
-  }
-  // 统计自己在当前会话中发送的消息数
-  const selfMessages = messageList.value.filter(msg => msg.isSelf)
-  return selfMessages.length >= 1
 })
 
 const scrollbarRef = ref()
@@ -393,7 +343,8 @@ const loadSessionList = async () => {
   try {
     const data = await useApi$('/user/session/getSessionList', { method: 'POST' })
     if (data?.code === 200) {
-      const sessions = data.data || []
+      const sessions = (data.data || []).filter(session => session.id?.startsWith('U'))
+      const selectedId = currentChat.value?.id
       chatList.value = sessions.map(session => ({
         sessionId: session.session_id,
         id: session.id,
@@ -401,10 +352,10 @@ const loadSessionList = async () => {
         avatar: session.avatar,
         lastMsg: session.last_message || '点击开始聊天',
         time: session.last_message_at || '',
-        unread: 0,
-        isFriend: session.is_friend || false
+        unread: 0
       }))
 
+      activeIndex.value = chatList.value.findIndex(item => item.id === selectedId)
       const { session_id, receive_id } = route.query
       if (session_id || receive_id) {
         selectSessionByParams(session_id, receive_id)
@@ -438,8 +389,6 @@ const selectSessionByParams = (sessionId, receiveId) => {
   }
   if (index !== -1) {
     selectSession(index)
-  } else if (receiveId) {
-    loadSessionList()
   }
 }
 
@@ -456,7 +405,7 @@ const selectSession = async (index) => {
   await loadMessageList(session.id)
   scrollToBottom()
 
-  if (route.query.session_id || route.query.receive_id) {
+  if (route.query.session_id || route.query.receive_id || route.query.userId) {
     router.replace({ path: '/chat' })
   }
 }
@@ -465,16 +414,10 @@ const loadMessageList = async (receiveId, page = 1) => {
   try {
     if (!receiveId) return
 
-    const isGroup = receiveId.startsWith('G')
-    const url = isGroup
-      ? '/user/message/getGroupMessageList'
-      : '/user/message/getUserMessageList'
-
-    const body = isGroup
-      ? { group_id: receiveId, page, page_size: pageSize }
-      : { user_one_id: currentUserId.value, user_two_id: receiveId, page, page_size: pageSize }
-
-    const data = await useApi$(url, { method: 'POST', body })
+    const data = await useApi$('/user/message/getUserMessageList', {
+      method: 'POST',
+      body: { user_one_id: currentUserId.value, user_two_id: receiveId, page, page_size: pageSize }
+    })
 
     if (data?.code === 200) {
       const list = data.data?.list || []
@@ -746,30 +689,15 @@ const handleImageUpload = (event) => {
   event.target.value = ''
 }
 
-// 发起通话
-const startCall = () => {
-  if (activeIndex.value === -1) return
-  
-  const session = currentChat.value
-  if (!session) return
-  
-  // 只有单聊才能发起通话
-  if (session.id.startsWith('G')) {
-    alert('暂不支持群聊通话')
-    return
-  }
-  
-  avCall.startCall(session.sessionId, session.id, {
-    name: session.name,
-    avatar: session.avatar
-  })
-}
-
 const handleWebSocketMessage = (data) => {
   console.log('handleWebSocketMessage 收到数据:', data)
   
   if (typeof data !== 'object') {
     console.log('数据不是对象，跳过')
+    return
+  }
+  if (data?.type === 'error') {
+    ElMessage.error(data.message || '私聊消息发送失败')
     return
   }
   
@@ -782,28 +710,10 @@ const handleWebSocketMessage = (data) => {
   const currentSession = currentChat.value
   const isSelf = data.send_id === currentUserId.value
   
-  // 判断是否是群聊消息
-  const isGroupMessage = data.receive_id.startsWith('G')
-
-  // 判断是否是当前会话
-  let isCurrentSession = false
-  if (currentSession) {
-    if (isGroupMessage) {
-      // 群聊消息：检查当前会话是否是该群聊
-      isCurrentSession = data.receive_id === currentSession.id
-    } else {
-      // 单聊消息：检查发送者/接收者是否匹配当前会话
-      if (isSelf) {
-        // 自己发的消息，检查接收者是否是当前聊天对象
-        isCurrentSession = data.receive_id === currentSession.id
-      } else {
-        // 别人发的消息，检查发送者是否是当前聊天对象
-        isCurrentSession = data.send_id === currentSession.id
-      }
-    }
-  }
-
-  console.log('当前会话:', currentSession?.id, '发送者:', data.send_id, '接收者:', data.receive_id, '是否群聊:', isGroupMessage, '是否当前会话:', isCurrentSession)
+  // 私聊按对方用户匹配，双方持有各自的会话编号。
+  if (!data.receive_id?.startsWith('U')) return
+  const peerId = isSelf ? data.receive_id : data.send_id
+  const isCurrentSession = currentSession?.id === peerId
 
   if (isCurrentSession) {
     // 文件消息使用 url 作为内容，文本消息使用 content
@@ -819,7 +729,7 @@ const handleWebSocketMessage = (data) => {
     }
 
     if (isSelf) {
-      const tempIndex = messageList.value.findIndex(m => m.messageId.startsWith('temp_') && m.content === messageContent)
+      const tempIndex = messageList.value.findIndex(m => m.messageId?.startsWith('temp_') && m.content === messageContent)
       if (tempIndex !== -1) {
         messageList.value[tempIndex] = realMessage
       } else {
@@ -832,7 +742,7 @@ const handleWebSocketMessage = (data) => {
     scrollToBottom()
   } else {
     console.log('不是当前会话，更新会话列表')
-    const sessionIndex = chatList.value.findIndex(item => item.sessionId === data.session_id)
+    const sessionIndex = chatList.value.findIndex(item => item.id === peerId)
 
     // 文件消息显示[图片]，文本消息显示内容
     const lastMsg = data.type === 2 ? '[图片]' : data.content
@@ -843,8 +753,10 @@ const handleWebSocketMessage = (data) => {
       chatList.value[sessionIndex].time = '刚刚'
       // 将会话移到顶部
       const updatedSession = chatList.value[sessionIndex]
+      const selectedId = currentChat.value?.id
       chatList.value.splice(sessionIndex, 1)
       chatList.value.unshift(updatedSession)
+      activeIndex.value = chatList.value.findIndex(item => item.id === selectedId)
     } else {
       // 会话不存在，重新加载会话列表
       console.log('会话不存在，重新加载会话列表')
@@ -853,9 +765,28 @@ const handleWebSocketMessage = (data) => {
   }
 }
 
+// 从用户主页打开私聊，无需添加好友。
+const openPrivateChat = async (userId) => {
+  if (typeof userId !== 'string' || !userId.startsWith('U')) return
+  try {
+    const res = await useApi$('/user/session/openSession', { body: { receive_id: userId } })
+    if (res.code !== 200) { ElMessage.error(res.message || '打开私聊失败'); return }
+    await loadSessionList()
+    const index = chatList.value.findIndex(item => item.id === userId)
+    if (index !== -1) await selectSession(index)
+  } catch (error) {
+    console.error('打开私聊失败:', error)
+  }
+}
+
+watch(() => route.query.userId, (userId) => {
+  if (currentUserId.value && userId) openPrivateChat(userId)
+})
+
 onMounted(async () => {
   await getCurrentUserInfo()
   await loadSessionList()
+  await openPrivateChat(route.query.userId)
 
   ws.onMessage(handleWebSocketMessage)
 })

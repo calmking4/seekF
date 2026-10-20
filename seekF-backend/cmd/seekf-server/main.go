@@ -23,8 +23,6 @@ func main() {
 		app.SessionService,
 		app.MessageDAO,
 		app.SessionDAO,
-		app.GroupDAO,
-		app.ContactDAO,
 	)
 	go websocket.ChatServer.Start()
 

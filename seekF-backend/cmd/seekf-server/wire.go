@@ -21,10 +21,7 @@ import (
 var daoProviderSet = wire.NewSet(
 	admindao.NewAdminDAO,
 	userdao.NewUserInfoDAO,
-	userdao.NewContactDAO,
 	userdao.NewSessionDAO,
-	userdao.NewGroupDAO,
-	userdao.NewContactApplyDAO,
 	userdao.NewMessageDAO,
 	userdao.NewKnowledgeDAO,
 	userdao.NewKnowledgeChunkDAO,
@@ -40,8 +37,6 @@ var serviceProviderSet = wire.NewSet(
 	adminservice.NewAdminService,
 	userservice.NewAuthService,
 	userservice.NewUserInfoService,
-	userservice.NewContactService,
-	userservice.NewGroupService,
 	userservice.NewSessionService,
 	userservice.NewMessageService,
 	userservice.NewFileService,
@@ -58,8 +53,6 @@ var controllerProviderSet = wire.NewSet(
 	admincontroller.NewAdminController,
 	usercontroller.NewAuthController,
 	usercontroller.NewUserInfoController,
-	usercontroller.NewContactController,
-	usercontroller.NewGroupController,
 	usercontroller.NewSessionController,
 	usercontroller.NewMessageController,
 	usercontroller.NewFileController,
@@ -79,8 +72,6 @@ type App struct {
 	SessionService userservice.SessionService
 	MessageDAO     userdao.MessageDAO
 	SessionDAO     userdao.SessionDAO
-	GroupDAO       userdao.GroupDAO
-	ContactDAO     userdao.ContactDAO
 	DiscoverDAO    userdao.DiscoverDAO
 	ESDiscoverDAO  userdao.ESDiscoverDAO
 	UserInfoDAO    userdao.UserInfoDAO

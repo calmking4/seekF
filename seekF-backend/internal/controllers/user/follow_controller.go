@@ -135,7 +135,6 @@ func (c *FollowController) ListFollowing(ctx *gin.Context) {
 			Nickname:  u.Nickname,
 			Avatar:    u.Avatar,
 			Signature: u.Signature,
-			IsFriend:  u.IsFriend,
 		})
 	}
 
@@ -182,7 +181,6 @@ func (c *FollowController) ListFollowers(ctx *gin.Context) {
 			Nickname:  u.Nickname,
 			Avatar:    u.Avatar,
 			Signature: u.Signature,
-			IsFriend:  u.IsFriend,
 		})
 	}
 

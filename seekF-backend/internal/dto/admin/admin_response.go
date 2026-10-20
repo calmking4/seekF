@@ -29,7 +29,6 @@ type SupportRevenue struct {
 // Overview 管理端业务概览，最多缓存三十秒。
 type Overview struct {
 	Users          int64          `json:"users"`
-	Groups         int64          `json:"groups"`
 	Posts          int64          `json:"posts"`
 	TodayMessages  int64          `json:"todayMessages"`
 	TodayUsers     int64          `json:"todayUsers"`

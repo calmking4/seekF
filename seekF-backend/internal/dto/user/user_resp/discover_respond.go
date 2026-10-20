@@ -110,7 +110,6 @@ type UserProfileRespond struct {
 	FollowingCount int64      `json:"following_count"`
 	FollowerCount  int64      `json:"follower_count"`
 	IsFollowed     bool       `json:"is_followed"`
-	IsFriend       bool       `json:"is_friend"`
 	Posts          []PostItem `json:"posts"`
 	Total          int64      `json:"total"`
 }

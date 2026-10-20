@@ -24,7 +24,6 @@ type UserInfoDAO interface {
 	FindUserByGithubId(githubId int64) (*models.UserInfo, error)
 	FindUserByGiteeId(giteeId int64) (*models.UserInfo, error)
 	UpdateUserInfo(user *models.UserInfo) error
-	SearchUsers(keyword string) ([]models.UserInfo, error)
 }
 
 type UserInfoDAOImpl struct {
@@ -137,11 +136,4 @@ func (d *UserInfoDAOImpl) UpdateFollowCounts(uuid string, followingDelta, follow
 		return fmt.Errorf("用户不存在或关注计数异常，userId=%s", uuid)
 	}
 	return nil
-}
-
-// SearchUsers 根据关键词搜索用户
-func (d *UserInfoDAOImpl) SearchUsers(keyword string) ([]models.UserInfo, error) {
-	var userList []models.UserInfo
-	result := d.db.Where("nickname LIKE ? OR telephone LIKE ?", "%"+keyword+"%", "%"+keyword+"%").Find(&userList)
-	return userList, result.Error
 }

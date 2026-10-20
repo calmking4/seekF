@@ -24,8 +24,6 @@ type FileCategory string
 const (
 	// UserAvatar 用户头像
 	UserAvatar FileCategory = "user_avatar"
-	// GroupAvatar 群头像
-	GroupAvatar FileCategory = "group_avatar"
 	// MessageImage 消息图片
 	MessageImage FileCategory = "message_image"
 	// MessageVideo 消息视频
@@ -43,7 +41,6 @@ const (
 // OSS 路径前缀（不以 / 结尾，后面会再拼子目录和文件名）
 const (
 	avatarDirPrefix        = "common/user_avatars"
-	groupAvatarDirPrefix   = "common/group_avatars"
 	messageImageDirPrefix  = "messages/images"
 	messageVideoDirPrefix  = "messages/videos"
 	messageAudioDirPrefix  = "messages/audios"
@@ -108,8 +105,6 @@ func dirForCategory(category FileCategory) string {
 	switch category {
 	case UserAvatar:
 		return avatarDirPrefix
-	case GroupAvatar:
-		return groupAvatarDirPrefix
 	case MessageImage:
 		return messageImageDirPrefix
 	case MessageVideo:

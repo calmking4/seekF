@@ -5,7 +5,6 @@ type FollowUserItem struct {
 	Nickname  string `json:"nickname"`
 	Avatar    string `json:"avatar"`
 	Signature string `json:"signature"`
-	IsFriend  bool   `json:"is_friend"`
 }
 
 type ListFollowRespond struct {

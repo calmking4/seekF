@@ -15,6 +15,7 @@ import (
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,12 +48,10 @@ type Server struct {
 	sessionService userservice.SessionService
 	messageDAO     userdao.MessageDAO
 	sessionDAO     userdao.SessionDAO
-	groupDAO       userdao.GroupDAO
-	contactDAO     userdao.ContactDAO
 }
 
 // NewServer 创建新的WebSocket服务器
-func NewServer(sessionService userservice.SessionService, messageDAO userdao.MessageDAO, sessionDAO userdao.SessionDAO, groupDAO userdao.GroupDAO, contactDAO userdao.ContactDAO) *Server {
+func NewServer(sessionService userservice.SessionService, messageDAO userdao.MessageDAO, sessionDAO userdao.SessionDAO) *Server {
 	return &Server{
 		Clients:        make(map[string]*Client),
 		mutex:          &sync.Mutex{},
@@ -61,8 +60,6 @@ func NewServer(sessionService userservice.SessionService, messageDAO userdao.Mes
 		sessionService: sessionService,
 		messageDAO:     messageDAO,
 		sessionDAO:     sessionDAO,
-		groupDAO:       groupDAO,
-		contactDAO:     contactDAO,
 	}
 }
 
@@ -113,7 +110,7 @@ func (s *Server) heartbeatCheck() {
 func (s *Server) readKafkaMessages() {
 	defer func() {
 		if r := recover(); r != nil {
-			zlog.Error(fmt.Sprintf("readKafkaMessages panic: %v", r))
+			zlog.Error(fmt.Sprintf("读取聊天消息异常: %v", r))
 		}
 	}()
 
@@ -134,28 +131,48 @@ func (s *Server) readKafkaMessages() {
 		}
 		// zlog.Info("原消息反序列化后: " + fmt.Sprintf("%+v", chatMessageReq))
 
+		// 同时校验队列中的旧消息，群聊和通话不再持久化或投递。
+		if err := s.validatePrivateMessage(&chatMessageReq); err != nil {
+			s.sendErrorToClient(chatMessageReq.SendId, err.Error())
+			continue
+		}
 		// 根据消息类型处理
 		switch chatMessageReq.Type {
 		case message_type_enum.Text:
 			s.handleTextMessage(&chatMessageReq)
 		case message_type_enum.File:
 			s.handleFileMessage(&chatMessageReq)
-		case message_type_enum.AVCall:
-			s.handleAVCallMessage(&chatMessageReq)
 		}
 	}
 }
 
+// validatePrivateMessage 检查消息类型、会话归属及私聊目标，拒绝群聊和通话。
+func (s *Server) validatePrivateMessage(message *userreq.ChatMessageRequest) error {
+	if !strings.HasPrefix(message.SendId, "U") || !strings.HasPrefix(message.ReceiveId, "U") || message.SendId == message.ReceiveId {
+		return fmt.Errorf("只能向其他用户发送私聊消息")
+	}
+	if message.Type != message_type_enum.Text && message.Type != message_type_enum.File {
+		return fmt.Errorf("私聊仅支持文字和文件消息，通话功能已下线")
+	}
+	session, err := s.sessionDAO.GetSessionByUuid(message.SessionId)
+	if err != nil {
+		return fmt.Errorf("查询私聊会话失败: %w", err)
+	}
+	if session.SendId != message.SendId || session.ReceiveId != message.ReceiveId {
+		return fmt.Errorf("无权向该私聊会话发送消息")
+	}
+	allowed, err := s.sessionService.CheckOpenSessionAllowed(message.SendId, message.ReceiveId)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return fmt.Errorf("当前无法向该用户发送私聊消息")
+	}
+	return nil
+}
+
 // handleTextMessage 处理文本消息
 func (s *Server) handleTextMessage(chatMessageReq *userreq.ChatMessageRequest) {
-	// 单聊时检查好友限制
-	if chatMessageReq.ReceiveId[0] == 'U' {
-		if allowed, errStr := s.checkFriendRestriction(chatMessageReq.SendId, chatMessageReq.ReceiveId, chatMessageReq.SessionId); !allowed {
-			s.sendErrorToClient(chatMessageReq.SendId, errStr)
-			return
-		}
-	}
-
 	// 创建消息记录
 	message := &models.Message{
 		Uuid:       fmt.Sprintf("M%s", util.GetNowAndLenRandomString(11)),
@@ -172,7 +189,6 @@ func (s *Server) handleTextMessage(chatMessageReq *userreq.ChatMessageRequest) {
 		FileName:   "",
 		Status:     message_status_enum.Unsent,
 		CreatedAt:  time.Now(),
-		AVdata:     "",
 	}
 
 	// 保存消息到数据库
@@ -193,6 +209,7 @@ func (s *Server) handleTextMessage(chatMessageReq *userreq.ChatMessageRequest) {
 
 	// 构建响应消息
 	messageRsp := userresp.GetMessageListRespond{
+		Uuid:       message.Uuid,
 		SessionId:  message.SessionId,
 		SendId:     message.SendId,
 		SendName:   message.SendName,
@@ -218,31 +235,12 @@ func (s *Server) handleTextMessage(chatMessageReq *userreq.ChatMessageRequest) {
 		Uuid:    message.Uuid,
 	}
 
-	// 判断是单聊还是群聊
-	if message.ReceiveId[0] == 'U' {
-		// 单聊
-		s.sendToUser(message, messageBack, &messageRsp)
-	} else if message.ReceiveId[0] == 'G' {
-		// 群聊
-		s.sendToGroup(message, messageBack, &messageRsp)
-	}
+	// 私聊消息向双方投递。
+	s.sendToUser(message, messageBack, &messageRsp)
 }
 
 // handleFileMessage 处理文件消息
 func (s *Server) handleFileMessage(chatMessageReq *userreq.ChatMessageRequest) {
-	// 单聊时检查好友限制（非好友不能发文件）
-	if chatMessageReq.ReceiveId[0] == 'U' {
-		isFriend, err := s.contactDAO.IsFriend(chatMessageReq.SendId, chatMessageReq.ReceiveId)
-		if err != nil {
-			zlog.Error("查询好友关系失败: " + err.Error())
-			return
-		}
-		if !isFriend {
-			s.sendErrorToClient(chatMessageReq.SendId, "非好友只能发送文字消息，请先添加好友")
-			return
-		}
-	}
-
 	// 创建消息记录
 	message := &models.Message{
 		Uuid:       fmt.Sprintf("M%s", util.GetNowAndLenRandomString(11)),
@@ -259,7 +257,6 @@ func (s *Server) handleFileMessage(chatMessageReq *userreq.ChatMessageRequest) {
 		FileName:   chatMessageReq.FileName,
 		Status:     message_status_enum.Unsent,
 		CreatedAt:  time.Now(),
-		AVdata:     "",
 	}
 
 	// 保存消息到数据库
@@ -280,6 +277,7 @@ func (s *Server) handleFileMessage(chatMessageReq *userreq.ChatMessageRequest) {
 
 	// 构建响应消息
 	messageRsp := userresp.GetMessageListRespond{
+		Uuid:       message.Uuid,
 		SessionId:  message.SessionId,
 		SendId:     message.SendId,
 		SendName:   message.SendName,
@@ -305,122 +303,8 @@ func (s *Server) handleFileMessage(chatMessageReq *userreq.ChatMessageRequest) {
 		Uuid:    message.Uuid,
 	}
 
-	// 判断是单聊还是群聊
-	if message.ReceiveId[0] == 'U' {
-		// 单聊
-		s.sendToUser(message, messageBack, &messageRsp)
-	} else {
-		// 群聊
-		s.sendToGroup(message, messageBack, &userresp.GetMessageListRespond{
-			SendId:     message.SendId,
-			SendName:   message.SendName,
-			SendAvatar: chatMessageReq.SendAvatar,
-			ReceiveId:  message.ReceiveId,
-			Type:       message.Type,
-			Content:    message.Content,
-			Url:        message.Url,
-			FileSize:   message.FileSize,
-			FileName:   message.FileName,
-			FileType:   message.FileType,
-			CreatedAt:  message.CreatedAt.Format("2006-01-02 15:04:05"),
-		})
-	}
-}
-
-// handleAVCallMessage 处理音视频通话消息
-func (s *Server) handleAVCallMessage(chatMessageReq *userreq.ChatMessageRequest) {
-	// 单聊时检查好友限制（非好友不能发起音视频通话）
-	if chatMessageReq.ReceiveId[0] == 'U' {
-		isFriend, err := s.contactDAO.IsFriend(chatMessageReq.SendId, chatMessageReq.ReceiveId)
-		if err != nil {
-			zlog.Error("查询好友关系失败: " + err.Error())
-			return
-		}
-		if !isFriend {
-			s.sendErrorToClient(chatMessageReq.SendId, "非好友无法发起音视频通话，请先添加好友")
-			return
-		}
-	}
-
-	var avData userreq.AVData
-	if err := json.Unmarshal([]byte(chatMessageReq.AVdata), &avData); err != nil {
-		zlog.Error("解析音视频通话数据失败: " + err.Error())
-		return
-	}
-
-	message := &models.Message{
-		Uuid:       fmt.Sprintf("M%s", util.GetNowAndLenRandomString(11)),
-		SessionId:  chatMessageReq.SessionId,
-		Type:       chatMessageReq.Type,
-		Content:    "",
-		Url:        "",
-		SendId:     chatMessageReq.SendId,
-		SendName:   chatMessageReq.SendName,
-		SendAvatar: normalizePath(chatMessageReq.SendAvatar),
-		ReceiveId:  chatMessageReq.ReceiveId,
-		FileSize:   "",
-		FileType:   "",
-		FileName:   "",
-		Status:     message_status_enum.Unsent,
-		CreatedAt:  time.Now(),
-		AVdata:     chatMessageReq.AVdata,
-	}
-
-	// 特定类型的音视频通话消息需要存储
-	if avData.MessageId == "PROXY" && (avData.Type == "start_call" || avData.Type == "receive_call" || avData.Type == "reject_call") {
-		if err := s.messageDAO.CreateMessage(message); err != nil {
-			zlog.Error("保存音视频通话消息失败: " + err.Error())
-			return
-		}
-
-		// 异步索引消息到ES（搜索用）
-		go func() {
-			if db.ESClient != nil {
-				esDAO := userdao.NewESMessageDAO()
-				if err := esDAO.IndexMessage(message); err != nil {
-					zlog.Error("索引音视频消息到ES失败: " + err.Error())
-				}
-			}
-		}()
-	}
-
-	// 只处理单聊音视频通话
-	if chatMessageReq.ReceiveId[0] == 'U' {
-		messageRsp := userresp.AVMessageRespond{
-			SessionId:  message.SessionId,
-			SendId:     message.SendId,
-			SendName:   message.SendName,
-			SendAvatar: message.SendAvatar,
-			ReceiveId:  message.ReceiveId,
-			Type:       message.Type,
-			Content:    message.Content,
-			Url:        message.Url,
-			FileSize:   message.FileSize,
-			FileName:   message.FileName,
-			FileType:   message.FileType,
-			CreatedAt:  message.CreatedAt.Format("2006-01-02 15:04:05"),
-			AVdata:     message.AVdata,
-		}
-
-		jsonMessage, err := json.Marshal(messageRsp)
-		if err != nil {
-			zlog.Error("序列化音视频通话消息失败: " + err.Error())
-			return
-		}
-
-		messageBack := &MessageBack{
-			Message: jsonMessage,
-			Uuid:    message.Uuid,
-		}
-
-		s.mutex.Lock()
-		// 发送给接收者
-		if receiveClient, ok := s.Clients[message.ReceiveId]; ok {
-			receiveClient.SendBack <- messageBack
-		}
-		// 音视频通话不回显给发送者
-		s.mutex.Unlock()
-	}
+	// 私聊消息向双方投递。
+	s.sendToUser(message, messageBack, &messageRsp)
 }
 
 // sendToUser 发送消息给单个用户
@@ -434,8 +318,6 @@ func (s *Server) sendToUser(message *models.Message, messageBack *MessageBack, m
 		lastMessage := message.Content
 		if message.Type == message_type_enum.File {
 			lastMessage = "[文件]" + message.FileName
-		} else if message.Type == message_type_enum.AVCall {
-			lastMessage = "[音视频通话]"
 		}
 		s.updateSessionLastMessage(sessionId, lastMessage)
 	}
@@ -458,103 +340,6 @@ func (s *Server) sendToUser(message *models.Message, messageBack *MessageBack, m
 	s.updateUserMessageListCache(message.SendId, message.ReceiveId, messageRsp)
 }
 
-// sendToGroup 发送消息给群组
-func (s *Server) sendToGroup(message *models.Message, messageBack *MessageBack, messageRsp *userresp.GetMessageListRespond) {
-	// 获取群组信息
-	group, err := s.groupDAO.GetGroupInfoByUuid(message.ReceiveId)
-	if err != nil {
-		zlog.Error("获取群组信息失败: " + err.Error())
-		return
-	}
-
-	// 解析群组成员
-	var members []string
-	if err := json.Unmarshal(group.Members, &members); err != nil {
-		zlog.Error("解析群成员失败: " + err.Error())
-		return
-	}
-
-	// 批量为群成员创建会话（如果不存在），避免 N+1 查询
-	s.batchOpenSessions(members, message.ReceiveId)
-
-	// 批量更新所有群成员的会话最后消息
-	lastMessage := message.Content
-	if message.Type == message_type_enum.File {
-		lastMessage = "[文件]" + message.FileName
-	} else if message.Type == message_type_enum.AVCall {
-		lastMessage = "[音视频通话]"
-	}
-
-	// 批量更新会话最后消息
-	if err := s.sessionDAO.UpdateSessionLastMessageByReceiveId(message.ReceiveId, lastMessage, time.Now()); err != nil {
-		zlog.Error("批量更新群聊会话最后消息失败: " + err.Error())
-	} else {
-		// 清除所有群成员的会话列表缓存
-		for _, member := range members {
-			myredis.DelKeysWithPattern(constants.SessionListKeyPrefix + member)
-		}
-	}
-
-	s.mutex.Lock()
-	for _, member := range members {
-		if client, ok := s.Clients[member]; ok {
-			client.SendBack <- messageBack
-		}
-	}
-	s.mutex.Unlock()
-
-	// 更新Redis缓存
-	s.updateGroupMessageListCache(message.ReceiveId, messageRsp)
-}
-
-// batchOpenSessions 批量检查并创建会话，避免 N+1 查询
-func (s *Server) batchOpenSessions(memberIds []string, groupId string) {
-	// 1. 批量查询已存在的会话
-	existingSessions, err := s.sessionDAO.GetExistingSessionsBySendIdsAndReceiveId(memberIds, groupId)
-	if err != nil {
-		zlog.Error("批量查询会话失败: " + err.Error())
-		// 降级为逐个创建
-		for _, member := range memberIds {
-			if _, err := s.sessionService.OpenSession(member, groupId); err != nil {
-				zlog.Error(fmt.Sprintf("为群成员 %s 创建会话失败: %v", member, err))
-			}
-		}
-		return
-	}
-
-	// 构建已存在会话的 map
-	existingMap := make(map[string]bool)
-	for _, session := range existingSessions {
-		existingMap[session.SendId] = true
-	}
-
-	// 2. 批量创建缺失的会话
-	var newSessions []*models.Session
-	now := time.Now()
-	for _, memberId := range memberIds {
-		if !existingMap[memberId] {
-			newSessions = append(newSessions, &models.Session{
-				Uuid:      fmt.Sprintf("S%s", util.GetNowAndLenRandomString(11)),
-				SendId:    memberId,
-				ReceiveId: groupId,
-				CreatedAt: now,
-			})
-		}
-	}
-
-	if len(newSessions) > 0 {
-		if err := s.sessionDAO.BatchCreateSessions(newSessions); err != nil {
-			zlog.Error("批量创建会话失败: " + err.Error())
-			// 降级为逐个创建
-			for _, session := range newSessions {
-				if err := s.sessionDAO.CreateSession(session); err != nil {
-					zlog.Error(fmt.Sprintf("为群成员 %s 创建会话失败: %v", session.SendId, err))
-				}
-			}
-		}
-	}
-}
-
 // updateUserMessageListCache 更新用户消息列表缓存
 func (s *Server) updateUserMessageListCache(sendId, receiveId string, messageRsp *userresp.GetMessageListRespond) {
 	rspString, err := myredis.GetKeyNilIsErr("message_list_" + sendId + "_" + receiveId)
@@ -571,31 +356,6 @@ func (s *Server) updateUserMessageListCache(sendId, receiveId string, messageRsp
 			return
 		}
 		if err := myredis.SetKeyEx("message_list_"+sendId+"_"+receiveId, string(rspByte), time.Minute*constants.REDIS_TIMEOUT); err != nil {
-			zlog.Error("设置缓存失败: " + err.Error())
-		}
-	} else {
-		if !errors.Is(err, redis.Nil) {
-			zlog.Error("获取缓存失败: " + err.Error())
-		}
-	}
-}
-
-// updateGroupMessageListCache 更新群组消息列表缓存
-func (s *Server) updateGroupMessageListCache(groupId string, messageRsp *userresp.GetMessageListRespond) {
-	rspString, err := myredis.GetKeyNilIsErr("group_messagelist_" + groupId)
-	if err == nil {
-		var rsp []userresp.GetMessageListRespond
-		if err := json.Unmarshal([]byte(rspString), &rsp); err != nil {
-			zlog.Error("解析缓存消息失败: " + err.Error())
-			return
-		}
-		rsp = append(rsp, *messageRsp)
-		rspByte, err := json.Marshal(rsp)
-		if err != nil {
-			zlog.Error("序列化缓存消息失败: " + err.Error())
-			return
-		}
-		if err := myredis.SetKeyEx("group_messagelist_"+groupId, string(rspByte), time.Minute*constants.REDIS_TIMEOUT); err != nil {
 			zlog.Error("设置缓存失败: " + err.Error())
 		}
 	} else {
@@ -717,44 +477,6 @@ func (s *Server) PushNotification(userId string, notification interface{}) {
 			zlog.Warn("用户 " + userId + " 的通知通道已满，丢弃通知")
 		}
 	}
-}
-
-// checkFriendRestriction 检查非好友消息限制
-// 返回值：(是否允许发送, 错误信息)
-func (s *Server) checkFriendRestriction(sendId, receiveId, sessionId string) (bool, string) {
-	// 查询是否为好友
-	isFriend, err := s.contactDAO.IsFriend(sendId, receiveId)
-	if err != nil {
-		zlog.Error("查询好友关系失败: " + err.Error())
-		return false, "查询好友关系失败"
-	}
-
-	// 好友无限制
-	if isFriend {
-		return true, ""
-	}
-
-	// 非好友限制：对方未回复前只能发一条消息
-	// 统计当前用户在该会话中发送的消息数
-	sentCount, err := s.messageDAO.CountMessagesBySenderInSession(sessionId, sendId)
-	if err != nil {
-		zlog.Error("查询发送消息数失败: " + err.Error())
-		return false, "查询消息数失败"
-	}
-
-	// 如果已发送过消息，检查对方是否回复过
-	if sentCount >= 1 {
-		replyCount, err := s.messageDAO.CountMessagesBySenderInSession(sessionId, receiveId)
-		if err != nil {
-			zlog.Error("查询回复消息数失败: " + err.Error())
-			return false, "查询回复数失败"
-		}
-		if replyCount == 0 {
-			return false, "对方回复前只能发送一条消息"
-		}
-	}
-
-	return true, ""
 }
 
 // sendErrorToClient 发送错误消息给客户端

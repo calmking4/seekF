@@ -19,9 +19,7 @@
       </div>
       </div>
       <Transition name="notification-panel" mode="out-in">
-      <section :key="activeCategory" id="notification-list" class="list-panel flex min-h-0 flex-1 flex-col" role="tabpanel" :aria-labelledby="`tab-${activeCategory}`" :aria-busy="!isContactCategory && loading">
-        <ContactNotifications v-if="isContactCategory" />
-        <template v-else>
+      <section :key="activeCategory" id="notification-list" class="list-panel flex min-h-0 flex-1 flex-col" role="tabpanel" :aria-labelledby="`tab-${activeCategory}`" :aria-busy="loading">
         <div class="list-toolbar shrink-0">
           <h2>{{ currentCategory.label }}<span v-if="total > 0">{{ total }}</span></h2>
           <div class="toolbar-actions">
@@ -79,7 +77,6 @@
         </Transition>
         <div ref="loadTrigger" class="load-trigger" aria-hidden="true" />
         </div>
-        </template>
       </section>
       </Transition>
     </div>
@@ -95,11 +92,9 @@ const categories = [
   { key: 'comments', label: '评论', icon: 'uil:comment-dots' },
   { key: 'likes', label: '赞和收藏', icon: 'uil:heart' },
   { key: 'follows', label: '新增关注', icon: 'uil:user-check', iconClass: 'text-emerald-400' },
-  { key: 'contacts', label: '好友和群', icon: 'uil:users-alt', iconClass: 'text-amber-400' },
   { key: 'support', label: '助力', icon: 'mdi:hand-heart-outline' },
 ]
 const activeCategory = ref('comments')
-const isContactCategory = computed(() => activeCategory.value === 'contacts')
 const activeIndex = computed(() => categories.findIndex(item => item.key === activeCategory.value))
 const switchDirection = ref(1)
 const currentCategory = computed(() => categories.find(item => item.key === activeCategory.value))
@@ -144,7 +139,6 @@ const formatTime = value => {
 }
 
 async function loadList(reset = false) {
-  if (isContactCategory.value) return
   if (!reset && (loading.value || !hasMore.value)) return
   const version = ++requestVersion
   const nextPage = reset ? 1 : page.value + 1
@@ -179,7 +173,6 @@ async function selectCategory(category) {
   total.value = 0
   loading.value = true
   error.value = ''
-  if (isContactCategory.value) { loading.value = false; return }
   try {
     // 后端标记整个分类，包含尚未加载的分页记录。
     await markCategoryAsRead(category)

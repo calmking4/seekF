@@ -6,7 +6,6 @@ import {
   Radio,
   Users,
   Files,
-  Layers3,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
@@ -222,15 +221,6 @@ export default function OverviewPage({
           <ServiceStatus system={system} />
           <Card className="p-6">
             <h2 className="font-semibold">业务资源</h2>
-            <div className="mt-5 flex items-center justify-between text-sm">
-              <span className="flex items-center gap-2 text-slate-500">
-                <Layers3 className="size-4" />
-                群组数量
-              </span>
-              <b className="font-semibold tabular-nums">
-                {number(overview?.groups)}
-              </b>
-            </div>
             <div className="mt-4 flex items-center justify-between text-sm">
               <span className="flex items-center gap-2 text-slate-500">
                 <Database className="size-4" />

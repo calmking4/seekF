@@ -44,14 +44,6 @@
             <div class="font-medium text-gray-900">{{ item.nickname }}</div>
             <div class="text-sm text-gray-500 truncate">{{ item.signature || '这个人很懒，什么都没写~' }}</div>
           </div>
-
-          <!-- 好友标签 -->
-          <span
-            v-if="item.is_friend"
-            class="text-xs px-2 py-1 rounded-full bg-blue-50 text-blue-500"
-          >
-            好友
-          </span>
         </div>
       </div>
 

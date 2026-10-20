@@ -38,7 +38,7 @@ func (c *SessionController) OpenSession(ctx *gin.Context) {
 		return
 	}
 
-	// 调用服务层方法（返回包含好友状态的详细信息）
+	// 打开无需好友关系的用户私聊。
 	result, err := c.sessionService.OpenSessionWithInfo(userUuid.(string), openSessionReq.ReceiveId)
 	if err != nil {
 		zlog.Info("打开会话服务错误: " + err.Error())
@@ -49,7 +49,7 @@ func (c *SessionController) OpenSession(ctx *gin.Context) {
 	resp.Success(ctx, "会话创建成功", result)
 }
 
-// GetSessionList 获取会话列表（用户和群聊）
+// GetSessionList 获取用户私聊会话列表。
 func (c *SessionController) GetSessionList(ctx *gin.Context) {
 	// 从上下文获取当前用户UUID
 	userUuid, exists := ctx.Get("Uuid")

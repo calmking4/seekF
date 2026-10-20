@@ -7,5 +7,4 @@ type GetSessionListRespond struct {
 	Name          string `json:"name"`
 	LastMessage   string `json:"last_message"`
 	LastMessageAt string `json:"last_message_at"`
-	IsFriend      bool   `json:"is_friend"`
 }

@@ -881,7 +881,6 @@ func (c *DiscoverController) GetUserProfile(ctx *gin.Context) {
 		FollowingCount: profile.FollowingCount,
 		FollowerCount:  profile.FollowerCount,
 		IsFollowed:     profile.IsFollowed,
-		IsFriend:       profile.IsFriend,
 		Posts:          items,
 		Total:          profile.Total,
 	})

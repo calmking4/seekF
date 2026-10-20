@@ -29,15 +29,8 @@ func initApp(db *gorm.DB) App {
 	authController := user.NewAuthController(authService)
 	userInfoService := userservice.NewUserInfoService(userInfoDAO)
 	userInfoController := user.NewUserInfoController(userInfoService)
-	groupDAO := userdao.NewGroupDAO(db)
-	contactDAO := userdao.NewContactDAO(db)
 	sessionDAO := userdao.NewSessionDAO(db)
-	contactApplyDAO := userdao.NewContactApplyDAO(db)
-	groupService := userservice.NewGroupService(groupDAO, contactDAO, sessionDAO, userInfoDAO, contactApplyDAO)
-	groupController := user.NewGroupController(groupService)
-	contactService := userservice.NewContactService(contactDAO, sessionDAO, userInfoDAO, groupDAO, contactApplyDAO)
-	contactController := user.NewContactController(contactService)
-	sessionService := userservice.NewSessionService(sessionDAO, userInfoDAO, groupDAO, contactDAO)
+	sessionService := userservice.NewSessionService(sessionDAO, userInfoDAO)
 	sessionController := user.NewSessionController(sessionService)
 	messageDAO := userdao.NewMessageDAO(db)
 	messageService := userservice.NewMessageService(messageDAO, sessionDAO)
@@ -54,9 +47,9 @@ func initApp(db *gorm.DB) App {
 	discoverDAO := userdao.NewDiscoverDAO(db)
 	followDAO := userdao.NewFollowDAO(db)
 	notificationDAO := userdao.NewNotificationDAO(db)
-	discoverService := userservice.NewDiscoverService(discoverDAO, userInfoDAO, contactDAO, followDAO, notificationDAO)
+	discoverService := userservice.NewDiscoverService(discoverDAO, userInfoDAO, followDAO, notificationDAO)
 	discoverController := user.NewDiscoverController(discoverService)
-	followService := userservice.NewFollowService(followDAO, userInfoDAO, contactDAO, notificationDAO)
+	followService := userservice.NewFollowService(followDAO, userInfoDAO, notificationDAO)
 	followController := user.NewFollowController(followService)
 	notificationService := userservice.NewNotificationService(notificationDAO, userInfoDAO, discoverDAO, followDAO)
 	notificationController := user.NewNotificationController(notificationService)
@@ -66,15 +59,13 @@ func initApp(db *gorm.DB) App {
 	supportDAO := userdao.NewSupportDAO(db)
 	supportService := userservice.NewSupportService(supportDAO, userInfoDAO)
 	supportController := user.NewSupportController(supportService)
-	engine := router.SetupRouter(authController, userInfoController, groupController, contactController, sessionController, messageController, fileController, wsController, aiChatController, knowledgeController, discoverController, followController, notificationController, adminController, supportController)
+	engine := router.SetupRouter(authController, userInfoController, sessionController, messageController, fileController, wsController, aiChatController, knowledgeController, discoverController, followController, notificationController, adminController, supportController)
 	esDiscoverDAO := userdao.NewESDiscoverDAO()
 	app := App{
 		Router:         engine,
 		SessionService: sessionService,
 		MessageDAO:     messageDAO,
 		SessionDAO:     sessionDAO,
-		GroupDAO:       groupDAO,
-		ContactDAO:     contactDAO,
 		DiscoverDAO:    discoverDAO,
 		ESDiscoverDAO:  esDiscoverDAO,
 		UserInfoDAO:    userInfoDAO,
@@ -85,13 +76,13 @@ func initApp(db *gorm.DB) App {
 // wire.go:
 
 // DAO ProviderSet — 所有数据访问层依赖
-var daoProviderSet = wire.NewSet(admindao.NewAdminDAO, userdao.NewUserInfoDAO, userdao.NewContactDAO, userdao.NewSessionDAO, userdao.NewGroupDAO, userdao.NewContactApplyDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO, userdao.NewESDiscoverDAO, userdao.NewFollowDAO, userdao.NewNotificationDAO, userdao.NewSupportDAO)
+var daoProviderSet = wire.NewSet(admindao.NewAdminDAO, userdao.NewUserInfoDAO, userdao.NewSessionDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO, userdao.NewESDiscoverDAO, userdao.NewFollowDAO, userdao.NewNotificationDAO, userdao.NewSupportDAO)
 
 // ServiceProviderSet — 所有业务逻辑层依赖
-var serviceProviderSet = wire.NewSet(adminservice.NewAdminService, userservice.NewAuthService, userservice.NewUserInfoService, userservice.NewContactService, userservice.NewGroupService, userservice.NewSessionService, userservice.NewMessageService, userservice.NewFileService, userservice.NewAIChatService, userservice.NewKnowledgeService, userservice.NewDiscoverService, userservice.NewFollowService, userservice.NewNotificationService, userservice.NewSupportService)
+var serviceProviderSet = wire.NewSet(adminservice.NewAdminService, userservice.NewAuthService, userservice.NewUserInfoService, userservice.NewSessionService, userservice.NewMessageService, userservice.NewFileService, userservice.NewAIChatService, userservice.NewKnowledgeService, userservice.NewDiscoverService, userservice.NewFollowService, userservice.NewNotificationService, userservice.NewSupportService)
 
 // controllerProviderSet — 所有控制器依赖
-var controllerProviderSet = wire.NewSet(admin.NewAdminController, user.NewAuthController, user.NewUserInfoController, user.NewContactController, user.NewGroupController, user.NewSessionController, user.NewMessageController, user.NewFileController, user.NewWsController, user.NewAIChatController, user.NewKnowledgeController, user.NewDiscoverController, user.NewFollowController, user.NewNotificationController, user.NewSupportController)
+var controllerProviderSet = wire.NewSet(admin.NewAdminController, user.NewAuthController, user.NewUserInfoController, user.NewSessionController, user.NewMessageController, user.NewFileController, user.NewWsController, user.NewAIChatController, user.NewKnowledgeController, user.NewDiscoverController, user.NewFollowController, user.NewNotificationController, user.NewSupportController)
 
 // App 包含所有需要暴露的依赖
 // 全局单例（websocket、ai 等）需要通过 App 暴露给 main.go 使用
@@ -100,8 +91,6 @@ type App struct {
 	SessionService userservice.SessionService
 	MessageDAO     userdao.MessageDAO
 	SessionDAO     userdao.SessionDAO
-	GroupDAO       userdao.GroupDAO
-	ContactDAO     userdao.ContactDAO
 	DiscoverDAO    userdao.DiscoverDAO
 	ESDiscoverDAO  userdao.ESDiscoverDAO
 	UserInfoDAO    userdao.UserInfoDAO

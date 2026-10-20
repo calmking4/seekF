@@ -4,14 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	userdao "seekF-backend/internal/dao/user_dao"
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
-	contactstatusenum "seekF-backend/internal/pkg/enum/contact_enum/contact_status_enum"
-	groupstatusenum "seekF-backend/internal/pkg/enum/group_enum/group_status_enum"
 	userstatusenum "seekF-backend/internal/pkg/enum/user_enum/user_status_enum"
 	myredis "seekF-backend/internal/pkg/redis"
 	"seekF-backend/internal/pkg/util"
@@ -24,7 +23,6 @@ import (
 // OpenSessionResult 打开会话结果
 type OpenSessionResult struct {
 	SessionId string `json:"session_id"`
-	IsFriend  bool   `json:"is_friend"`
 }
 
 type SessionService interface {
@@ -39,26 +37,24 @@ type SessionService interface {
 type SessionServiceImpl struct {
 	sessionDAO  userdao.SessionDAO
 	userInfoDAO userdao.UserInfoDAO
-	groupDAO    userdao.GroupDAO
-	contactDAO  userdao.ContactDAO
 }
 
+// NewSessionService 构造无需好友关系的用户私聊服务。
 func NewSessionService(
 	sessionDAO userdao.SessionDAO,
 	userInfoDAO userdao.UserInfoDAO,
-	groupDAO userdao.GroupDAO,
-	contactDAO userdao.ContactDAO,
 ) SessionService {
 	return &SessionServiceImpl{
 		sessionDAO:  sessionDAO,
 		userInfoDAO: userInfoDAO,
-		groupDAO:    groupDAO,
-		contactDAO:  contactDAO,
 	}
 }
 
 // OpenSession 打开会话
 func (s *SessionServiceImpl) OpenSession(sendId string, receiveId string) (string, error) {
+	if _, err := s.CheckOpenSessionAllowed(sendId, receiveId); err != nil {
+		return "", err
+	}
 	// 先查询是否存在正常会话
 	session, err := s.sessionDAO.GetSessionBySendAndReceiveId(sendId, receiveId)
 	if err != nil {
@@ -88,35 +84,22 @@ func (s *SessionServiceImpl) OpenSession(sendId string, receiveId string) (strin
 	return session.Uuid, nil
 }
 
-// OpenSessionWithInfo 打开会话并返回详细信息（包括好友状态）
+// OpenSessionWithInfo 打开用户私聊并返回会话编号。
 func (s *SessionServiceImpl) OpenSessionWithInfo(sendId string, receiveId string) (*OpenSessionResult, error) {
 	sessionId, err := s.OpenSession(sendId, receiveId)
 	if err != nil {
 		return nil, err
 	}
 
-	// 查询好友状态（仅单聊）
-	isFriend := false
-	if receiveId[0] == 'U' {
-		isFriend, _ = s.contactDAO.IsFriend(sendId, receiveId)
-	}
-
 	return &OpenSessionResult{
 		SessionId: sessionId,
-		IsFriend:  isFriend,
 	}, nil
 }
 
 // CreateSession 创建会话
 func (s *SessionServiceImpl) CreateSession(sendId string, receiveId string) (string, error) {
-	// 检查发送者是否存在
-	user, err := s.userInfoDAO.FindUserByUuid(sendId)
-	if err != nil {
-		zlog.Error(err.Error())
-		return "", fmt.Errorf("系统错误")
-	}
-	if user == nil {
-		return "", fmt.Errorf("用户不存在")
+	if _, err := s.CheckOpenSessionAllowed(sendId, receiveId); err != nil {
+		return "", err
 	}
 
 	// 创建会话
@@ -125,34 +108,6 @@ func (s *SessionServiceImpl) CreateSession(sendId string, receiveId string) (str
 		SendId:    sendId,
 		ReceiveId: receiveId,
 		CreatedAt: time.Now(),
-	}
-
-	// 根据接收者类型设置会话信息
-	if receiveId[0] == 'U' {
-		// 接收者是用户
-		receiveUser, err := s.userInfoDAO.FindUserByUuid(receiveId)
-		if err != nil {
-			zlog.Error(err.Error())
-			return "", fmt.Errorf("系统错误")
-		}
-		if receiveUser == nil {
-			return "", fmt.Errorf("用户不存在")
-		}
-		if receiveUser.Status == userstatusenum.DISABLE {
-			zlog.Error("该用户被禁用了")
-			return "", fmt.Errorf("该用户被禁用了")
-		}
-	} else {
-		// 接收者是群聊
-		receiveGroup, err := s.groupDAO.GetGroupInfoByUuid(receiveId)
-		if err != nil {
-			zlog.Error(err.Error())
-			return "", fmt.Errorf("系统错误")
-		}
-		if receiveGroup.Status == groupstatusenum.DISABLE {
-			zlog.Error("该群聊被禁用了")
-			return "", fmt.Errorf("该群聊被禁用了")
-		}
 	}
 
 	// 直接保存会话到数据库
@@ -169,135 +124,69 @@ func (s *SessionServiceImpl) CreateSession(sendId string, receiveId string) (str
 	return session.Uuid, nil
 }
 
-// GetSessionList 获取会话列表（用户和群聊）
+// GetSessionList 获取用户私聊列表，过滤旧缓存中的群聊与 AI 会话。
 func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessionListRespond, error) {
-	// 从 Redis 获取会话列表
-	rspString, err := myredis.GetKeyNilIsErr(constants.SessionListKeyPrefix + userId)
+	key := constants.SessionListKeyPrefix + userId
+	cached, err := myredis.GetKeyNilIsErr(key)
+	if err == nil {
+		var list []userresp.GetSessionListRespond
+		if err := json.Unmarshal([]byte(cached), &list); err != nil {
+			return nil, fmt.Errorf("解析私聊会话缓存失败: %w", err)
+		}
+		result := make([]userresp.GetSessionListRespond, 0, len(list))
+		for _, item := range list {
+			if strings.HasPrefix(item.Id, "U") {
+				result = append(result, item)
+			}
+		}
+		return result, nil
+	}
+	if !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("读取私聊会话缓存失败: %w", err)
+	}
+	sessions, err := s.sessionDAO.GetSessionListBySendId(userId)
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			// Redis 中不存在，从数据库获取
-			sessionList, err := s.sessionDAO.GetSessionListBySendId(userId)
-			if err != nil {
-				zlog.Error(err.Error())
-				return nil, fmt.Errorf("系统错误")
-			}
-
-			// 收集所有需要查询的ID，避免 N+1 查询
-			var userIds, groupIds []string
-			for _, session := range sessionList {
-				// 跳过AI会话（ReceiveId以'A'开头）
-				if len(session.ReceiveId) > 0 && session.ReceiveId[0] == 'A' {
-					continue
-				}
-				if session.ReceiveId[0] == 'U' {
-					userIds = append(userIds, session.ReceiveId)
-				} else {
-					groupIds = append(groupIds, session.ReceiveId)
-				}
-			}
-
-			// 批量查询用户和群组信息
-			userMap := make(map[string]*models.UserInfo)
-			groupMap := make(map[string]*models.GroupInfo)
-
-			if len(userIds) > 0 {
-				users, err := s.userInfoDAO.FindUsersByUuids(userIds)
-				if err != nil {
-					zlog.Error("批量获取用户信息失败: " + err.Error())
-				} else {
-					for i := range users {
-						userMap[users[i].Uuid] = &users[i]
-					}
-				}
-			}
-			if len(groupIds) > 0 {
-				groups, err := s.groupDAO.GetGroupsByUuids(groupIds)
-				if err != nil {
-					zlog.Error("批量获取群聊信息失败: " + err.Error())
-				} else {
-					for i := range groups {
-						groupMap[groups[i].Uuid] = &groups[i]
-					}
-				}
-			}
-
-			// 构建响应
-			var sessionListRsp []userresp.GetSessionListRespond
-			for _, session := range sessionList {
-				// 跳过AI会话
-				if len(session.ReceiveId) > 0 && session.ReceiveId[0] == 'A' {
-					continue
-				}
-
-				// 根据 ReceiveId 从 map 中获取头像和名称信息
-				var avatar, name string
-
-				if session.ReceiveId[0] == 'U' {
-					if user, ok := userMap[session.ReceiveId]; ok {
-						avatar = user.Avatar
-						name = user.Nickname
-					} else {
-						// 用户不存在，跳过这个会话
-						continue
-					}
-				} else {
-					if group, ok := groupMap[session.ReceiveId]; ok {
-						avatar = group.Avatar
-						name = group.Name
-					} else {
-						// 群聊不存在，跳过这个会话
-						continue
-					}
-				}
-
-				// 构建会话响应
-				var lastMessageAt string
-				if session.LastMessageAt.Valid {
-					lastMessageAt = session.LastMessageAt.Time.Format("2006-01-02 15:04:05")
-				}
-
-				// 查询好友状态（仅单聊）
-				isFriend := false
-				if session.ReceiveId[0] == 'U' {
-					isFriend, _ = s.contactDAO.IsFriend(userId, session.ReceiveId)
-				}
-
-				sessionRsp := userresp.GetSessionListRespond{
-					SessionId:     session.Uuid,
-					Avatar:        avatar,
-					Id:            session.ReceiveId,
-					Name:          name,
-					LastMessage:   session.LastMessage,
-					LastMessageAt: lastMessageAt,
-					IsFriend:      isFriend,
-				}
-				sessionListRsp = append(sessionListRsp, sessionRsp)
-			}
-
-			// 缓存到 Redis
-			rspString, err := json.Marshal(sessionListRsp)
-			if err != nil {
-				zlog.Error(err.Error())
-			}
-			if err := myredis.SetKeyEx(constants.SessionListKeyPrefix+userId, string(rspString), time.Minute*constants.REDIS_TIMEOUT); err != nil {
-				zlog.Error(err.Error())
-			}
-
-			return sessionListRsp, nil
-		} else {
-			zlog.Error(err.Error())
-			return nil, fmt.Errorf("系统错误")
+		return nil, fmt.Errorf("查询私聊会话失败: %w", err)
+	}
+	var ids []string
+	for _, session := range sessions {
+		if strings.HasPrefix(session.ReceiveId, "U") {
+			ids = append(ids, session.ReceiveId)
 		}
 	}
-
-	// 从 Redis 缓存中获取
-	var sessionListRsp []userresp.GetSessionListRespond
-	if err := json.Unmarshal([]byte(rspString), &sessionListRsp); err != nil {
-		zlog.Error(err.Error())
-		return nil, fmt.Errorf("系统错误")
+	users := make(map[string]models.UserInfo)
+	if len(ids) > 0 {
+		list, err := s.userInfoDAO.FindUsersByUuids(ids)
+		if err != nil {
+			return nil, fmt.Errorf("批量查询私聊用户失败: %w", err)
+		}
+		for _, user := range list {
+			users[user.Uuid] = user
+		}
 	}
-
-	return sessionListRsp, nil
+	result := make([]userresp.GetSessionListRespond, 0, len(ids))
+	for _, session := range sessions {
+		user, ok := users[session.ReceiveId]
+		if !ok {
+			continue
+		}
+		var lastMessageAt string
+		if session.LastMessageAt.Valid {
+			lastMessageAt = session.LastMessageAt.Time.Format("2006-01-02 15:04:05")
+		}
+		result = append(result, userresp.GetSessionListRespond{
+			SessionId: session.Uuid, Id: session.ReceiveId, Name: user.Nickname,
+			Avatar: user.Avatar, LastMessage: session.LastMessage, LastMessageAt: lastMessageAt,
+		})
+	}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("序列化私聊会话失败: %w", err)
+	}
+	if err := myredis.SetKeyEx(key, string(payload), time.Minute*constants.REDIS_TIMEOUT); err != nil {
+		zlog.Error("缓存私聊会话失败: " + err.Error())
+	}
+	return result, nil
 }
 
 // DeleteSession 删除会话
@@ -316,44 +205,22 @@ func (s *SessionServiceImpl) DeleteSession(userId string, sessionId string) erro
 	return nil
 }
 
-// CheckOpenSessionAllowed 检查是否可以打开会话
+// CheckOpenSessionAllowed 检查双方用户状态及私聊目标，不依赖联系人关系。
 func (s *SessionServiceImpl) CheckOpenSessionAllowed(sendId string, receiveId string) (bool, error) {
-	// 检查发送者和接收者之间的联系人关系
-	contact, err := s.contactDAO.GetUserContactByUserIdAndContactId(sendId, receiveId)
-	if err != nil {
-		zlog.Error(err.Error())
-		return false, fmt.Errorf("系统错误")
+	if !strings.HasPrefix(sendId, "U") || !strings.HasPrefix(receiveId, "U") || sendId == receiveId {
+		return false, fmt.Errorf("只能与其他用户发起私聊")
 	}
-
-	// 检查联系人状态
-	if contact.Status == contactstatusenum.BE_BLACK {
-		return false, fmt.Errorf("已被对方拉黑，无法发起会话")
-	} else if contact.Status == contactstatusenum.BLACK {
-		return false, fmt.Errorf("已拉黑对方，先解除拉黑状态才能发起会话")
-	}
-
-	// 检查接收者状态
-	if receiveId[0] == 'U' {
-		// 接收者是用户
-		user, err := s.userInfoDAO.FindUserByUuid(receiveId)
+	for _, id := range []string{sendId, receiveId} {
+		user, err := s.userInfoDAO.FindUserByUuid(id)
+		if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && user == nil) {
+			return false, fmt.Errorf("私聊用户不存在")
+		}
 		if err != nil {
-			zlog.Error(err.Error())
-			return false, fmt.Errorf("系统错误")
+			return false, fmt.Errorf("查询私聊用户失败: %w", err)
 		}
 		if user.Status == userstatusenum.DISABLE {
-			return false, fmt.Errorf("对方已被禁用，无法发起会话")
-		}
-	} else {
-		// 接收者是群聊
-		group, err := s.groupDAO.GetGroupInfoByUuid(receiveId)
-		if err != nil {
-			zlog.Error(err.Error())
-			return false, fmt.Errorf("系统错误")
-		}
-		if group.Status == groupstatusenum.DISABLE {
-			return false, fmt.Errorf("对方已被禁用，无法发起会话")
+			return false, fmt.Errorf("用户已被禁用，无法私聊")
 		}
 	}
-
 	return true, nil
 }

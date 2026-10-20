@@ -3,6 +3,7 @@ package websocket
 import (
 	"encoding/json"
 	"net/http"
+	"seekF-backend/internal/pkg/enum/message_enum/message_type_enum"
 	"strings"
 	"time"
 
@@ -95,7 +96,13 @@ func (c *Client) Read() {
 
 		var message = userreq.ChatMessageRequest{}
 		if err := json.Unmarshal(jsonMessage, &message); err != nil {
-			zlog.Error(err.Error())
+			zlog.Error("解析私聊消息失败: " + err.Error())
+			continue
+		}
+		if message.SendId != c.Uuid || !strings.HasPrefix(message.ReceiveId, "U") ||
+			(message.Type != message_type_enum.Text && message.Type != message_type_enum.File) {
+			ChatServer.sendErrorToClient(c.Uuid, "仅支持当前用户发送私聊文字或文件消息")
+			continue
 		}
 		// zlog.Info("接受到消息为: " + string(jsonMessage))
 

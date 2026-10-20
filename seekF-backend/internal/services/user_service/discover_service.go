@@ -83,7 +83,6 @@ type DiscoverService interface {
 type DiscoverServiceImpl struct {
 	discoverDAO     userdao.DiscoverDAO
 	userInfoDAO     userdao.UserInfoDAO
-	contactDAO      userdao.ContactDAO
 	followDAO       userdao.FollowDAO
 	notificationDAO userdao.NotificationDAO
 }
@@ -187,11 +186,10 @@ type FolderDetailInfo struct {
 }
 
 // NewDiscoverService 构造发现页业务服务并注入数据访问依赖。
-func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.UserInfoDAO, contactDAO userdao.ContactDAO, followDAO userdao.FollowDAO, notificationDAO userdao.NotificationDAO) DiscoverService {
+func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.UserInfoDAO, followDAO userdao.FollowDAO, notificationDAO userdao.NotificationDAO) DiscoverService {
 	return &DiscoverServiceImpl{
 		discoverDAO:     discoverDAO,
 		userInfoDAO:     userInfoDAO,
-		contactDAO:      contactDAO,
 		followDAO:       followDAO,
 		notificationDAO: notificationDAO,
 	}
@@ -1595,7 +1593,6 @@ type UserProfileInfo struct {
 	FollowingCount int64
 	FollowerCount  int64
 	IsFollowed     bool
-	IsFriend       bool
 	Posts          []PostInfo
 	Total          int64
 }
@@ -1627,15 +1624,6 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 		totalLikes = 0
 	}
 
-	// 查询是否为好友
-	isFriend := false
-	if currentUserId != "" && currentUserId != profileUserId {
-		contact, _ := s.contactDAO.GetUserContactByUserIdAndContactId(currentUserId, profileUserId)
-		if contact != nil && contact.Status == 0 {
-			isFriend = true
-		}
-	}
-
 	postInfos, _, err := s.buildPostInfoList(ctx, currentUserId, posts, total)
 	if err != nil {
 		return nil, err
@@ -1660,7 +1648,6 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 		FollowingCount: user.FollowingCount,
 		FollowerCount:  user.FollowerCount,
 		IsFollowed:     isFollowed,
-		IsFriend:       isFriend,
 		Posts:          postInfos,
 		Total:          total,
 	}, nil

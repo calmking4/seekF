@@ -1,7 +1,6 @@
 // WebSocket 连接管理
 let wsInstance = null
 let messageCallbacks = []
-let avCallCallbacks = [] // 音视频通话回调
 let reconnectAttempts = 0
 let pingInterval = null // 心跳定时器
 const maxReconnectAttempts = 5
@@ -89,10 +88,6 @@ export const useWebSocket = () => {
                     }
                     // 调用所有注册的回调函数
                     messageCallbacks.forEach(callback => callback(data))
-                    // 如果是音视频消息，调用音视频回调
-                    if (data.type === 3) {
-                        avCallCallbacks.forEach(callback => callback(data))
-                    }
                 } catch (e) {
                     console.log('WebSocket 收到非 JSON 消息:', event.data)
                     messageCallbacks.forEach(callback => callback(event.data))
@@ -188,7 +183,6 @@ export const useWebSocket = () => {
     // 清除所有回调
     const clearCallbacks = () => {
         messageCallbacks = []
-        avCallCallbacks = []
     }
 
     // 移除指定的消息回调
@@ -196,20 +190,6 @@ export const useWebSocket = () => {
         const index = messageCallbacks.indexOf(callback)
         if (index > -1) {
             messageCallbacks.splice(index, 1)
-        }
-    }
-
-    // 注册音视频通话回调（组件卸载时自动清理）
-    const onAVCall = (callback) => {
-        avCallCallbacks.push(callback)
-        // 自动清理
-        autoCleanupOnUnmount(callback, avCallCallbacks)
-        // 返回取消注册的函数
-        return () => {
-            const index = avCallCallbacks.indexOf(callback)
-            if (index > -1) {
-                avCallCallbacks.splice(index, 1)
-            }
         }
     }
 
@@ -232,8 +212,7 @@ export const useWebSocket = () => {
             receive_id: receiveId,
             file_size: '',
             file_type: '',
-            file_name: '',
-            av_data: ''
+            file_name: ''
         })
     }
 
@@ -256,32 +235,7 @@ export const useWebSocket = () => {
             receive_id: receiveId,
             file_size: fileSize,
             file_type: fileType,
-            file_name: fileName,
-            av_data: ''
-        })
-    }
-
-    // 发送音视频通话消息
-    const sendAVCallMessage = (sessionId, avData, receiveId) => {
-        const currentUser = user.getUser()
-        if (!currentUser) {
-            console.error('用户未登录')
-            return false
-        }
-
-        return send({
-            session_id: sessionId,
-            type: 3, // 音视频通话消息
-            content: '',
-            url: '',
-            send_id: currentUser.uuid,
-            send_name: currentUser.nickname || currentUser.uuid,
-            send_avatar: currentUser.avatar || '',
-            receive_id: receiveId,
-            file_size: '',
-            file_type: '',
-            file_name: '',
-            av_data: JSON.stringify(avData)
+            file_name: fileName
         })
     }
 
@@ -291,11 +245,9 @@ export const useWebSocket = () => {
         disconnect,
         send,
         onMessage,
-        onAVCall,
         clearCallbacks,
         removeMessageCallback,
         sendTextMessage,
-        sendFileMessage,
-        sendAVCallMessage
+        sendFileMessage
     }
 }

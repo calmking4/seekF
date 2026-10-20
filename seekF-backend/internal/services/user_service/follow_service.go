@@ -30,22 +30,19 @@ type FollowUserInfo struct {
 	Nickname  string
 	Avatar    string
 	Signature string
-	IsFriend  bool
 }
 
 type FollowServiceImpl struct {
 	followDAO       userdao.FollowDAO
 	userInfoDAO     userdao.UserInfoDAO
-	contactDAO      userdao.ContactDAO
 	notificationDAO userdao.NotificationDAO
 }
 
 // NewFollowService 构造关注服务并注入列表查询依赖。
-func NewFollowService(followDAO userdao.FollowDAO, userInfoDAO userdao.UserInfoDAO, contactDAO userdao.ContactDAO, notificationDAO userdao.NotificationDAO) FollowService {
+func NewFollowService(followDAO userdao.FollowDAO, userInfoDAO userdao.UserInfoDAO, notificationDAO userdao.NotificationDAO) FollowService {
 	return &FollowServiceImpl{
 		followDAO:       followDAO,
 		userInfoDAO:     userInfoDAO,
-		contactDAO:      contactDAO,
 		notificationDAO: notificationDAO,
 	}
 }
@@ -123,7 +120,7 @@ func (s *FollowServiceImpl) GetFollowCounts(ctx context.Context, userId string) 
 	return user.FollowingCount, user.FollowerCount, nil
 }
 
-// ListFollowing 分页装配关注用户及当前好友状态。
+// ListFollowing 分页装配关注用户的公开信息。
 func (s *FollowServiceImpl) ListFollowing(ctx context.Context, userId string, page, pageSize int) ([]FollowUserInfo, int64, error) {
 	follows, err := s.followDAO.ListFollowing(userId, page, pageSize)
 	if err != nil {
@@ -142,26 +139,18 @@ func (s *FollowServiceImpl) ListFollowing(ctx context.Context, userId string, pa
 			continue
 		}
 
-		// 检查是否为好友
-		isFriend := false
-		contact, _ := s.contactDAO.GetUserContactByUserIdAndContactId(userId, f.FollowUserId)
-		if contact != nil && contact.Status == 0 {
-			isFriend = true
-		}
-
 		result = append(result, FollowUserInfo{
 			Uuid:      user.Uuid,
 			Nickname:  user.Nickname,
 			Avatar:    user.Avatar,
 			Signature: user.Signature,
-			IsFriend:  isFriend,
 		})
 	}
 
 	return result, total, nil
 }
 
-// ListFollowers 分页装配粉丝及当前好友状态。
+// ListFollowers 分页装配粉丝的公开信息。
 func (s *FollowServiceImpl) ListFollowers(ctx context.Context, userId string, page, pageSize int) ([]FollowUserInfo, int64, error) {
 	follows, err := s.followDAO.ListFollowers(userId, page, pageSize)
 	if err != nil {
@@ -180,20 +169,11 @@ func (s *FollowServiceImpl) ListFollowers(ctx context.Context, userId string, pa
 			continue
 		}
 
-		// 检查是否为好友
-		isFriend := false
-		contact, _ := s.contactDAO.GetUserContactByUserIdAndContactId(userId, f.UserId)
-		if contact != nil && contact.Status == 0 {
-			isFriend = true
-		}
-
-		// 检查我是否关注了这个人（互相关注标记）
 		result = append(result, FollowUserInfo{
 			Uuid:      user.Uuid,
 			Nickname:  user.Nickname,
 			Avatar:    user.Avatar,
 			Signature: user.Signature,
-			IsFriend:  isFriend,
 		})
 	}
 

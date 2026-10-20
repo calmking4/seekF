@@ -48,7 +48,6 @@ func (d *AdminDAO) Overview(ctx context.Context, environment string) (*adminresp
 		daily  bool
 	}{
 		{&models.UserInfo{}, &result.Users, false},
-		{&models.GroupInfo{}, &result.Groups, false},
 		{&models.DiscoverPost{}, &result.Posts, false},
 		{&models.Knowledge{}, &result.Knowledge, false},
 		{&models.Message{}, &result.TodayMessages, true},
