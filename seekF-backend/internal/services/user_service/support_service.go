@@ -253,6 +253,9 @@ func (s *SupportServiceImpl) CreateOrder(ctx context.Context, userId, creatorId,
 			return err
 		}
 		result = &models.SupportOrder{Environment: cfg.Environment, OrderNo: "SO" + strings.ReplaceAll(uuid.NewString(), "-", ""), UserId: userId, CreatorId: creatorId, RequestKey: requestKey, Channel: "alipay", Amount: activate.Price, DurationHours: constants.SupportDurationHours, ExpiresAt: now.Add(constants.SupportOrderTimeout), NextAttemptAt: now.Add(time.Minute)}
+		if err := setSupportSettlementSnapshot(result); err != nil {
+			return err
+		}
 		return dao.CreateOrder(result)
 	})
 	if err != nil {
@@ -317,6 +320,8 @@ func (s *SupportServiceImpl) ListSupport(ctx context.Context, userId, kind strin
 	cfg := configs.GetConfig().AlipayConfig
 	dao := userdao.NewSupportDAO(db.GormDB.WithContext(ctx))
 	switch kind {
+	case "balance", "ledger":
+		return listSupportSettlement(ctx, userId, kind, page)
 	case "received":
 		rows, total, err := dao.ListReceivedOrders(cfg.Environment, userId, page)
 		if err != nil {
@@ -400,6 +405,9 @@ func applySupportTrade(ctx context.Context, environment string, trade *payment.A
 			paidAt, err := time.ParseInLocation("2006-01-02 15:04:05", trade.PaidTime, time.FixedZone("CST", 8*3600))
 			if err != nil {
 				return fmt.Errorf("支付宝付款时间格式错误")
+			}
+			if err := applySupportSettlement(tx, row, constants.SupportLedgerIncome); err != nil {
+				return err
 			}
 			entitlement, err := dao.LockEntitlement(environment, row.UserId, row.CreatorId)
 			if err != nil {
@@ -561,6 +569,9 @@ func (s *SupportServiceImpl) RequestRefund(ctx context.Context, userId, orderNo,
 		if !canRequestSupportRefund(row, now) {
 			return fmt.Errorf("该订单已申请退款或不在付款后7天内")
 		}
+		if err := applySupportSettlement(tx, row, constants.SupportLedgerReserve); err != nil {
+			return err
+		}
 		return dao.UpdateOrder(row.Id, map[string]any{"refund_status": constants.SupportRefundPending, "refund_requested_at": now, "refund_reason": reason, "refund_request_no": "SR" + strings.ReplaceAll(uuid.NewString(), "-", "")})
 	})
 }
@@ -606,6 +617,12 @@ func ReviewSupportRefund(ctx context.Context, adminId, orderNo, action, note str
 		default:
 			return fmt.Errorf("审核操作无效")
 		}
+		// 渠道已有退款金额时，驳回本站申请也不能释放资金差异预留。
+		if status == constants.SupportRefundRejected && row.ChannelRefundAmount.IsZero() {
+			if err := applySupportSettlement(tx, row, constants.SupportLedgerRelease); err != nil {
+				return err
+			}
+		}
 		return dao.UpdateOrder(row.Id, map[string]any{"refund_status": status, "refund_reviewer_id": adminId, "refund_reviewed_at": time.Now(), "refund_review_note": note, "processing_until": nil, "next_attempt_at": time.Now(), "last_error": ""})
 	})
 }
@@ -640,6 +657,9 @@ func confirmSupportRefund(ctx context.Context, row models.SupportOrder, refunded
 		}
 		if current.RefundStatus == constants.SupportRefundSucceeded {
 			return nil
+		}
+		if err := applySupportSettlement(tx, current, constants.SupportLedgerRefund); err != nil {
+			return err
 		}
 		entitlement, err := dao.LockEntitlement(current.Environment, current.UserId, current.CreatorId)
 		if err != nil {
@@ -836,6 +856,11 @@ func auditSupportRefundBill(ctx context.Context, row *models.SupportOrder) error
 			return nil
 		}
 		row.ChannelRefundAmount = current.ChannelRefundAmount.Add(amount)
+		if row.ChannelRefundAmount.IsPositive() && current.RefundStatus != constants.SupportRefundSucceeded {
+			if err := applySupportSettlement(tx, current, constants.SupportLedgerAuditReserve); err != nil {
+				return err
+			}
+		}
 		return dao.UpdateOrder(row.Id, map[string]any{"channel_refund_amount": row.ChannelRefundAmount, "refund_checked_date": day})
 	})
 	if err != nil {
@@ -843,6 +868,178 @@ func auditSupportRefundBill(ctx context.Context, row *models.SupportOrder) error
 	}
 	if day.AddDate(0, 0, 1).Before(today) && row.ChannelRefundAmount.IsZero() {
 		return fmt.Errorf("渠道历史退款账单核对尚未完成")
+	}
+	return nil
+}
+
+// ========== 收益账户、分配与退款联动 ==========
+
+// listSupportSettlement 查询本人当前环境余额与分页流水，金额始终输出两位小数字符串。
+func listSupportSettlement(ctx context.Context, userId, kind string, page int) (any, error) {
+	dao := userdao.NewSupportSettlementDAO(db.GormDB.WithContext(ctx))
+	environment := configs.GetConfig().AlipayConfig.Environment
+	if kind == "balance" {
+		row, err := dao.FindAccount(environment, userId)
+		if err != nil {
+			return nil, fmt.Errorf("查询收益账户失败: %w", err)
+		}
+		return map[string]any{"available_amount": row.AvailableAmount.StringFixed(2), "refund_frozen_amount": row.RefundFrozenAmount.StringFixed(2), "refund_reserve_amount": row.RefundReserveAmount.StringFixed(2), "withdraw_frozen_amount": row.WithdrawFrozenAmount.StringFixed(2), "debt_amount": row.DebtAmount.StringFixed(2), "income_amount": row.IncomeAmount.StringFixed(2), "refund_amount": row.RefundAmount.StringFixed(2), "withdrawn_amount": row.WithdrawnAmount.StringFixed(2)}, nil
+	}
+	rows, total, err := dao.ListLedger(environment, userId, page)
+	if err != nil {
+		return nil, fmt.Errorf("查询收益流水失败: %w", err)
+	}
+	result := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, map[string]any{"id": row.Id, "order_no": row.OrderNo, "kind": row.Kind, "amount": row.Amount.StringFixed(2), "offset_amount": row.OffsetAmount.StringFixed(2), "available_delta": row.AvailableDelta.StringFixed(2), "available_after": row.AvailableAfter.StringFixed(2), "created_at": row.CreatedAt})
+	}
+	return map[string]any{"list": result, "total": total}, nil
+}
+
+// setSupportSettlementSnapshot 为新订单计算不可变份额，历史订单不补写快照。
+func setSupportSettlementSnapshot(row *models.SupportOrder) error {
+	rate := constants.SupportPlatformRateBPS
+	if configured := configs.GetConfig().SupportSettlementConfig.PlatformRateBPS; configured != nil {
+		rate = *configured
+	}
+	if rate < 0 || rate > constants.SupportRateBase {
+		return fmt.Errorf("平台抽成比例必须为0至10000基点")
+	}
+	row.SettlementVersion = constants.SupportSettlementVersion
+	row.PlatformRateBPS = rate
+	row.CreatorAmount = row.Amount.Mul(decimal.NewFromInt(int64(constants.SupportRateBase - rate))).Div(decimal.NewFromInt(constants.SupportRateBase)).Truncate(2)
+	return nil
+}
+
+// normalizeSupportBalance 优先抵扣已确认欠款，再覆盖待退款预留，不动在途提现资金。
+func normalizeSupportBalance(account *models.SupportAccount, pool decimal.Decimal) decimal.Decimal {
+	if pool.IsNegative() {
+		account.DebtAmount = account.DebtAmount.Sub(pool)
+		pool = decimal.Zero
+	}
+	offset := decimal.Min(pool, account.DebtAmount)
+	account.DebtAmount = account.DebtAmount.Sub(offset)
+	pool = pool.Sub(offset)
+	account.RefundFrozenAmount = decimal.Min(pool, account.RefundReserveAmount)
+	account.AvailableAmount = pool.Sub(account.RefundFrozenAmount)
+	return offset
+}
+
+// checkSupportBalance 校验非负余额与资金守恒，异常时阻止业务事务提交。
+func checkSupportBalance(account *models.SupportAccount) error {
+	for _, amount := range []decimal.Decimal{account.AvailableAmount, account.RefundFrozenAmount, account.RefundReserveAmount, account.WithdrawFrozenAmount, account.DebtAmount, account.IncomeAmount, account.RefundAmount, account.WithdrawnAmount} {
+		if amount.IsNegative() || !amount.Equal(amount.Truncate(2)) {
+			return fmt.Errorf("创作者收益账户金额异常")
+		}
+	}
+	if account.RefundFrozenAmount.GreaterThan(account.RefundReserveAmount) || (account.DebtAmount.IsPositive() && account.AvailableAmount.IsPositive()) {
+		return fmt.Errorf("创作者收益账户冻结或抵扣状态异常")
+	}
+	left := account.AvailableAmount.Add(account.RefundFrozenAmount).Add(account.WithdrawFrozenAmount).Sub(account.DebtAmount)
+	right := account.IncomeAmount.Sub(account.RefundAmount).Sub(account.WithdrawnAmount)
+	if !left.Equal(right) {
+		return fmt.Errorf("创作者收益账户资金不守恒")
+	}
+	return nil
+}
+
+// applySupportSettlement 在已持有订单锁的业务事务中变更余额、流水及订单幂等标记。
+func applySupportSettlement(tx *gorm.DB, row *models.SupportOrder, kind string) error {
+	// 历史订单仅展示原统计，不自动生成可提现余额。
+	if row.SettlementVersion == 0 {
+		return nil
+	}
+	if row.SettlementVersion != constants.SupportSettlementVersion || row.PlatformRateBPS < 0 || row.PlatformRateBPS > constants.SupportRateBase || row.CreatorAmount.IsNegative() || row.CreatorAmount.GreaterThan(row.Amount) {
+		return fmt.Errorf("助力订单收益快照异常")
+	}
+	expected := row.Amount.Mul(decimal.NewFromInt(int64(constants.SupportRateBase - row.PlatformRateBPS))).Div(decimal.NewFromInt(constants.SupportRateBase)).Truncate(2)
+	if !row.CreatorAmount.Equal(expected) {
+		return fmt.Errorf("助力订单收益份额与抽成比例不匹配")
+	}
+	changes := map[string]any{}
+	switch kind {
+	case constants.SupportLedgerIncome:
+		if row.SettlementCredited {
+			return nil
+		}
+		changes["settlement_credited"] = true
+	case constants.SupportLedgerReserve, constants.SupportLedgerAuditReserve:
+		if !row.SettlementCredited {
+			return fmt.Errorf("退款预留缺少收益入账记录")
+		}
+		if row.RefundReserved {
+			return nil
+		}
+		changes["refund_reserved"] = true
+	case constants.SupportLedgerRelease:
+		if !row.SettlementCredited {
+			return fmt.Errorf("退款释放缺少收益入账记录")
+		}
+		if !row.RefundReserved {
+			return nil
+		}
+		changes["refund_reserved"] = false
+	case constants.SupportLedgerRefund:
+		if !row.SettlementCredited {
+			return fmt.Errorf("助力退款缺少收益入账记录")
+		}
+		if row.RefundStatus == constants.SupportRefundSucceeded {
+			return nil
+		}
+		changes["refund_reserved"] = false
+	default:
+		return fmt.Errorf("收益流水类型无效")
+	}
+	dao := userdao.NewSupportSettlementDAO(tx)
+	account, err := dao.LockAccount(row.Environment, row.CreatorId)
+	if err != nil {
+		return fmt.Errorf("锁定创作者收益账户失败: %w", err)
+	}
+	if err := checkSupportBalance(account); err != nil {
+		return err
+	}
+	before := account.AvailableAmount
+	pool := account.AvailableAmount.Add(account.RefundFrozenAmount)
+	switch kind {
+	case constants.SupportLedgerIncome:
+		pool = pool.Add(row.CreatorAmount)
+		account.IncomeAmount = account.IncomeAmount.Add(row.CreatorAmount)
+	case constants.SupportLedgerReserve, constants.SupportLedgerAuditReserve:
+		account.RefundReserveAmount = account.RefundReserveAmount.Add(row.CreatorAmount)
+	case constants.SupportLedgerRelease:
+		account.RefundReserveAmount = account.RefundReserveAmount.Sub(row.CreatorAmount)
+	case constants.SupportLedgerRefund:
+		if row.RefundReserved {
+			account.RefundReserveAmount = account.RefundReserveAmount.Sub(row.CreatorAmount)
+		}
+		pool = pool.Sub(row.CreatorAmount)
+		account.RefundAmount = account.RefundAmount.Add(row.CreatorAmount)
+	}
+	if account.RefundReserveAmount.IsNegative() {
+		return fmt.Errorf("退款预留金额不足，请核对收益流水")
+	}
+	offset := normalizeSupportBalance(account, pool)
+	if err := checkSupportBalance(account); err != nil {
+		return err
+	}
+	if err := dao.SaveAccount(account); err != nil {
+		return fmt.Errorf("保存创作者收益账户失败: %w", err)
+	}
+	ledger := &models.SupportLedger{Environment: row.Environment, CreatorId: row.CreatorId, OrderNo: row.OrderNo, Kind: kind, Amount: row.CreatorAmount, OffsetAmount: offset, AvailableDelta: account.AvailableAmount.Sub(before), AvailableAfter: account.AvailableAmount}
+	if err := dao.CreateLedger(ledger); err != nil {
+		return fmt.Errorf("保存创作者收益流水失败: %w", err)
+	}
+	if err := userdao.NewSupportDAO(tx).UpdateOrder(row.Id, changes); err != nil {
+		return fmt.Errorf("保存订单收益状态失败: %w", err)
+	}
+	if kind == constants.SupportLedgerIncome {
+		row.SettlementCredited = true
+	}
+	if kind == constants.SupportLedgerReserve || kind == constants.SupportLedgerAuditReserve {
+		row.RefundReserved = true
+	}
+	if kind == constants.SupportLedgerRelease || kind == constants.SupportLedgerRefund {
+		row.RefundReserved = false
 	}
 	return nil
 }

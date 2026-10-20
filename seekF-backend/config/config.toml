@@ -3,6 +3,9 @@ appName = "seekF"
 host = "0.0.0.0"
 port = 8000
 
+[supportSettlementConfig]
+platformRateBPS = 1000 # 平台抽成基点，1000表示10%，仅影响新订单
+
 [alipayConfig]
 environment = "sandbox" # sandbox或production
 appID = ""

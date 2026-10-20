@@ -56,6 +56,11 @@ type OSSConfig struct {
 	BaseURL         string `toml:"baseURL"`
 }
 
+// SupportSettlementConfig 创作者收益分配配置，比例单位为基点。
+type SupportSettlementConfig struct {
+	PlatformRateBPS *int `toml:"platformRateBPS"`
+}
+
 // AlipayConfig 支付宝支付配置
 type AlipayConfig struct {
 	Environment     string `toml:"environment"`
@@ -138,28 +143,29 @@ type AuthConfig struct {
 }
 
 type Config struct {
-	AlipayConfig       `toml:"alipayConfig"`
-	DiscoverFeedConfig `toml:"discoverFeedConfig"`
-	MainConfig         `toml:"mainConfig"`
-	MysqlConfig        `toml:"mysqlConfig"`
-	RedisConfig        `toml:"redisConfig"`
-	AuthCodeConfig     `toml:"authCodeConfig"`
-	EmailConfig        `toml:"emailConfig"`
-	OSSConfig          `toml:"ossConfig"`
-	LogConfig          `toml:"logConfig"`
-	KafkaConfig        `toml:"kafkaConfig"`
-	StaticSrcConfig    `toml:"staticSrcConfig"`
-	JWTConfig          `toml:"jwtConfig"`
-	AuthConfig         `toml:"authConfig"`
-	AIModelConfig      `toml:"aiModelConfig"`
-	QdrantConfig       `toml:"qdrantConfig"`
-	SeniverseConfig    `toml:"seniverseConfig"`
-	ExchangeRateConfig `toml:"exchangeRateConfig"`
-	TavilyConfig       `toml:"tavilyConfig"`
-	ESConfig           `toml:"esConfig"`
-	WSConfig           `toml:"wsConfig"`
-	GithubOAuthConfig  `toml:"githubOAuthConfig"`
-	GiteeOAuthConfig   `toml:"giteeOAuthConfig"`
+	SupportSettlementConfig `toml:"supportSettlementConfig"`
+	AlipayConfig            `toml:"alipayConfig"`
+	DiscoverFeedConfig      `toml:"discoverFeedConfig"`
+	MainConfig              `toml:"mainConfig"`
+	MysqlConfig             `toml:"mysqlConfig"`
+	RedisConfig             `toml:"redisConfig"`
+	AuthCodeConfig          `toml:"authCodeConfig"`
+	EmailConfig             `toml:"emailConfig"`
+	OSSConfig               `toml:"ossConfig"`
+	LogConfig               `toml:"logConfig"`
+	KafkaConfig             `toml:"kafkaConfig"`
+	StaticSrcConfig         `toml:"staticSrcConfig"`
+	JWTConfig               `toml:"jwtConfig"`
+	AuthConfig              `toml:"authConfig"`
+	AIModelConfig           `toml:"aiModelConfig"`
+	QdrantConfig            `toml:"qdrantConfig"`
+	SeniverseConfig         `toml:"seniverseConfig"`
+	ExchangeRateConfig      `toml:"exchangeRateConfig"`
+	TavilyConfig            `toml:"tavilyConfig"`
+	ESConfig                `toml:"esConfig"`
+	WSConfig                `toml:"wsConfig"`
+	GithubOAuthConfig       `toml:"githubOAuthConfig"`
+	GiteeOAuthConfig        `toml:"giteeOAuthConfig"`
 }
 
 // DiscoverFeedConfig 关注流分发开关、作者阈值与有界批次配置。

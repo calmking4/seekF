@@ -8,6 +8,11 @@ import (
 
 // SupportOrder 助力订单、付款权益快照及全额退款审核记录。
 type SupportOrder struct {
+	SettlementVersion   int             `gorm:"column:settlement_version;not null;default:0;comment:收益规则版本，0历史订单不入账，1即时收益分配"`
+	PlatformRateBPS     int             `gorm:"column:platform_rate_bps;not null;default:0;comment:平台抽成快照，单位基点，0至10000"`
+	CreatorAmount       decimal.Decimal `gorm:"column:creator_amount;type:decimal(10,2);not null;default:0.00;comment:创作者份额快照，单位元"`
+	SettlementCredited  bool            `gorm:"column:settlement_credited;not null;default:0;comment:收益是否已入账，0否1是"`
+	RefundReserved      bool            `gorm:"column:refund_reserved;not null;default:0;comment:该订单是否已登记退款资金预留，0否1是"`
 	Id                  int64           `gorm:"column:id;primaryKey;index:idx_support_order_user,priority:3;index:idx_support_order_creator,priority:3;index:idx_support_order_due,priority:4;index:idx_support_order_refund_due,priority:4;comment:自增ID"`
 	Environment         string          `gorm:"column:environment;type:varchar(16);not null;uniqueIndex:uk_support_order_request,priority:1;uniqueIndex:uk_support_order_trade,priority:1;index:idx_support_order_user,priority:1;index:idx_support_order_creator,priority:1;index:idx_support_order_due,priority:1;index:idx_support_order_pair,priority:1;index:idx_support_order_refund_due,priority:1;comment:支付环境，sandbox沙箱，production正式"`
 	OrderNo             string          `gorm:"column:order_no;type:varchar(64);not null;uniqueIndex:uk_support_order_no;comment:商户订单号，同时作为支付宝out_trade_no"`

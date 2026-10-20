@@ -192,6 +192,8 @@ func SetupRouter(
 			protectedGroup.POST("/discover/check-collected", discoverController.CheckCollected)
 			protectedGroup.POST("/discover/collected-list", discoverController.ListCollectedPosts)
 			// 创作者助力
+			protectedGroup.POST("/support/settlement/summary", supportController.SettlementSummary)
+			protectedGroup.POST("/support/settlement/ledger", supportController.SettlementLedger)
 			protectedGroup.POST("/support/creator/info", supportController.GetCreator)
 			protectedGroup.POST("/support/creator/save", supportController.SaveActivate)
 			protectedGroup.POST("/support/creator/income", supportController.GetIncome)

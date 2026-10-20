@@ -3,6 +3,22 @@ package constants
 import "time"
 
 const (
+	// 即时收益分配规则版本，0保留为历史不入账订单。
+	SupportSettlementVersion = 1
+	// 默认平台抽成，单位基点，1000表示10%。
+	SupportPlatformRateBPS = 1000
+	// 百分之百对应的基点数。
+	SupportRateBase = 10000
+	// 收益入账与后续抵扣事件。
+	SupportLedgerIncome = "income"
+	// 退款申请冻结事件，预留不足部分由后续收益补齐。
+	SupportLedgerReserve = "refund_reserve"
+	// 渠道账单发现站外退款后的资金预留事件。
+	SupportLedgerAuditReserve = "refund_audit_reserve"
+	// 退款驳回释放事件。
+	SupportLedgerRelease = "refund_release"
+	// 全额退款冲销事件。
+	SupportLedgerRefund = "refund"
 	// 渠道账单压缩包及解压明细大小上限，单位字节。
 	SupportBillMaxBytes = 20 * 1024 * 1024
 	// 助力全额退款成功通知。

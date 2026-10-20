@@ -13,6 +13,33 @@ import (
 
 type SupportController struct{ supportService userservice.SupportService }
 
+// SettlementSummary 查询登录创作者的收益账户，不接受客户端指定账户归属。
+func (c *SupportController) SettlementSummary(ctx *gin.Context) {
+	result, err := c.supportService.ListSupport(ctx.Request.Context(), ctx.GetString("Uuid"), "balance", 1)
+	if err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+	resp.Success(ctx, "查询收益账户成功", result)
+}
+
+// SettlementLedger 分页查询登录创作者的收益流水。
+func (c *SupportController) SettlementLedger(ctx *gin.Context) {
+	var req struct {
+		Page int `json:"page"`
+	}
+	if ctx.ShouldBindJSON(&req) != nil {
+		resp.Error(ctx, "流水分页参数错误", http.StatusBadRequest)
+		return
+	}
+	result, err := c.supportService.ListSupport(ctx.Request.Context(), ctx.GetString("Uuid"), "ledger", req.Page)
+	if err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+	resp.Success(ctx, "查询收益流水成功", result)
+}
+
 // NewSupportController 创建创作者助力控制器。
 func NewSupportController(supportService userservice.SupportService) *SupportController {
 	return &SupportController{supportService: supportService}
