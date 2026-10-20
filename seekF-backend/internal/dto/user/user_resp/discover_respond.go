@@ -2,6 +2,7 @@ package userresp
 
 // PostItem 帖子列表信息及首个媒体的像素尺寸。
 type PostItem struct {
+	ReviewNote       string   `json:"review_note,omitempty"`
 	SupportOnly      int8     `json:"support_only"`
 	CanPlay          bool     `json:"can_play"`
 	LockReason       string   `json:"lock_reason"`

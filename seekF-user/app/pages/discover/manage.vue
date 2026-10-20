@@ -19,6 +19,7 @@
         <div class="flex min-w-0 flex-1 flex-col">
           <NuxtLink :to="'/discover/post/' + encodeURIComponent(post.uuid)" target="_blank" rel="noopener" class="line-clamp-2 text-base font-medium text-gray-800 hover:text-blue-500">{{ post.title }}</NuxtLink>
           <p class="mt-2 text-xs text-gray-400">{{ post.created_at }}</p>
+          <p v-if="post.review_note" class="mt-2 break-words text-xs leading-5 text-amber-600">{{ post.status === 3 ? '未通过原因' : '下架原因' }}：{{ post.review_note }}</p>
           <span v-if="post.support_only === 1" class="mt-2 w-fit rounded-full bg-blue-50 px-2 py-1 text-xs text-blue-500">助力专属</span>
           <span class="mt-2 w-fit rounded-full px-2 py-1 text-xs" :class="post.visibility === 1 ? 'bg-gray-100 text-gray-500' : 'bg-blue-50 text-blue-500'">{{ post.visibility === 1 ? '仅自己可见' : '公开' }}</span>
           <div class="mt-4 flex flex-wrap items-center gap-4 text-xs text-gray-400 sm:mt-auto sm:pt-4"><span v-for="stat in stats" :key="stat.field" class="flex items-center gap-1" :title="stat.label" :aria-label="stat.label + '：' + (post[stat.field] || 0)"><Icon :name="stat.icon" class="text-base" />{{ post[stat.field] || 0 }}</span></div>
@@ -51,9 +52,11 @@ const useDefaultCover = event => {
  if (image.getAttribute('src') !== defaultWorkCover) image.src = defaultWorkCover
 }
 const posts = ref([])
-const filter = ref(0)
+const requestedStatus = Number(useRoute().query.status)
+const initialStatus = [0, 1, 2, 3].includes(requestedStatus) ? requestedStatus : 0
+const filter = ref(initialStatus)
 const slideDirection = ref('works-slide-next')
-const displayedFilter = ref(0)
+const displayedFilter = ref(initialStatus)
 // 等目标状态请求返回后再切换内容，让真实作品或空状态参与轮播。
 const revealFilter = () => {
  slideDirection.value = tabs.findIndex(tab => tab.key === filter.value) > tabs.findIndex(tab => tab.key === displayedFilter.value) ? 'works-slide-next' : 'works-slide-prev'

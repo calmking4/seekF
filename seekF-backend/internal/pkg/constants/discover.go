@@ -3,6 +3,11 @@ package constants
 import "time"
 
 const (
+	// 帖子状态：已发布、已下架、审核中、未通过。
+	DiscoverPostPublished int8 = 0
+	DiscoverPostOffline   int8 = 1
+	DiscoverPostPending   int8 = 2
+	DiscoverPostRejected  int8 = 3
 	// 每种召回最多200条候选，合并后不超过600条。
 	DiscoverRankingPoolLimit = 200
 	// 一轮推荐或热榜翻页顺序保留30分钟。

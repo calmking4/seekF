@@ -976,7 +976,7 @@ func (c *DiscoverController) ListOwnWorks(ctx *gin.Context) {
 	}
 	items := make([]userresp.PostItem, 0, len(posts))
 	for _, p := range posts {
-		items = append(items, userresp.PostItem{Status: p.Status, Uuid: p.Uuid, UserId: p.UserId, Nickname: p.Nickname, Avatar: p.Avatar, Title: p.Title, Content: p.Content, MediaType: p.MediaType, CoverUrl: p.CoverUrl, Tags: p.Tags, FirstUrl: p.FirstUrl, Width: p.Width, Height: p.Height, ViewCount: p.ViewCount, LikeCount: p.LikeCount, CommentCount: p.CommentCount, CollectCount: p.CollectCount, IsLiked: p.IsLiked, IsCollected: p.IsCollected, SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version, CreatedAt: p.CreatedAt})
+		items = append(items, userresp.PostItem{ReviewNote: p.ReviewNote, Status: p.Status, Uuid: p.Uuid, UserId: p.UserId, Nickname: p.Nickname, Avatar: p.Avatar, Title: p.Title, Content: p.Content, MediaType: p.MediaType, CoverUrl: p.CoverUrl, Tags: p.Tags, FirstUrl: p.FirstUrl, Width: p.Width, Height: p.Height, ViewCount: p.ViewCount, LikeCount: p.LikeCount, CommentCount: p.CommentCount, CollectCount: p.CollectCount, IsLiked: p.IsLiked, IsCollected: p.IsCollected, SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version, CreatedAt: p.CreatedAt})
 	}
 	resp.Success(ctx, "获取作品成功", gin.H{"list": items, "total": total, "counts": counts})
 }

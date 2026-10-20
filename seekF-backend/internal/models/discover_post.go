@@ -24,6 +24,7 @@ type DiscoverPost struct {
 	CollectCount       int             `gorm:"column:collect_count;not null;default:0;comment:收藏数"`
 	ViewCount          int             `gorm:"column:view_count;not null;default:0;comment:浏览量"`
 	Status             int8            `gorm:"index:idx_discover_author_feed,priority:2;index:idx_discover_feed,priority:1;index:idx_discover_feed_media,priority:1;column:status;not null;default:0;comment:状态，0.已发布，1.已下架，2.审核中，3.未通过"`
+	ReviewNote         string          `gorm:"column:review_note;type:varchar(300);not null;default:;comment:最近驳回或下架原因，最多300字，重新提交审核时清空"`
 	CreatedAt          time.Time       `gorm:"index:idx_discover_author_feed,priority:5;index:idx_discover_feed,priority:4;index:idx_discover_feed_media,priority:5;column:created_at;type:datetime;not null;comment:创建时间"`
 	UpdatedAt          time.Time       `gorm:"column:updated_at;type:datetime;not null;comment:更新时间"`
 	DeletedAt          gorm.DeletedAt  `gorm:"index:idx_discover_author_feed,priority:4;index:idx_discover_feed,priority:3;index:idx_discover_feed_media,priority:3;column:deleted_at;index;type:datetime(3);comment:删除时间"`

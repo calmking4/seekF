@@ -96,6 +96,7 @@ type MediaSize struct {
 
 // PostInfo 帖子列表展示信息。
 type PostInfo struct {
+	ReviewNote       string
 	SupportOnly      int8
 	CanPlay          bool
 	LockReason       string
@@ -1550,7 +1551,12 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 			avatar = user.Avatar
 		}
 
+		reviewNote := ""
+		if post.UserId == userId {
+			reviewNote = post.ReviewNote
+		}
 		result = append(result, PostInfo{
+			ReviewNote:  reviewNote,
 			SupportOnly: post.SupportOnly, CanPlay: canPlay, LockReason: lockReason, SupportExpiresAt: expiresAt,
 			Visibility: post.Visibility, Version: post.Version, ViewCount: post.ViewCount, Status: post.Status,
 			Uuid:         post.Uuid,
@@ -1784,7 +1790,7 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 		files := userdao.NewFileDAO(tx)
 		if postUuid == "" {
 			key := input.RequestKey
-			saved = &models.DiscoverPost{Uuid: "D" + util.GetNowAndLenRandomString(11), UserId: userId, Title: input.Title, Version: 1, PublishRequestKey: &key, PublishPayloadHash: hash}
+			saved = &models.DiscoverPost{Uuid: "D" + util.GetNowAndLenRandomString(11), UserId: userId, Title: input.Title, Status: constants.DiscoverPostPending, Version: 1, PublishRequestKey: &key, PublishPayloadHash: hash}
 			created, err := dao.ClaimPublishPost(saved)
 			if err != nil {
 				return fmt.Errorf("创建发布记录失败: %w", err)
@@ -1880,6 +1886,8 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 		saved.Title, saved.Content, saved.Tags = input.Title, input.Content, tags
 		saved.MediaType, saved.Visibility, saved.CoverUrl = input.MediaType, input.Visibility, input.CoverUrl
 		saved.SupportOnly = input.SupportOnly
+		// 内容变更后重新审核，原驳回或下架原因不带入新版本。
+		saved.Status, saved.ReviewNote = constants.DiscoverPostPending, ""
 		saved.CoverWidth, saved.CoverHeight = 0, 0
 		saved.CoverAssetId = nil
 		if cover := assets[input.CoverUrl]; cover != nil {
@@ -1912,7 +1920,8 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 			}
 		}
 
-		return userdao.NewDiscoverOutboxDAO(tx).Create(saved, postUuid == "" && saved.Status == 0 && saved.Visibility == 0)
+		// 待审核内容仅同步搜索状态，审核通过后再分发至关注流。
+		return userdao.NewDiscoverOutboxDAO(tx).Create(saved, false)
 	})
 	if err != nil {
 		return nil, err
