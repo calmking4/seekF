@@ -111,7 +111,8 @@ export function useFollowingUpdates() {
     document.removeEventListener('visibilitychange', tick)
     window.removeEventListener('focus', tick)
   }
-  watch(user, () => {
+  const blockVersion = useState('user-block-version', () => 0)
+  watch([user, blockVersion], () => {
     generation++
     controller?.abort()
     authors.value = []

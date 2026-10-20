@@ -87,7 +87,7 @@ func (d *FileDAOImpl) FindAsset(fileURL string) (*models.FileAsset, error) {
 // CountReadableAssetReferences 校验图文和视频的作品状态及实时权益，封面仅允许图片资源引用。
 func (d *FileDAOImpl) CountReadableAssetReferences(fileURL, userId, environment string, now time.Time) (int64, error) {
 	var media, cover int64
-	err := d.db.Table("discover_media AS m").Joins("JOIN discover_post AS p ON p.id = m.post_id").Joins("JOIN file_asset a ON a.id = m.asset_id").
+	err := WithoutBlockedAuthors(d.db.Table("discover_media AS m"), userId, "p").Joins("JOIN discover_post AS p ON p.id = m.post_id").Joins("JOIN file_asset a ON a.id = m.asset_id").
 		Where("a.url_hash = ? AND a.state = 1 AND p.status = 0 AND p.deleted_at IS NULL AND (p.visibility = 0 OR p.user_id = ?)", FileURLHash(fileURL), userId).
 		Where(`((m.type = 0 AND a.category = 'discover_image') OR
 		(m.type = 1 AND a.category = 'discover_video')) AND
@@ -96,7 +96,7 @@ func (d *FileDAOImpl) CountReadableAssetReferences(fileURL, userId, environment 
 	if err != nil {
 		return 0, err
 	}
-	err = d.db.Model(&models.DiscoverPost{}).Where("cover_asset_id IN (SELECT id FROM file_asset WHERE url_hash = ? AND category = 'discover_image' AND state = 1) AND status = 0 AND (visibility = 0 OR user_id = ?)", FileURLHash(fileURL), userId).Count(&cover).Error
+	err = WithoutBlockedAuthors(d.db.Model(&models.DiscoverPost{}), userId, "discover_post").Where("cover_asset_id IN (SELECT id FROM file_asset WHERE url_hash = ? AND category = 'discover_image' AND state = 1) AND status = 0 AND (visibility = 0 OR user_id = ?)", FileURLHash(fileURL), userId).Count(&cover).Error
 	return media + cover, err
 }
 

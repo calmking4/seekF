@@ -40,7 +40,7 @@ func (d *DiscoverDAOImpl) SetFeedback(feedback *models.DiscoverFeedback, active 
 
 // withoutFeedback 将帖子及作者负反馈作为当前数据库查询条件。
 func withoutFeedback(query *gorm.DB, userId, alias string) *gorm.DB {
-	return query.Where("NOT EXISTS (SELECT 1 FROM discover_feedback f WHERE f.user_id = ? AND ((f.target_type = 'post' AND f.target_uuid = "+alias+".uuid) OR (f.target_type = 'author' AND f.target_uuid = "+alias+".user_id)))", userId)
+	return WithoutHiddenAuthors(query, userId, alias).Where("NOT EXISTS (SELECT 1 FROM discover_feedback f WHERE f.user_id = ? AND ((f.target_type = 'post' AND f.target_uuid = "+alias+".uuid) OR (f.target_type = 'author' AND f.target_uuid = "+alias+".user_id)))", userId)
 }
 
 // ListRecommendationFeed 依赖数据库过滤负反馈，Redis不可用时仍保留用户选择。
@@ -63,7 +63,7 @@ func (d *DiscoverDAOImpl) FindRankingPosts(ctx context.Context, userId string, i
 	if len(ids) == 0 {
 		return posts, nil
 	}
-	query := d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("uuid IN ? AND status = 0 AND visibility = 0", ids)
+	query := WithoutHiddenAuthors(d.db.WithContext(ctx).Model(&models.DiscoverPost{}), userId, "discover_post").Where("uuid IN ? AND status = 0 AND visibility = 0", ids)
 	if mediaType != nil {
 		query = query.Where("media_type = ?", *mediaType)
 	}

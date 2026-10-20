@@ -45,7 +45,7 @@ type DiscoverDAO interface {
 	// 读取当前用户关注的作者标识。
 	ListFollowedAuthorIds(ctx context.Context, userId string) ([]string, error)
 	// 批量读取候选作品的当前公开状态，不能使用ES中的旧正文。
-	FindPublicPostsByUuids(ctx context.Context, uuids []string) ([]models.DiscoverPost, error)
+	FindPublicPostsByUuids(ctx context.Context, uuids []string, viewerId string) ([]models.DiscoverPost, error)
 	// 返回作者各状态作品数量，不受当前选中状态限制。
 	CountOwnWorksByStatus(userId, keyword string, visibility *int8) (map[int8]int64, error)
 	// 按作者、状态及标题筛选作品并返回真实总数。
@@ -85,10 +85,8 @@ type DiscoverDAO interface {
 	GetUserTotalLikes(userId, viewerId string) (int, error)
 
 	// ========== 搜索 ==========
-	// 兼容工具调用，返回关键词搜索的第一页。
-	SearchPostsByKeyword(keyword string, limit int) ([]models.DiscoverPost, error)
 	// 在全文检索不可用时按关键词分页查询并返回真实总数。
-	SearchPostsPage(keyword string, page, pageSize int) ([]models.DiscoverPost, int64, error)
+	SearchPostsPage(keyword string, page, pageSize int, viewerId string) ([]models.DiscoverPost, int64, error)
 
 	// ========== 媒体 ==========
 	// 保存帖子媒体信息。
@@ -231,7 +229,7 @@ func (d *DiscoverDAOImpl) FindPostById(id int64) (*models.DiscoverPost, error) {
 // ListFeed 使用时间和主键作为边界读取公开已发布帖子，额外取一条判断是否还有内容。
 func (d *DiscoverDAOImpl) ListFeed(ctx context.Context, userId string, following bool, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error) {
 	posts := make([]models.DiscoverPost, 0)
-	query := d.db.WithContext(ctx).Where("status = 0 AND visibility = 0")
+	query := WithoutHiddenAuthors(d.db.WithContext(ctx), userId, "discover_post").Where("status = 0 AND visibility = 0")
 	if following {
 		follows := d.db.WithContext(ctx).Model(&models.UserFollow{}).Select("follow_user_id").Where("user_id = ?", userId)
 		query = query.Where("user_id IN (?)", follows)
@@ -267,35 +265,30 @@ func (d *DiscoverDAOImpl) IncrementViewCount(postId int64) error {
 func (d *DiscoverDAOImpl) ListPostsByUserId(userId, viewerId string, page, pageSize int) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
-	result := d.db.Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&posts)
+	result := WithoutHiddenAuthors(d.db, viewerId, "discover_post").Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&posts)
 	return posts, result.Error
 }
 
 // CountPostsByUserId 统计指定用户的正常帖子数量。
 func (d *DiscoverDAOImpl) CountPostsByUserId(userId, viewerId string) (int64, error) {
 	var count int64
-	result := d.db.Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Count(&count)
+	result := WithoutHiddenAuthors(d.db, viewerId, "discover_post").Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Count(&count)
 	return count, result.Error
 }
 
 // GetUserTotalLikes 统计指定用户正常帖子的总获赞数。
 func (d *DiscoverDAOImpl) GetUserTotalLikes(userId, viewerId string) (int, error) {
 	var total int
-	result := d.db.Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Select("COALESCE(SUM(like_count), 0)").Scan(&total)
+	result := WithoutHiddenAuthors(d.db, viewerId, "discover_post").Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Select("COALESCE(SUM(like_count), 0)").Scan(&total)
 	return total, result.Error
 }
 
 // ========== 搜索 ==========
 
-// SearchPostsByKeyword 兼容工具调用，返回关键词搜索的第一页。
-func (d *DiscoverDAOImpl) SearchPostsByKeyword(keyword string, limit int) ([]models.DiscoverPost, error) {
-	posts, _, err := d.SearchPostsPage(keyword, 1, limit)
-	return posts, err
-}
-
 // SearchPostsPage 在全文检索不可用时按关键词分页查询并返回真实总数。
-func (d *DiscoverDAOImpl) SearchPostsPage(keyword string, page, pageSize int) ([]models.DiscoverPost, int64, error) {
+func (d *DiscoverDAOImpl) SearchPostsPage(keyword string, page, pageSize int, viewerId string) ([]models.DiscoverPost, int64, error) {
 	query := d.db.Model(&models.DiscoverPost{}).Where("status = 0 AND visibility = 0")
+	query = WithoutHiddenAuthors(query, viewerId, "discover_post")
 	keyword = strings.TrimSpace(keyword)
 	if keyword != "" {
 		tag, err := json.Marshal(keyword)
@@ -400,7 +393,7 @@ func (d *DiscoverDAOImpl) ListLikedPosts(userId string, page, pageSize int) ([]m
 		Where("user_id = ?", userId).
 		Select("target_uuid")
 	// 查询帖子
-	result := d.db.Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, userId, likedUuids).
+	result := WithoutHiddenAuthors(d.db, userId, "discover_post").Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, userId, likedUuids).
 		Order("created_at DESC").
 		Offset(offset).Limit(pageSize).
 		Find(&posts)
@@ -414,7 +407,7 @@ func (d *DiscoverDAOImpl) CountLikedPosts(userId string) (int64, error) {
 	likedUuids := d.db.Model(&models.DiscoverLike{}).
 		Where("user_id = ?", userId).
 		Select("target_uuid")
-	result := d.db.Model(&models.DiscoverPost{}).
+	result := WithoutHiddenAuthors(d.db, userId, "discover_post").Model(&models.DiscoverPost{}).
 		Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, userId, likedUuids).
 		Count(&count)
 	return count, result.Error
@@ -646,7 +639,7 @@ func (d *DiscoverDAOImpl) ListCollectedPostsByFolder(folderId int64, viewerId st
 	collectedUuids := d.db.Model(&models.DiscoverCollection{}).
 		Where("folder_id = ?", folderId).
 		Select("target_uuid")
-	result := d.db.Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, viewerId, collectedUuids).
+	result := WithoutHiddenAuthors(d.db, viewerId, "discover_post").Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, viewerId, collectedUuids).
 		Order("created_at DESC").
 		Offset(offset).Limit(pageSize).
 		Find(&posts)
@@ -659,7 +652,7 @@ func (d *DiscoverDAOImpl) CountCollectedPostsByFolder(folderId int64, viewerId s
 	collectedUuids := d.db.Model(&models.DiscoverCollection{}).
 		Where("folder_id = ?", folderId).
 		Select("target_uuid")
-	result := d.db.Model(&models.DiscoverPost{}).
+	result := WithoutHiddenAuthors(d.db, viewerId, "discover_post").Model(&models.DiscoverPost{}).
 		Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, viewerId, collectedUuids).
 		Count(&count)
 	return count, result.Error
@@ -746,11 +739,13 @@ func (d *DiscoverDAOImpl) CountOwnWorksByStatus(userId, keyword string, visibili
 }
 
 // FindPublicPostsByUuids 统一过滤已下架、私密及软删除作品，返回当前数据库内容。
-func (d *DiscoverDAOImpl) FindPublicPostsByUuids(ctx context.Context, uuids []string) ([]models.DiscoverPost, error) {
+func (d *DiscoverDAOImpl) FindPublicPostsByUuids(ctx context.Context, uuids []string, viewerId string) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	if len(uuids) == 0 {
 		return posts, nil
 	}
-	err := d.db.WithContext(ctx).Where("uuid IN ? AND status=0 AND visibility=0", uuids).Find(&posts).Error
+	query := d.db.WithContext(ctx).Where("uuid IN ? AND status=0 AND visibility=0", uuids)
+	query = WithoutHiddenAuthors(query, viewerId, "discover_post")
+	err := query.Find(&posts).Error
 	return posts, err
 }

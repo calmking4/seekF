@@ -11,9 +11,10 @@
         </header>
         <div class="sources-scroll">
             <div class="sources-grid">
-                <button v-for="post in posts" :key="post.id" class="source-card" @click="$emit('post-click', post)">
+                <button v-for="post in posts" :key="post.id" class="source-card" @click="openPost(post)">
                     <div class="source-cover" :class="{ 'without-cover': !getPostCover(post) }">
-                        <img v-if="getPostCover(post)" :src="getPostCover(post)" :alt="post.title || '帖子封面'" loading="lazy" @error="markCoverFailed(post)" />
+                        <div v-if="post.is_blocked_by" class="flex flex-col items-center gap-2 text-gray-400"><Icon name="mdi:account-lock-outline" class="text-4xl" /><span class="text-xs">内容暂不可见</span></div>
+                        <img v-else-if="getPostCover(post)" :src="getPostCover(post)" :alt="post.title || '帖子封面'" loading="lazy" @error="markCoverFailed(post)" />
                         <Icon v-else :name="isVideoPost(post) ? 'uil:video' : 'uil:image'" class="text-4xl text-gray-300" />
                         <span v-if="isVideoPost(post)" class="video-badge" aria-label="视频帖子"><Icon name="mdi:play" class="block text-lg" /></span>
                     </div>
@@ -37,9 +38,11 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 
 defineProps({ posts: { type: Array, default: () => [] } })
-defineEmits(['close', 'post-click'])
+const emit = defineEmits(['close', 'post-click'])
+const openPost = post => { if (post.is_blocked_by) { ElMessage.warning('已被拉黑'); return }; emit('post-click',post) }
 
 const closeButton = ref(null)
 onMounted(() => closeButton.value?.focus({ preventScroll: true }))

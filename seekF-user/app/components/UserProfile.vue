@@ -27,12 +27,14 @@
             </div>
           </div>
           <div v-if="!isSelf" class="flex items-center gap-3">
-            <el-button :type="profile.is_followed ? 'default' : 'primary'" :loading="followLoading" round @click="handleToggleFollow">{{ profile.is_followed ? '已关注' : '关注' }}</el-button>
-            <el-button round @click="navigateTo(`/chat?userId=${encodeURIComponent(userId)}`)"><Icon name="uil:comment-alt" class="mr-1" />发消息</el-button>
+            <el-button :type="profile.is_followed ? 'default' : 'primary'" :loading="followLoading" :disabled="profile.is_blocked || profile.is_blocked_by" round @click="handleToggleFollow">{{ profile.is_followed ? '已关注' : '关注' }}</el-button>
+            <el-button round :disabled="profile.is_blocked || profile.is_blocked_by" @click="navigateTo(`/chat?userId=${encodeURIComponent(userId)}`)"><Icon name="uil:comment-alt" class="mr-1" />发消息</el-button>
+            <el-button round :loading="blockLoading" @click="handleBlock">{{ profile.is_blocked ? '解除拉黑' : '拉黑' }}</el-button>
           </div>
           <el-button v-else round @click="navigateTo('/my')">我的主页</el-button>
         </div>
-        <ProfileTabs v-model="activeTab" :tabs="[{ name: 'posts', label: `帖子 ${profile.post_count || 0}` }, { name: 'folders', label: '公开收藏夹' }]" @after-enter="observeNewItems">
+        <p v-if="profile.is_blocked" class="py-12 text-center text-sm text-gray-400">{{ profile.is_blocked ? '你已拉黑该用户，解除后可恢复查看帖子和私信' : '当前无法查看该用户的帖子或发送私信' }}</p>
+        <ProfileTabs v-else v-model="activeTab" :tabs="[{ name: 'posts', label: `帖子 ${profile.post_count || 0}` }, { name: 'folders', label: '公开收藏夹' }]" @after-enter="observeNewItems">
           <template #posts>
             <div class="py-4">
               <div v-if="posts.length === 0 && !loading" class="empty-state"><Icon name="uil:image" class="mb-4 text-4xl text-gray-300" /><p>{{ postsError || '暂无帖子' }}</p><el-button v-if="postsError" class="mt-4" @click="fetchProfile">重试</el-button></div>
@@ -71,6 +73,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUpdated, onUnmounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const props = defineProps({
   userId: { type: String, required: true },
@@ -98,6 +101,8 @@ const folderPostsError = ref('')
 const folderPostsPage = ref(1)
 const folderPostsNoMore = ref(false)
 const followLoading = ref(false)
+const blockLoading = ref(false)
+const blockVersion = useState('user-block-version', () => 0)
 const selectedPost = ref(null)
 const { setLike: setProfilePostLike } = useDiscoverLike()
 const pageSize = 12
@@ -237,6 +242,26 @@ const enterFolder = (folder) => {
   return loadFolderPosts()
 }
 
+const handleBlock = async () => {
+  if (blockLoading.value || !profile.value || isSelf.value) return
+  const target = userId.value
+  const version = userVersion
+  const blocked = !profile.value.is_blocked
+  blockLoading.value = true
+  try {
+    if (blocked) await ElMessageBox.confirm('拉黑后，首页不再展示对方的帖子，对方无法查看你的帖子或给你发私信。', '拉黑用户', { confirmButtonText: '拉黑', cancelButtonText: '取消', type: 'warning' })
+    if (version !== userVersion) return
+    const res = await useApi$('/user/block/set', { body: { target_user_id: target, blocked } })
+    if (res.code !== 200) throw new Error(res.message || '设置拉黑状态失败')
+    blockVersion.value++
+    if (version !== userVersion) return
+    ElMessage.success(blocked ? '已拉黑' : '已解除拉黑')
+    await loadUser()
+  } catch (e) {
+    if (version === userVersion && e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '设置拉黑状态失败，请重试')
+  } finally { blockLoading.value = false }
+}
+
 const handleToggleFollow = async () => {
   if (followLoading.value || isSelf.value || !profile.value) return
   const version = userVersion
@@ -294,6 +319,7 @@ const toggleLike = async (post) => {
 }
 
 watch(userId, loadUser)
+watch(blockVersion, () => { if (!blockLoading.value) loadUser() })
 onMounted(loadUser)
 onUpdated(observeNewItems)
 onUnmounted(() => { userVersion++; folderVersion++; cardObserver?.disconnect() })

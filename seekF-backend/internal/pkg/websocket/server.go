@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -192,8 +193,9 @@ func (s *Server) handleTextMessage(chatMessageReq *userreq.ChatMessageRequest) {
 	}
 
 	// 保存消息到数据库
-	if err := s.messageDAO.CreateMessage(message); err != nil {
+	if err := s.sessionService.SavePrivateMessage(context.Background(), message); err != nil {
 		zlog.Error("保存消息失败: " + err.Error())
+		s.sendErrorToClient(chatMessageReq.SendId, err.Error())
 		return
 	}
 
@@ -260,8 +262,9 @@ func (s *Server) handleFileMessage(chatMessageReq *userreq.ChatMessageRequest) {
 	}
 
 	// 保存消息到数据库
-	if err := s.messageDAO.CreateMessage(message); err != nil {
+	if err := s.sessionService.SavePrivateMessage(context.Background(), message); err != nil {
 		zlog.Error("保存消息失败: " + err.Error())
+		s.sendErrorToClient(chatMessageReq.SendId, err.Error())
 		return
 	}
 
@@ -309,10 +312,16 @@ func (s *Server) handleFileMessage(chatMessageReq *userreq.ChatMessageRequest) {
 
 // sendToUser 发送消息给单个用户
 func (s *Server) sendToUser(message *models.Message, messageBack *MessageBack, messageRsp *userresp.GetMessageListRespond) {
+	if _, err := s.sessionService.CheckOpenSessionAllowed(message.SendId, message.ReceiveId); err != nil {
+		s.sendErrorToClient(message.SendId, err.Error())
+		return
+	}
 	// 为接收者创建会话（如果不存在）
 	sessionId, err := s.sessionService.OpenSession(message.ReceiveId, message.SendId)
 	if err != nil {
 		zlog.Error("为接收者创建会话失败: " + err.Error())
+		s.sendErrorToClient(message.SendId, err.Error())
+		return
 	} else {
 		// 更新接收者的会话最后消息
 		lastMessage := message.Content

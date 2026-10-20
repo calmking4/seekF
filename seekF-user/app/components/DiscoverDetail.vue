@@ -70,7 +70,7 @@
           </div>
           <!-- 回退：单图 -->
           <img
-            v-else-if="item?.src && item?.type !== 'video' && !imageError"
+            v-else-if="!detailError && item?.src && item?.type !== 'video' && !imageError"
             :src="item.src"
             :alt="item.title"
             class="cover-image cover-image--first w-full h-full"
@@ -401,7 +401,7 @@ const fetchDetail = async () => {
       startReply(comment, comment.parent_id ? { uuid: comment.parent_id } : undefined)
     }
   } catch (err) {
-    if (!disposed && version === detailVersion) detailError.value = err?.data?.message || '动态暂时无法访问，请稍后重试'
+    if (!disposed && version === detailVersion) { detail.value = null; detailError.value = err?.data?.message || err?.message || '动态暂时无法访问，请稍后重试' }
   } finally {
     if (!disposed && version === detailVersion) detailLoading.value = false
   }

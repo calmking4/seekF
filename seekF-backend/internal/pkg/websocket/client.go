@@ -104,7 +104,11 @@ func (c *Client) Read() {
 			ChatServer.sendErrorToClient(c.Uuid, "仅支持当前用户发送私聊文字或文件消息")
 			continue
 		}
-		// zlog.Info("接受到消息为: " + string(jsonMessage))
+		// 入队前校验拉黑与会话归属，消费时仍会再次复核，避免队列延迟绕过限制。
+		if err := ChatServer.validatePrivateMessage(&message); err != nil {
+			ChatServer.sendErrorToClient(c.Uuid, err.Error())
+			continue
+		}
 
 		// 发送消息到Kafka
 		if err := SendMessageToKafka(jsonMessage); err != nil {

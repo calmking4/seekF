@@ -95,6 +95,7 @@ type MediaSize struct {
 
 // PostInfo 帖子列表展示信息。
 type PostInfo struct {
+	IsBlockedBy      bool
 	ReviewNote       string
 	SupportOnly      int8
 	CanPlay          bool
@@ -392,7 +393,7 @@ func (s *DiscoverServiceImpl) RecordDiscoverClick(ctx context.Context, userId st
 		if err != nil {
 			return fmt.Errorf("读取点击帖子失败: %w", err)
 		}
-		if !CanViewDiscoverPost(post, userId) || post.Visibility != 0 {
+		if !canViewUnblockedDiscoverPost(tx, post, userId) || post.Visibility != 0 {
 			return fmt.Errorf("帖子不存在或不可见")
 		}
 		if post.UserId == userId {
@@ -426,7 +427,7 @@ func (s *DiscoverServiceImpl) SetDiscoverFeedback(ctx context.Context, userId st
 		if err != nil {
 			return fmt.Errorf("读取反馈帖子失败: %w", err)
 		}
-		if !CanViewDiscoverPost(post, userId) || post.Visibility != 0 {
+		if !canViewUnblockedDiscoverPost(tx, post, userId) || post.Visibility != 0 {
 			return fmt.Errorf("帖子不存在或不可见")
 		}
 		if post.UserId == userId {
@@ -736,7 +737,19 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 		return nil, err
 	}
 	// 作者可以在管理页查看待审、驳回或下架作品，其他用户仍仅能查看正常公开作品。
-	if !CanViewDiscoverPost(post, userId) && (post == nil || post.UserId != userId || post.DeletedAt.Valid) {
+	if post != nil && post.UserId != userId {
+		blocked, by, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).Status(userId, post.UserId)
+		if err != nil {
+			return nil, fmt.Errorf("查询帖子拉黑权限失败: %w", err)
+		}
+		if by {
+			return nil, fmt.Errorf("已被拉黑")
+		}
+		if blocked {
+			return nil, fmt.Errorf("你已拉黑该用户")
+		}
+	}
+	if !canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) && (post == nil || post.UserId != userId || post.DeletedAt.Valid) {
 		return nil, fmt.Errorf("帖子不存在")
 	}
 	expiries, err := discoverSupportExpiries(ctx, userId, []models.DiscoverPost{*post})
@@ -834,7 +847,7 @@ func (s *DiscoverServiceImpl) SetLike(ctx context.Context, userId, targetUuid st
 			if err != nil {
 				return fmt.Errorf("查询评论所属帖子失败: %w", err)
 			}
-			if !CanViewDiscoverPost(post, userId) {
+			if !canViewUnblockedDiscoverPost(tx, post, userId) {
 				return fmt.Errorf("评论所属帖子不可用")
 			}
 			if err := requireDiscoverSupport(ctx, tx, userId, post); err != nil {
@@ -846,7 +859,7 @@ func (s *DiscoverServiceImpl) SetLike(ctx context.Context, userId, targetUuid st
 			if err != nil {
 				return fmt.Errorf("查询帖子失败: %w", err)
 			}
-			if !CanViewDiscoverPost(post, userId) {
+			if !canViewUnblockedDiscoverPost(tx, post, userId) {
 				return fmt.Errorf("帖子不存在或已下架")
 			}
 			targetId, owner = post.Id, post.UserId
@@ -920,7 +933,7 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 		if err != nil {
 			return err
 		}
-		if !CanViewDiscoverPost(post, userId) {
+		if !canViewUnblockedDiscoverPost(tx, post, userId) {
 			return fmt.Errorf("帖子不存在或已下架")
 		}
 		if err := requireDiscoverSupport(ctx, tx, userId, post); err != nil {
@@ -993,7 +1006,7 @@ func (s *DiscoverServiceImpl) ListComments(ctx context.Context, userId, postUuid
 	if err != nil {
 		return nil, err
 	}
-	if !CanViewDiscoverPost(post, userId) {
+	if !canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) {
 		return nil, fmt.Errorf("帖子不存在或已下架")
 	}
 	if err := requireDiscoverSupport(ctx, db.GormDB, userId, post); err != nil {
@@ -1012,7 +1025,7 @@ func (s *DiscoverServiceImpl) ListCommentThread(ctx context.Context, userId, pos
 	if err != nil {
 		return nil, false, err
 	}
-	if !CanViewDiscoverPost(post, userId) {
+	if !canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) {
 		return nil, false, fmt.Errorf("帖子不存在或已下架")
 	}
 	if err := requireDiscoverSupport(ctx, db.GormDB, userId, post); err != nil {
@@ -1170,7 +1183,7 @@ func (s *DiscoverServiceImpl) ListFolders(ctx context.Context, userId, viewerId 
 		// 获取收藏夹第一张图片作为封面
 		coverUrl := ""
 		posts, _ := s.discoverDAO.ListCollectedPostsByFolder(f.Id, viewerId, 1, 1)
-		if len(posts) > 0 {
+		if len(posts) > 0 && canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), &posts[0], viewerId) {
 			coverUrl = posts[0].CoverUrl
 			if coverUrl == "" && posts[0].MediaType != 1 {
 				mediaList, _ := s.discoverDAO.FindMediaByPostId(posts[0].Id)
@@ -1247,7 +1260,7 @@ func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid,
 	if err != nil {
 		return false, 0, err
 	}
-	if !CanViewDiscoverPost(post, userId) {
+	if !canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) {
 		return false, 0, fmt.Errorf("帖子不存在")
 	}
 
@@ -1357,7 +1370,7 @@ func (s *DiscoverServiceImpl) UncollectPost(ctx context.Context, userId, postUui
 	}
 
 	updatedPost, _ := s.discoverDAO.FindPostByUuid(postUuid)
-	if CanViewDiscoverPost(updatedPost, userId) {
+	if canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), updatedPost, userId) {
 		return false, updatedPost.CollectCount, nil
 	}
 	return false, 0, nil
@@ -1369,7 +1382,7 @@ func (s *DiscoverServiceImpl) CheckCollected(ctx context.Context, userId, postUu
 	if err != nil {
 		return false, "", err
 	}
-	if !CanViewDiscoverPost(post, userId) {
+	if !canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) {
 		return false, "", fmt.Errorf("作品不存在或不可见")
 	}
 	col, _ := s.discoverDAO.FindCollectionByUserAndTarget(userId, postUuid)
@@ -1401,7 +1414,7 @@ func (s *DiscoverServiceImpl) SearchPosts(ctx context.Context, userId, keyword s
 			ids, searchErr := userdao.NewESDiscoverDAO().SearchPostIDs(searchCtx, keyword)
 			cancel()
 			if searchErr == nil && len(ids) > 0 {
-				posts, total, verifyErr := s.filterDiscoverSearch(ctx, ids, page, pageSize)
+				posts, total, verifyErr := s.filterDiscoverSearch(ctx, userId, ids, page, pageSize)
 				if verifyErr != nil {
 					return nil, 0, verifyErr
 				}
@@ -1412,7 +1425,7 @@ func (s *DiscoverServiceImpl) SearchPosts(ctx context.Context, userId, keyword s
 			}
 		}
 	}
-	posts, total, err := s.discoverDAO.SearchPostsPage(keyword, page, pageSize)
+	posts, total, err := s.discoverDAO.SearchPostsPage(keyword, page, pageSize, userId)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1420,14 +1433,14 @@ func (s *DiscoverServiceImpl) SearchPosts(ctx context.Context, userId, keyword s
 }
 
 // filterDiscoverSearch 对候选先核对当前权限再分页，避免私密候选占位导致短页或错误总数。
-func (s *DiscoverServiceImpl) filterDiscoverSearch(ctx context.Context, ids []string, page, pageSize int) ([]models.DiscoverPost, int64, error) {
+func (s *DiscoverServiceImpl) filterDiscoverSearch(ctx context.Context, userId string, ids []string, page, pageSize int) ([]models.DiscoverPost, int64, error) {
 	visible := make(map[string]models.DiscoverPost, len(ids))
 	for start := 0; start < len(ids); start += 500 {
 		end := start + 500
 		if end > len(ids) {
 			end = len(ids)
 		}
-		posts, err := s.discoverDAO.FindPublicPostsByUuids(ctx, ids[start:end])
+		posts, err := s.discoverDAO.FindPublicPostsByUuids(ctx, ids[start:end], userId)
 		if err != nil {
 			return nil, 0, fmt.Errorf("核对搜索作品公开范围失败: %w", err)
 		}
@@ -1457,7 +1470,7 @@ func (s *DiscoverServiceImpl) filterDiscoverSearch(ctx context.Context, ids []st
 	return ordered[offset:end], total, nil
 }
 
-// buildPostInfoList 将帖子模型列表转换为PostInfo列表
+// buildPostInfoList 批量复核反向拉黑并构造正常帖子或不含原始内容的占位列表。
 func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId string, posts []models.DiscoverPost, total int64) ([]PostInfo, int64, error) {
 	if len(posts) == 0 {
 		return []PostInfo{}, total, nil
@@ -1475,6 +1488,11 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 		postIds = append(postIds, post.Id)
 		userIds = append(userIds, post.UserId)
 		postUuids = append(postUuids, post.Uuid)
+	}
+
+	blockedBy, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).BlockedByAuthors(userId, userIds)
+	if err != nil {
+		return nil, 0, fmt.Errorf("查询帖子占位权限失败: %w", err)
 	}
 
 	// 批量查询媒体
@@ -1525,6 +1543,14 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 
 	var result []PostInfo
 	for _, post := range posts {
+		if blockedBy[post.UserId] {
+			nickname, avatar := "", ""
+			if author := userMap[post.UserId]; author != nil {
+				nickname, avatar = author.Nickname, author.Avatar
+			}
+			result = append(result, PostInfo{Uuid: post.Uuid, UserId: post.UserId, Nickname: nickname, Avatar: avatar, Title: "已被拉黑", IsBlockedBy: true, LockReason: "已被拉黑", Width: 4, Height: 3, CreatedAt: post.CreatedAt.Format("2006-01-02 15:04:05")})
+			continue
+		}
 		firstMedia := mediaMap[post.Id]
 		firstUrl := firstMedia.Url
 		canPlay, lockReason, expiresAt := discoverPlaybackAccess(post, userId, expiries[post.UserId], now)
@@ -1593,6 +1619,8 @@ type UserProfileInfo struct {
 	FollowingCount int64
 	FollowerCount  int64
 	IsFollowed     bool
+	IsBlocked      bool
+	IsBlockedBy    bool
 	Posts          []PostInfo
 	Total          int64
 }
@@ -1608,6 +1636,10 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 		return nil, fmt.Errorf("用户不存在")
 	}
 
+	blocked, blockedBy, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).Status(currentUserId, profileUserId)
+	if err != nil {
+		return nil, fmt.Errorf("查询主页拉黑状态失败: %w", err)
+	}
 	// 查询帖子列表
 	posts, err := s.discoverDAO.ListPostsByUserId(profileUserId, currentUserId, page, pageSize)
 	if err != nil {
@@ -1648,6 +1680,8 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 		FollowingCount: user.FollowingCount,
 		FollowerCount:  user.FollowerCount,
 		IsFollowed:     isFollowed,
+		IsBlocked:      blocked,
+		IsBlockedBy:    blockedBy,
 		Posts:          postInfos,
 		Total:          total,
 	}, nil

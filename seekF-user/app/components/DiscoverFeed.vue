@@ -32,6 +32,8 @@ import { ref, watch, onMounted, onUnmounted } from 'vue'
 const props = defineProps({ search: { type: Boolean, default: false }, keyword: { type: String, default: '' }, channel: { type: String, default: 'recommended' }, authorUuid: { type: String, default: '' } })
 const emit = defineEmits(['loaded'])
 const { items, loading, initialLoading, error, noMore, total, hasFollowing, resetRequired, loadMore, reset, updateLike, applyFeedback } = useDiscoverFeed(props.search ? () => props.keyword : undefined, () => props.channel, () => props.authorUuid, () => emit('loaded', props.authorUuid))
+const blockVersion = useState('user-block-version', () => 0)
+watch(blockVersion, () => { selectedItem.value = null; reset() })
 const mounted = ref(false)
 const selectedItem = ref(null)
 const sentinel = ref(null)

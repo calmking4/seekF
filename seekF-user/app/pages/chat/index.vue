@@ -60,7 +60,10 @@
           <span class="font-medium text-sm">{{ currentChat.name }}</span>
           <div class="flex-1"></div>
           <div class="flex gap-4 text-gray-500">
-            <button><Icon name="uil:ellipsis-h" /></button>
+            <button type="button" :disabled="blockStatusLoading || blockSaving" :aria-busy="blockStatusLoading || blockSaving" class="inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 py-2 text-xs font-medium transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 sm:px-4 sm:text-sm" :class="chatIsBlocked ? 'border-blue-200 bg-blue-50 text-blue-500 hover:border-blue-300 hover:bg-blue-100' : 'border-rose-200 bg-rose-50 text-rose-500 hover:border-rose-300 hover:bg-rose-100'" @click="blockStatusUser === currentChat.id ? handleChatBlock(currentChat.id) : refreshChatBlockStatus()">
+              <Icon :name="blockStatusLoading || blockSaving ? 'uil:spinner' : blockStatusUser !== currentChat.id ? 'mdi:refresh' : chatIsBlocked ? 'mdi:account-check-outline' : 'mdi:account-cancel-outline'" class="text-base" :class="{ 'animate-spin': blockStatusLoading || blockSaving }" aria-hidden="true" />
+              <span>{{ blockSaving ? '处理中…' : blockStatusLoading ? '加载中…' : blockStatusUser !== currentChat.id ? '重试加载' : chatIsBlocked ? '解除拉黑' : '拉黑' }}</span>
+            </button>
           </div>
         </div>
 
@@ -202,6 +205,7 @@
 </template>
 
 <script setup>
+import { ElMessage, ElMessageBox } from 'element-plus'
 // 页面级 SEO
 useSeoMeta({
   title: '消息',
@@ -226,6 +230,60 @@ const currentChat = computed(() => {
   if (activeIndex.value === -1) return {}
   return chatList.value[activeIndex.value]
 })
+
+const blockVersion = useState('user-block-version', () => 0)
+const blockStatusUser = ref('')
+const chatIsBlocked = ref(false)
+const blockStatusLoading = ref(false)
+const blockSaving = ref(false)
+let blockStatusRequest = 0
+let chatDisposed = false
+
+// 切换会话及拉黑状态变化时重新查询，丢弃旧用户的状态响应。
+const refreshChatBlockStatus = async () => {
+  const target = currentChat.value?.id
+  const owner = currentUserId.value
+  const request = ++blockStatusRequest
+  blockStatusUser.value = ''
+  chatIsBlocked.value = false
+  blockStatusLoading.value = false
+  if (!target || !owner || chatDisposed) return
+  blockStatusLoading.value = true
+  try {
+    const res = await useApi$('/user/block/status', { body: { target_user_id: target } })
+    if (chatDisposed || request !== blockStatusRequest || currentChat.value?.id !== target || currentUserId.value !== owner) return
+    if (res.code !== 200) throw new Error(res.message || '查询拉黑状态失败')
+    chatIsBlocked.value = !!res.data.is_blocked
+    blockStatusUser.value = target
+  } catch (error) {
+    if (!chatDisposed && request === blockStatusRequest && currentChat.value?.id === target && currentUserId.value === owner) ElMessage.error(error.message || '查询拉黑状态失败，请重试')
+  } finally {
+    if (!chatDisposed && request === blockStatusRequest) blockStatusLoading.value = false
+  }
+}
+
+const handleChatBlock = async (target) => {
+  if (blockSaving.value || blockStatusLoading.value || blockStatusUser.value !== target || currentChat.value?.id !== target) return
+  const owner = currentUserId.value
+  const blocked = !chatIsBlocked.value
+  blockSaving.value = true
+  try {
+    if (blocked) await ElMessageBox.confirm('拉黑后，首页不再展示对方的帖子，对方无法查看你的帖子或给你发私信。', '拉黑用户', { confirmButtonText: '拉黑', cancelButtonText: '取消', type: 'warning' })
+    if (chatDisposed || currentChat.value?.id !== target || currentUserId.value !== owner) return
+    const res = await useApi$('/user/block/set', { body: { target_user_id: target, blocked } })
+    if (res.code !== 200) throw new Error(res.message || '设置拉黑状态失败')
+    if (currentUserId.value !== owner) return
+    blockVersion.value++
+    if (!chatDisposed && currentChat.value?.id === target) {
+      chatIsBlocked.value = blocked
+      ElMessage.success(blocked ? '已拉黑' : '已解除拉黑')
+    }
+  } catch (error) {
+    if (!chatDisposed && currentChat.value?.id === target && currentUserId.value === owner && error !== 'cancel' && error !== 'close') ElMessage.error(error.message || '设置拉黑状态失败，请重试')
+  } finally { blockSaving.value = false }
+}
+
+watch([() => currentChat.value?.id, currentUserId, blockVersion], refreshChatBlockStatus)
 
 const scrollbarRef = ref()
 const imageInputRef = ref()
@@ -792,6 +850,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  chatDisposed = true
+  blockStatusRequest++
   ws.removeMessageCallback(handleWebSocketMessage)
 })
 </script>

@@ -1,7 +1,8 @@
 <template>
   <article :data-id="post.id" class="waterfall-item fade-in bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow" @click.stop="openPost">
     <button type="button" class="w-full relative block overflow-hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500" :style="{ aspectRatio: discoverAspectRatio(post) }" :aria-label="'查看动态：' + post.title" @click.stop="openPost">
-      <img v-if="imageSrc && !mediaFailed" :src="imageSrc" :alt="post.title" class="h-full w-full object-cover" loading="lazy" decoding="async" @error="mediaFailed = true" />
+      <div v-if="post.is_blocked_by" class="flex h-full flex-col items-center justify-center gap-2 bg-gray-100 text-gray-400"><Icon name="mdi:account-lock-outline" class="text-3xl" /><span class="text-xs">内容暂不可见</span></div>
+      <img v-else-if="imageSrc && !mediaFailed" :src="imageSrc" :alt="post.title" class="h-full w-full object-cover" loading="lazy" decoding="async" @error="mediaFailed = true" />
       <video v-else-if="post.type === 'video' && post.src && !mediaFailed" :src="post.src" class="h-full w-full object-cover" preload="metadata" muted playsinline @error="mediaFailed = true" />
       <div v-else class="flex h-full items-center justify-center text-gray-400"><Icon name="mdi:image-outline" class="text-3xl" /><span class="sr-only">媒体暂时无法显示</span></div>
       <span v-if="post.type === 'video'" aria-hidden="true" class="pointer-events-none absolute right-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/40 text-white" :class="post.support_only === 1 ? 'bottom-2' : 'top-2'"><Icon name="mdi:play" class="text-base" /></span>
@@ -17,10 +18,10 @@
         </NuxtLink>
         <span v-else class="truncate">{{ post.nickname }}</span>
         <div class="flex shrink-0 items-center gap-2" @click.stop>
-          <button type="button" class="flex items-center gap-1 cursor-pointer focus-visible:outline-blue-500 disabled:opacity-50" :class="{ 'text-red-500': post.isLiked }" :aria-label="post.isLiked ? '取消点赞' : '点赞'" :aria-pressed="post.isLiked" :disabled="isPending(post.id)" @click.stop="like">
+          <button type="button" class="flex items-center gap-1 cursor-pointer focus-visible:outline-blue-500 disabled:opacity-50" :class="{ 'text-red-500': post.isLiked }" :aria-label="post.isLiked ? '取消点赞' : '点赞'" :aria-pressed="post.isLiked" :disabled="post.is_blocked_by || isPending(post.id)" @click.stop="like">
             <Icon :name="post.isLiked ? 'solar:heart-angle-bold' : 'mdi:heart-outline'" class="text-base" /><span>{{ post.likeCount }}</span>
           </button>
-          <el-dropdown v-if="feedbackEnabled && post.user_id !== auth.getUser()?.uuid" trigger="click" placement="bottom-end" @command="feedback">
+          <el-dropdown v-if="!post.is_blocked_by && feedbackEnabled && post.user_id !== auth.getUser()?.uuid" trigger="click" placement="bottom-end" @command="feedback">
             <button type="button" aria-label="更多推荐选项" class="flex h-6 w-6 items-center justify-center rounded text-gray-500 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50" :disabled="feedbackPending" @click.stop><Icon name="mdi:dots-vertical" class="text-base" /></button>
             <template #dropdown>
               <el-dropdown-menu @click.stop>
@@ -37,6 +38,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { discoverAspectRatio } from '~/utils/discover'
 const props = defineProps({ post: { type: Object, required: true }, feedbackEnabled: { type: Boolean, default: false }, source: { type: String, default: 'profile' } })
 const emit = defineEmits(['open', 'like-updated', 'feedback'])
@@ -44,7 +46,7 @@ const { setLike, isPending } = useDiscoverLike()
 const { pending: feedbackPending, setFeedback } = useDiscoverFeedback()
 const { recordClick } = useDiscoverClick()
 const auth = useAuthState()
-const openPost = () => { emit('open', props.post); void recordClick(props.post.id, props.source) }
+const openPost = () => { if (props.post.is_blocked_by) { ElMessage.warning('已被拉黑'); return }; emit('open', props.post); void recordClick(props.post.id, props.source) }
 const feedback = async targetType => {
   const result = await setFeedback(props.post.id, targetType)
   if (result) { emit('feedback', result); ElMessage.success('已设置不感兴趣') }

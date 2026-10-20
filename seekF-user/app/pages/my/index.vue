@@ -23,10 +23,13 @@
           </div>
         </div>
 
-        <!-- 编辑信息按钮 -->
-        <button type="button" class="inline-flex shrink-0 items-center gap-2 rounded-full border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400" @click="editInfo">
-          <Icon name="uil:edit-alt" class="text-base" />编辑信息
-        </button>
+        <!-- 个人管理入口 -->
+        <div class="flex shrink-0 flex-col items-end gap-3">
+          <button type="button" class="inline-flex shrink-0 items-center gap-2 rounded-full border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400" @click="editInfo">
+            <Icon name="uil:edit-alt" class="text-base" />编辑信息
+          </button>
+          <NuxtLink to="/my/blacklist" class="inline-flex shrink-0 items-center gap-2 rounded-full border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"><Icon name="mdi:account-cancel-outline" class="text-base" />黑名单管理</NuxtLink>
+        </div>
       </div>
     </div>
 
@@ -146,7 +149,8 @@
                 @click="handleCollectedItemClick(item)"
               >
                 <div class="w-full h-48 bg-gray-100">
-                  <img v-if="item.first_url" :src="item.first_url" :alt="item.title" class="w-full h-full object-cover" />
+                  <div v-if="item.is_blocked_by" class="flex h-full flex-col items-center justify-center gap-2 text-gray-400"><Icon name="mdi:account-lock-outline" class="text-3xl" /><span class="text-xs">内容暂不可见</span></div>
+                  <img v-else-if="item.first_url" :src="item.first_url" :alt="item.title" class="w-full h-full object-cover" />
                   <div v-else class="w-full h-full flex items-center justify-center text-gray-400">
                     <Icon name="uil:image" class="text-3xl" />
                   </div>
@@ -200,8 +204,9 @@
               >
                 <!-- 图片 -->
                 <div class="w-full h-48 bg-gray-100">
+                  <div v-if="item.is_blocked_by" class="flex h-full flex-col items-center justify-center gap-2 text-gray-400"><Icon name="mdi:account-lock-outline" class="text-3xl" /><span class="text-xs">内容暂不可见</span></div>
                   <img
-                    v-if="item.first_url"
+                    v-else-if="item.first_url"
                     :src="item.first_url"
                     :alt="item.title"
                     class="w-full h-full object-cover"
@@ -642,6 +647,7 @@ const loadLikedPosts = async (reset = false) => {
 
 // 点击点赞帖子卡片
 const handleLikedItemClick = (item) => {
+  if (item.is_blocked_by) { ElMessage.warning('已被拉黑'); return }
   selectedLikedItem.value = {
     ...item,
     id: item.uuid,
@@ -737,6 +743,7 @@ const loadFolderPosts = async () => {
 }
 
 const handleCollectedItemClick = (item) => {
+  if (item.is_blocked_by) { ElMessage.warning('已被拉黑'); return }
   selectedCollectedItem.value = {
     ...item,
     id: item.uuid,

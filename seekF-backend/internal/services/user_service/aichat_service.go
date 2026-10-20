@@ -370,7 +370,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 
 	// MCP Agent：默认先走第 1 次 Generate（工具决策，非流式）→ 执行 MCP → 第 2 次 Stream（无工具绑定）
 	// 若 MCP 工具不可用/初始化失败，则回退为普通单轮流式。
-	finalContent, handled, sources, posts, err := runMCPAgentFlow(ctx, chatModel, chatMessages, onChunk, req.UseWebSearch)
+	finalContent, handled, sources, posts, err := runMCPAgentFlow(ctx, userId, chatModel, chatMessages, onChunk, req.UseWebSearch)
 	if err != nil {
 		zlog.Error("MCP代理流程失败: " + err.Error())
 		return fmt.Errorf("AI响应失败")
@@ -497,7 +497,7 @@ func streamChatModelToSSE(ctx context.Context, m einomodel.ToolCallingChatModel,
 // 若无 ToolCalls：返回 handled=false，让外层走普通 Stream，保证非工具场景也保持流式体验。
 // 返回 handled=false 时回退为普通单轮流式（无 MCP 工具绑定）。
 // enableWebSearch 控制是否启用 web_search 工具。
-func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatModel, chatMessages []*schema.Message,
+func runMCPAgentFlow(ctx context.Context, userId string, chatModel einomodel.ToolCallingChatModel, chatMessages []*schema.Message,
 	onChunk func(chunk string) error, enableWebSearch bool) (finalContent string, handled bool, sources []toolpkg.SearchSource, posts []toolpkg.DiscoverPostItem, err error) {
 	toolInfos, toolByName, err := mcppkg.FilteredMCPToolBinding(ctx, enableWebSearch)
 	if err != nil {
@@ -548,7 +548,20 @@ func runMCPAgentFlow(ctx context.Context, chatModel einomodel.ToolCallingChatMod
 		if inv == nil {
 			out = fmt.Sprintf("错误：未找到可执行工具 %q", name)
 		} else {
-			runOut, runErr := inv.InvokableRun(ctx, tc.Function.Arguments)
+			arguments := tc.Function.Arguments
+			if name == "get_discover_posts" {
+				var params map[string]any
+				if err := json.Unmarshal([]byte(arguments), &params); err != nil || params == nil {
+					params = map[string]any{}
+				}
+				params["_viewer_id"] = userId
+				encoded, err := json.Marshal(params)
+				if err != nil {
+					return "", true, nil, nil, fmt.Errorf("编码帖子工具参数失败: %w", err)
+				}
+				arguments = string(encoded)
+			}
+			runOut, runErr := inv.InvokableRun(ctx, arguments)
 			if runErr != nil {
 				out = "工具执行失败: " + runErr.Error()
 			} else {

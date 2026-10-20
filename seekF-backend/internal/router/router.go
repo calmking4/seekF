@@ -27,6 +27,7 @@ func SetupRouter(
 	notificationController *user.NotificationController,
 	adminController *admin.AdminController,
 	supportController *user.SupportController,
+	blockController *user.BlockController,
 ) *gin.Engine {
 	httpMetrics := businessmetrics.NewHTTPMetrics()
 	metrics := observability.NewMetrics(
@@ -99,6 +100,11 @@ func SetupRouter(
 			protectedGroup.POST("/userinfo/getUserinfo", userInfoController.GetUserInfo)
 			protectedGroup.POST("/userinfo/getMyInfo", userInfoController.GetMyInfo)
 			protectedGroup.POST("/userinfo/updateUserInfo", userInfoController.UpdateUserInfo)
+
+			// 用户黑名单
+			protectedGroup.POST("/block/set", blockController.Set)
+			protectedGroup.POST("/block/status", blockController.Status)
+			protectedGroup.POST("/block/list", blockController.List)
 
 			// 会话
 			protectedGroup.POST("/session/openSession", sessionController.OpenSession)

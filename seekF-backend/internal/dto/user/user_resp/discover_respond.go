@@ -2,6 +2,7 @@ package userresp
 
 // PostItem 帖子列表信息及首个媒体的像素尺寸。
 type PostItem struct {
+	IsBlockedBy      bool     `json:"is_blocked_by"`
 	ReviewNote       string   `json:"review_note,omitempty"`
 	SupportOnly      int8     `json:"support_only"`
 	CanPlay          bool     `json:"can_play"`
@@ -110,6 +111,8 @@ type UserProfileRespond struct {
 	FollowingCount int64      `json:"following_count"`
 	FollowerCount  int64      `json:"follower_count"`
 	IsFollowed     bool       `json:"is_followed"`
+	IsBlocked      bool       `json:"is_blocked"`
+	IsBlockedBy    bool       `json:"is_blocked_by"`
 	Posts          []PostItem `json:"posts"`
 	Total          int64      `json:"total"`
 }

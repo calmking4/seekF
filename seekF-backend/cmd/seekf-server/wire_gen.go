@@ -29,8 +29,9 @@ func initApp(db *gorm.DB) App {
 	authController := user.NewAuthController(authService)
 	userInfoService := userservice.NewUserInfoService(userInfoDAO)
 	userInfoController := user.NewUserInfoController(userInfoService)
+	blockDAO := userdao.NewBlockDAO(db)
 	sessionDAO := userdao.NewSessionDAO(db)
-	sessionService := userservice.NewSessionService(sessionDAO, userInfoDAO)
+	sessionService := userservice.NewSessionService(sessionDAO, userInfoDAO, blockDAO)
 	sessionController := user.NewSessionController(sessionService)
 	messageDAO := userdao.NewMessageDAO(db)
 	messageService := userservice.NewMessageService(messageDAO, sessionDAO)
@@ -59,7 +60,9 @@ func initApp(db *gorm.DB) App {
 	supportDAO := userdao.NewSupportDAO(db)
 	supportService := userservice.NewSupportService(supportDAO, userInfoDAO)
 	supportController := user.NewSupportController(supportService)
-	engine := router.SetupRouter(authController, userInfoController, sessionController, messageController, fileController, wsController, aiChatController, knowledgeController, discoverController, followController, notificationController, adminController, supportController)
+	blockService := userservice.NewBlockService(blockDAO)
+	blockController := user.NewBlockController(blockService)
+	engine := router.SetupRouter(authController, userInfoController, sessionController, messageController, fileController, wsController, aiChatController, knowledgeController, discoverController, followController, notificationController, adminController, supportController, blockController)
 	esDiscoverDAO := userdao.NewESDiscoverDAO()
 	app := App{
 		Router:         engine,
@@ -76,13 +79,13 @@ func initApp(db *gorm.DB) App {
 // wire.go:
 
 // DAO ProviderSet — 所有数据访问层依赖
-var daoProviderSet = wire.NewSet(admindao.NewAdminDAO, userdao.NewUserInfoDAO, userdao.NewSessionDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO, userdao.NewESDiscoverDAO, userdao.NewFollowDAO, userdao.NewNotificationDAO, userdao.NewSupportDAO)
+var daoProviderSet = wire.NewSet(admindao.NewAdminDAO, userdao.NewUserInfoDAO, userdao.NewSessionDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO, userdao.NewESDiscoverDAO, userdao.NewFollowDAO, userdao.NewNotificationDAO, userdao.NewSupportDAO, userdao.NewBlockDAO)
 
 // ServiceProviderSet — 所有业务逻辑层依赖
-var serviceProviderSet = wire.NewSet(adminservice.NewAdminService, userservice.NewAuthService, userservice.NewUserInfoService, userservice.NewSessionService, userservice.NewMessageService, userservice.NewFileService, userservice.NewAIChatService, userservice.NewKnowledgeService, userservice.NewDiscoverService, userservice.NewFollowService, userservice.NewNotificationService, userservice.NewSupportService)
+var serviceProviderSet = wire.NewSet(adminservice.NewAdminService, userservice.NewAuthService, userservice.NewUserInfoService, userservice.NewSessionService, userservice.NewMessageService, userservice.NewFileService, userservice.NewAIChatService, userservice.NewKnowledgeService, userservice.NewDiscoverService, userservice.NewFollowService, userservice.NewNotificationService, userservice.NewSupportService, userservice.NewBlockService)
 
 // controllerProviderSet — 所有控制器依赖
-var controllerProviderSet = wire.NewSet(admin.NewAdminController, user.NewAuthController, user.NewUserInfoController, user.NewSessionController, user.NewMessageController, user.NewFileController, user.NewWsController, user.NewAIChatController, user.NewKnowledgeController, user.NewDiscoverController, user.NewFollowController, user.NewNotificationController, user.NewSupportController)
+var controllerProviderSet = wire.NewSet(admin.NewAdminController, user.NewAuthController, user.NewUserInfoController, user.NewSessionController, user.NewMessageController, user.NewFileController, user.NewWsController, user.NewAIChatController, user.NewKnowledgeController, user.NewDiscoverController, user.NewFollowController, user.NewNotificationController, user.NewSupportController, user.NewBlockController)
 
 // App 包含所有需要暴露的依赖
 // 全局单例（websocket、ai 等）需要通过 App 暴露给 main.go 使用

@@ -75,7 +75,8 @@ SELECT p.uuid COLLATE utf8mb4_unicode_ci FROM discover_post p WHERE p.user_id IN
 ) candidates ON candidates.post_uuid=p.uuid COLLATE utf8mb4_unicode_ci
 WHERE p.status=0 AND p.visibility=0 AND p.deleted_at IS NULL
 AND EXISTS (SELECT 1 FROM user_follow f WHERE f.user_id=? AND f.follow_user_id=p.user_id)`
-	args := []any{userId, userId, userId, userId}
+	query += " AND NOT EXISTS (SELECT 1 FROM user_block b WHERE b.user_id=? AND b.blocked_user_id=p.user_id COLLATE utf8mb4_unicode_ci)"
+	args := []any{userId, userId, userId, userId, userId}
 	if mediaType != nil {
 		query += " AND p.media_type=?"
 		args = append(args, *mediaType)

@@ -9,6 +9,7 @@ import (
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
+	"seekF-backend/internal/pkg/db"
 )
 
 // 通知类型常量
@@ -161,7 +162,7 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 				posts[targetUuid] = post
 			}
 			if _, cached := covers[targetUuid]; !cached {
-				if CanViewDiscoverPost(post, userId) {
+				if canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) {
 					covers[targetUuid] = post.CoverUrl
 					if post.MediaType == 0 && post.CoverUrl == "" {
 						media, err := s.discoverDAO.FindMediaByPostId(post.Id)
@@ -174,7 +175,7 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 					}
 				}
 			}
-			if CanViewDiscoverPost(post, userId) {
+			if canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) {
 				info.PostTitle, info.PostCover, info.TargetAvailable = post.Title, covers[targetUuid], true
 			}
 		}

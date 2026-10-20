@@ -1,9 +1,11 @@
 package userservice
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
+	"seekF-backend/internal/pkg/db"
 	userstatusenum "seekF-backend/internal/pkg/enum/user_enum/user_status_enum"
 	myredis "seekF-backend/internal/pkg/redis"
 	"seekF-backend/internal/pkg/util"
@@ -26,6 +29,8 @@ type OpenSessionResult struct {
 }
 
 type SessionService interface {
+	// 锁定双方用户并复核拉黑状态后保存私信。
+	SavePrivateMessage(ctx context.Context, message *models.Message) error
 	OpenSession(sendId string, receiveId string) (string, error)
 	OpenSessionWithInfo(sendId string, receiveId string) (*OpenSessionResult, error)
 	CreateSession(sendId string, receiveId string) (string, error)
@@ -34,19 +39,50 @@ type SessionService interface {
 	CheckOpenSessionAllowed(sendId string, receiveId string) (bool, error)
 }
 
+// SavePrivateMessage 与拉黑操作采用相同用户锁顺序，防止校验后并发拉黑仍写入新私信。
+func (s *SessionServiceImpl) SavePrivateMessage(ctx context.Context, message *models.Message) error {
+	if message == nil || !strings.HasPrefix(message.SendId, "U") || !strings.HasPrefix(message.ReceiveId, "U") || message.SendId == message.ReceiveId {
+		return fmt.Errorf("私信目标无效")
+	}
+	return db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		users := userdao.NewUserInfoDAO(tx)
+		ids := []string{message.SendId, message.ReceiveId}
+		sort.Strings(ids)
+		for _, id := range ids {
+			user, err := users.FindUserByUuidForUpdate(id)
+			if err != nil {
+				return fmt.Errorf("查询私信用户失败: %w", err)
+			}
+			if user == nil || user.Status == userstatusenum.DISABLE {
+				return fmt.Errorf("私信用户不存在或已禁用")
+			}
+		}
+		if err := checkUserBlock(tx, message.SendId, message.ReceiveId); err != nil {
+			return err
+		}
+		if err := userdao.NewMessageDAO(tx).CreateMessage(message); err != nil {
+			return fmt.Errorf("保存私信失败: %w", err)
+		}
+		return nil
+	})
+}
+
 type SessionServiceImpl struct {
 	sessionDAO  userdao.SessionDAO
 	userInfoDAO userdao.UserInfoDAO
+	blockDAO    *userdao.BlockDAO
 }
 
 // NewSessionService 构造无需好友关系的用户私聊服务。
 func NewSessionService(
 	sessionDAO userdao.SessionDAO,
 	userInfoDAO userdao.UserInfoDAO,
+	blockDAO *userdao.BlockDAO,
 ) SessionService {
 	return &SessionServiceImpl{
 		sessionDAO:  sessionDAO,
 		userInfoDAO: userInfoDAO,
+		blockDAO:    blockDAO,
 	}
 }
 
@@ -221,6 +257,13 @@ func (s *SessionServiceImpl) CheckOpenSessionAllowed(sendId string, receiveId st
 		if user.Status == userstatusenum.DISABLE {
 			return false, fmt.Errorf("用户已被禁用，无法私聊")
 		}
+	}
+	blocked, blockedBy, err := s.blockDAO.Status(sendId, receiveId)
+	if err != nil {
+		return false, fmt.Errorf("查询私聊拉黑状态失败: %w", err)
+	}
+	if blocked || blockedBy {
+		return false, fmt.Errorf("存在拉黑关系，无法发送私信")
 	}
 	return true, nil
 }

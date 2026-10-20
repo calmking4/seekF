@@ -28,15 +28,15 @@ COALESCE(MAX(p.id),0) AS latest_post_id, MAX(p.created_at) AS latest_at,
 COALESCE(MAX(p.id),0)>f.last_seen_post_id AS has_update
 FROM user_follow f JOIN user_info u ON u.uuid=f.follow_user_id AND u.deleted_at IS NULL
 LEFT JOIN discover_post p ON p.user_id=f.follow_user_id AND p.status=0 AND p.visibility=0 AND p.deleted_at IS NULL
-WHERE f.user_id=? GROUP BY f.id,f.follow_user_id,u.nickname,u.avatar,f.last_seen_post_id
-ORDER BY has_update DESC,latest_at DESC,f.id DESC`, userId).Scan(&rows).Error
+WHERE f.user_id=? AND NOT EXISTS (SELECT 1 FROM user_block b WHERE (b.user_id=? AND b.blocked_user_id=f.follow_user_id COLLATE utf8mb4_unicode_ci) OR (b.user_id=f.follow_user_id COLLATE utf8mb4_unicode_ci AND b.blocked_user_id=?)) GROUP BY f.id,f.follow_user_id,u.nickname,u.avatar,f.last_seen_post_id
+ORDER BY has_update DESC,latest_at DESC,f.id DESC`, userId, userId, userId).Scan(&rows).Error
 	return rows, err
 }
 
 // ListFollowingAuthorFeed 使用当前关注关系限定作者，复用原帖时间与主键分页。
 func (d *DiscoverDAOImpl) ListFollowingAuthorFeed(ctx context.Context, userId, author string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error) {
 	rows := make([]models.DiscoverPost, 0)
-	q := d.db.WithContext(ctx).Where("user_id=? AND status=0 AND visibility=0", author).
+	q := WithoutHiddenAuthors(d.db.WithContext(ctx), userId, "discover_post").Where("user_id=? AND status=0 AND visibility=0", author).
 		Where("EXISTS (SELECT 1 FROM user_follow f WHERE f.user_id=? AND f.follow_user_id=discover_post.user_id)", userId)
 	if mediaType != nil {
 		q = q.Where("media_type=?", *mediaType)

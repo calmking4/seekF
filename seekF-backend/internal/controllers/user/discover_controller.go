@@ -76,7 +76,7 @@ func (c *DiscoverController) CreatePost(ctx *gin.Context) {
 	}
 
 	resp.Success(ctx, "发布成功", userresp.PostItem{
-		SupportOnly: postInfo.SupportOnly, CanPlay: postInfo.CanPlay, LockReason: postInfo.LockReason, SupportExpiresAt: postInfo.SupportExpiresAt, Visibility: postInfo.Visibility, Version: postInfo.Version,
+		IsBlockedBy: postInfo.IsBlockedBy, SupportOnly: postInfo.SupportOnly, CanPlay: postInfo.CanPlay, LockReason: postInfo.LockReason, SupportExpiresAt: postInfo.SupportExpiresAt, Visibility: postInfo.Visibility, Version: postInfo.Version,
 		Uuid:      postInfo.Uuid,
 		UserId:    postInfo.UserId,
 		Nickname:  postInfo.Nickname,
@@ -109,7 +109,7 @@ func (c *DiscoverController) ListFeed(ctx *gin.Context) {
 	items := make([]userresp.PostItem, 0, len(result.List))
 	for _, p := range result.List {
 		items = append(items, userresp.PostItem{
-			SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
+			IsBlockedBy: p.IsBlockedBy, SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
 			Uuid:         p.Uuid,
 			UserId:       p.UserId,
 			Nickname:     p.Nickname,
@@ -188,7 +188,7 @@ func (c *DiscoverController) SearchPosts(ctx *gin.Context) {
 	var items []userresp.PostItem
 	for _, p := range posts {
 		items = append(items, userresp.PostItem{
-			SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
+			IsBlockedBy: p.IsBlockedBy, SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
 			Uuid:         p.Uuid,
 			UserId:       p.UserId,
 			Nickname:     p.Nickname,
@@ -246,7 +246,7 @@ func (c *DiscoverController) ListLikedPosts(ctx *gin.Context) {
 	var items []userresp.PostItem
 	for _, p := range posts {
 		items = append(items, userresp.PostItem{
-			SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
+			IsBlockedBy: p.IsBlockedBy, SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
 			Uuid:         p.Uuid,
 			UserId:       p.UserId,
 			Nickname:     p.Nickname,
@@ -708,7 +708,7 @@ func (c *DiscoverController) ListCollectedPosts(ctx *gin.Context) {
 	var items []userresp.PostItem
 	for _, p := range posts {
 		items = append(items, userresp.PostItem{
-			SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
+			IsBlockedBy: p.IsBlockedBy, SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
 			Uuid:         p.Uuid,
 			UserId:       p.UserId,
 			Nickname:     p.Nickname,
@@ -849,7 +849,7 @@ func (c *DiscoverController) GetUserProfile(ctx *gin.Context) {
 	var items []userresp.PostItem
 	for _, p := range profile.Posts {
 		items = append(items, userresp.PostItem{
-			SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
+			IsBlockedBy: p.IsBlockedBy, SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
 			Uuid:         p.Uuid,
 			UserId:       p.UserId,
 			Nickname:     p.Nickname,
@@ -881,6 +881,8 @@ func (c *DiscoverController) GetUserProfile(ctx *gin.Context) {
 		FollowingCount: profile.FollowingCount,
 		FollowerCount:  profile.FollowerCount,
 		IsFollowed:     profile.IsFollowed,
+		IsBlocked:      profile.IsBlocked,
+		IsBlockedBy:    profile.IsBlockedBy,
 		Posts:          items,
 		Total:          profile.Total,
 	})
@@ -975,7 +977,7 @@ func (c *DiscoverController) ListOwnWorks(ctx *gin.Context) {
 	}
 	items := make([]userresp.PostItem, 0, len(posts))
 	for _, p := range posts {
-		items = append(items, userresp.PostItem{ReviewNote: p.ReviewNote, Status: p.Status, Uuid: p.Uuid, UserId: p.UserId, Nickname: p.Nickname, Avatar: p.Avatar, Title: p.Title, Content: p.Content, MediaType: p.MediaType, CoverUrl: p.CoverUrl, Tags: p.Tags, FirstUrl: p.FirstUrl, Width: p.Width, Height: p.Height, ViewCount: p.ViewCount, LikeCount: p.LikeCount, CommentCount: p.CommentCount, CollectCount: p.CollectCount, IsLiked: p.IsLiked, IsCollected: p.IsCollected, SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version, CreatedAt: p.CreatedAt})
+		items = append(items, userresp.PostItem{ReviewNote: p.ReviewNote, Status: p.Status, Uuid: p.Uuid, UserId: p.UserId, Nickname: p.Nickname, Avatar: p.Avatar, Title: p.Title, Content: p.Content, MediaType: p.MediaType, CoverUrl: p.CoverUrl, Tags: p.Tags, FirstUrl: p.FirstUrl, Width: p.Width, Height: p.Height, ViewCount: p.ViewCount, LikeCount: p.LikeCount, CommentCount: p.CommentCount, CollectCount: p.CollectCount, IsLiked: p.IsLiked, IsCollected: p.IsCollected, IsBlockedBy: p.IsBlockedBy, SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version, CreatedAt: p.CreatedAt})
 	}
 	resp.Success(ctx, "获取作品成功", gin.H{"list": items, "total": total, "counts": counts})
 }

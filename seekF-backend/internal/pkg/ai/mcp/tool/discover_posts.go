@@ -16,6 +16,7 @@ import (
 
 // DiscoverPostItem 帖子结构化数据（供前端渲染）
 type DiscoverPostItem struct {
+	IsBlockedBy  bool     `json:"is_blocked_by"`
 	SupportOnly  int8     `json:"support_only"`
 	ID           string   `json:"id"`
 	Src          string   `json:"src"`
@@ -90,7 +91,11 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 	}
 
 	// 查询帖子
-	posts, err := t.discoverDAO.SearchPostsByKeyword(keyword, limit)
+	viewer, _ := arguments["_viewer_id"].(string)
+	if viewer == "" {
+		return mcp.NewToolResultText("缺少用户身份，无法查询帖子"), nil
+	}
+	posts, _, err := t.discoverDAO.SearchPostsPage(keyword, 1, limit, viewer)
 	if err != nil {
 		zlog.Error("搜索帖子失败: " + err.Error())
 		return mcp.NewToolResultText("查询帖子失败: " + err.Error()), nil
@@ -114,6 +119,11 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 		}
 		seenUser[post.UserId] = struct{}{}
 		userUUIDs = append(userUUIDs, post.UserId)
+	}
+
+	blockedBy, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).BlockedByAuthors(viewer, userUUIDs)
+	if err != nil {
+		return mcp.NewToolResultText("查询帖子访问权限失败"), nil
 	}
 
 	firstMediaURLByPostID := make(map[int64]string, len(posts))
@@ -149,9 +159,13 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 	for i, post := range posts {
 		// 获取首图 URL
 		src := firstMediaURLByPostID[post.Id]
-		// 工具没有查看者身份，不向模型或结构化结果提供助力作品媒体地址。
+		// 不向模型或结构化结果提供助力作品媒体地址。
 		if post.SupportOnly == 1 {
 			src = ""
+		}
+		if blockedBy[post.UserId] {
+			src = ""
+			post = models.DiscoverPost{Uuid: post.Uuid, UserId: post.UserId, Title: "已被拉黑"}
 		}
 
 		// 获取用户信息
@@ -188,6 +202,7 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 
 		// 结构化数据
 		postItems = append(postItems, DiscoverPostItem{
+			IsBlockedBy:  blockedBy[post.UserId],
 			SupportOnly:  post.SupportOnly,
 			ID:           post.Uuid,
 			Src:          src,
