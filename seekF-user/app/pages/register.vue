@@ -9,19 +9,13 @@
       refresh
     />
 
-    <div class="relative z-10 w-full max-w-4xl bg-white/90 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-md border border-white/20">
+    <div class="relative z-10 w-full max-w-[60rem] bg-white/90 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-md border border-white/20">
       <div class="flex flex-col lg:flex-row">
-        <!-- 左侧：注册说明/装饰 -->
-        <div class="w-full lg:w-96 bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col items-center justify-center px-8 py-12 lg:py-16">
-          <h3 class="text-xl font-semibold text-gray-800 mb-8">欢迎注册</h3>
-          <div class="w-48 h-48 bg-white rounded-xl shadow-lg flex items-center justify-center mb-4 border border-gray-200">
-            <Icon name="uil:user-plus" class="text-6xl text-[#60a5fa]" />
-          </div>
-          <p class="text-sm text-gray-500 text-center">
-            注册后即可享受完整功能<br/>
-            安全便捷，一键登录
-          </p>
-        </div>
+        <div
+          class="w-full h-72 lg:h-auto lg:w-[29rem] bg-white bg-cover bg-center lg:bg-[position:38%_center]"
+          :style="{ backgroundImage: `url(${loginBg})` }"
+          aria-hidden="true"
+        ></div>
 
         <!-- 右侧：注册表单 -->
         <div class="flex-1 px-8 py-10 lg:px-12 lg:py-16">
@@ -143,6 +137,8 @@
 </template>
 
 <script setup>
+import loginBg from '~/assets/images/background.png'
+
 // 页面级 SEO
 useSeoMeta({
   title: '注册',

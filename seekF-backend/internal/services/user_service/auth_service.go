@@ -261,7 +261,7 @@ func (s *AuthServiceImpl) SendVerifyCode(telephone, emailAddr string) error {
 		}
 
 		// 发送短信验证码
-		err = sms.SendSMSCode(telephone, code)
+		err = sms.SendCode(telephone, code)
 		if err != nil {
 			return fmt.Errorf("发送验证码失败：%v", err)
 		}

@@ -31,11 +31,15 @@ type RedisConfig struct {
 	Db       int    `toml:"db"`
 }
 
+// AuthCodeConfig 短信验证码配置，两种发送方式共用访问密钥。
 type AuthCodeConfig struct {
-	AccessKeyID     string `toml:"accessKeyID"`
-	AccessKeySecret string `toml:"accessKeySecret"`
-	SignName        string `toml:"signName"`
-	TemplateCode    string `toml:"templateCode"`
+	Provider           string `toml:"provider"` // pnvs 使用号码认证，sms 或空值使用原短信服务。
+	VerifySignName     string `toml:"verifySignName"`
+	VerifyTemplateCode string `toml:"verifyTemplateCode"`
+	AccessKeyID        string `toml:"accessKeyID"`
+	AccessKeySecret    string `toml:"accessKeySecret"`
+	SignName           string `toml:"signName"`
+	TemplateCode       string `toml:"templateCode"`
 }
 
 // EmailConfig 邮件SMTP配置
@@ -266,6 +270,12 @@ func loadEnvConfig(cfg *Config) {
 	}
 	if v := os.Getenv("SMS_ACCESS_KEY_SECRET"); v != "" {
 		cfg.AuthCodeConfig.AccessKeySecret = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SMS_VERIFY_SIGN_NAME")); v != "" {
+		cfg.AuthCodeConfig.VerifySignName = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SMS_VERIFY_TEMPLATE_CODE")); v != "" {
+		cfg.AuthCodeConfig.VerifyTemplateCode = v
 	}
 
 	// 邮箱配置

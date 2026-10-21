@@ -38,6 +38,8 @@ password = ""
 db = 0
 
 [authCodeConfig]
+# pnvs：号码认证；sms：原短信服务
+provider = "pnvs"
 accessKeyID = ""
 accessKeySecret = ""
 signName = "阿里云短信测试"
