@@ -46,6 +46,7 @@
             <input
               type="text"
               v-model="loginForm.username"
+              spellcheck="false"
               placeholder="请输入手机号或邮箱"
               :class="inputClass"
             />
@@ -87,6 +88,7 @@
             <input
               type="text"
               v-model="loginForm.account"
+              spellcheck="false"
               placeholder="请输入手机号或邮箱"
               :class="inputClass"
             />

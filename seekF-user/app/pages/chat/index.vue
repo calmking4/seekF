@@ -78,7 +78,7 @@
         </div>
 
         <!-- 聊天内容区 - 自适应高度 -->
-        <div class="flex-1 min-h-0 overflow-hidden" :style="{ paddingBottom: '0' }">
+        <div class="relative flex-1 min-h-0 overflow-hidden" :style="{ paddingBottom: '0' }">
           <el-scrollbar
             ref="scrollbarRef"
             class="h-full"
@@ -147,6 +147,7 @@
               </div>
             </div>
           </el-scrollbar>
+          <ScrollEdgeButton :target="() => scrollbarRef?.wrapRef" direction="bottom" class="absolute bottom-4 right-4" />
         </div>
 
         <!-- 输入框区域 -->

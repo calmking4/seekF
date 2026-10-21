@@ -41,6 +41,7 @@
             <input
               type="text"
               v-model="registerForm.account"
+              spellcheck="false"
               placeholder="请输入手机号或邮箱"
               :class="inputClass"
             />

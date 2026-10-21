@@ -86,7 +86,7 @@ onMounted(() => {
 
       status.value = 'success'
       title.value = '登录成功'
-      message.value = `欢迎回来，${user.nickname || '用户'}`
+      message.value = `欢迎，${user.nickname || '用户'}`
 
       const destination = discoverReturnPath(sessionStorage.getItem('discover_login_redirect'))
       sessionStorage.removeItem('discover_login_redirect')

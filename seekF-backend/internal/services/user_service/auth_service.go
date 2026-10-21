@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"regexp"
 	"seekF-backend/internal/configs"
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
@@ -17,7 +18,6 @@ import (
 	"seekF-backend/internal/pkg/redis"
 	"seekF-backend/internal/pkg/sms"
 	"seekF-backend/internal/pkg/util"
-	"regexp"
 	"strings"
 	"time"
 
@@ -432,7 +432,10 @@ func (s *AuthServiceImpl) LoginByGithub(code, state string) (*LoginRespond, erro
 			Birthday: sql.NullString{Valid: false},
 		}
 
-		if err := s.userInfoDAO.CreateUser(user); err != nil {
+		user, err = createOAuthUser(s.userInfoDAO, user, func() (*models.UserInfo, error) {
+			return s.userInfoDAO.FindUserByGithubId(githubUser.ID)
+		})
+		if err != nil {
 			return nil, fmt.Errorf("创建 GitHub 用户失败：%v", err)
 		}
 	} else {
@@ -529,7 +532,10 @@ func (s *AuthServiceImpl) LoginByGitee(code, state string) (*LoginRespond, error
 			Birthday: sql.NullString{Valid: false},
 		}
 
-		if err := s.userInfoDAO.CreateUser(user); err != nil {
+		user, err = createOAuthUser(s.userInfoDAO, user, func() (*models.UserInfo, error) {
+			return s.userInfoDAO.FindUserByGiteeId(giteeUser.ID)
+		})
+		if err != nil {
 			return nil, fmt.Errorf("创建 Gitee 用户失败：%v", err)
 		}
 	} else {
