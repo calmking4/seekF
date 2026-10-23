@@ -178,6 +178,8 @@ onMounted(async () => {
   fetchUnreadCount()
   refreshUnread()
   stopUnreadMessages = ws.onMessage(data => {
+    if (data?.type === 'message_deleted' && data.user_id === ownerId.value) refreshUnread()
+    if (data?.type === 'message_recalled' && (data.receive_id === ownerId.value || data.send_id === ownerId.value)) refreshUnread()
     if ((data?.type === 0 || data?.type === 2) && data.receive_id === ownerId.value && data.send_id?.startsWith('U')) refreshUnread()
   })
   unreadTimer = setInterval(refreshVisibleUnread, 15000)

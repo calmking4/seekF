@@ -324,17 +324,9 @@ func (s *Server) sendToUser(message *models.Message, messageBack *MessageBack, m
 		zlog.Error("为接收者创建会话失败: " + err.Error())
 		s.sendErrorToClient(message.SendId, err.Error())
 		return
-	} else {
-		// 更新接收者的会话最后消息
-		lastMessage := message.Content
-		if message.Type == message_type_enum.File {
-			lastMessage = "[文件]" + message.FileName
-		}
-		s.updateSessionLastMessage(sessionId, lastMessage)
 	}
-
-	// 更新发送者的会话最后消息
-	s.updateSessionLastMessage(message.SessionId, message.Content)
+	// 双方摘要从数据库当前最新消息计算，避免迟到投递还原撤回内容。
+	s.updateSessionLastMessage(sessionId)
 
 	s.mutex.Lock()
 	// 发送给接收者
@@ -448,20 +440,18 @@ func (s *Server) UpdateMessageStatus(uuid string) {
 }
 
 // updateSessionLastMessage 更新会话的最后消息
-func (s *Server) updateSessionLastMessage(sessionId string, lastMessage string) {
-	now := time.Now()
-
-	// 更新会话最后消息
-	if err := s.sessionDAO.UpdateSessionLastMessage(sessionId, lastMessage, now); err != nil {
+func (s *Server) updateSessionLastMessage(sessionId string) {
+	session, err := s.sessionDAO.GetSessionByUuid(sessionId)
+	if err != nil {
+		zlog.Error("查询消息会话失败: " + err.Error())
+		return
+	}
+	if err := s.sessionDAO.RefreshPrivateMessagePreview(session.SendId, session.ReceiveId); err != nil {
 		zlog.Error("更新会话最后消息失败: " + err.Error())
 		return
 	}
-
-	// 清除会话列表缓存
-	session, err := s.sessionDAO.GetSessionByUuid(sessionId)
-	if err == nil {
-		myredis.DelKeysWithPattern(constants.SessionListKeyPrefix + session.SendId)
-	}
+	myredis.DelKeysWithPattern(constants.SessionListKeyPrefix + session.SendId)
+	myredis.DelKeysWithPattern(constants.SessionListKeyPrefix + session.ReceiveId)
 }
 
 // PushNotification 推送通知给指定用户

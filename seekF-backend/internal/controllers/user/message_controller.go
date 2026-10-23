@@ -2,6 +2,9 @@ package user
 
 import (
 	"net/http"
+	"seekF-backend/internal/pkg/constants"
+	myredis "seekF-backend/internal/pkg/redis"
+	"seekF-backend/internal/pkg/websocket"
 
 	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/pkg/resp"
@@ -40,7 +43,11 @@ func (c *MessageController) GetUserMessageList(ctx *gin.Context) {
 		return
 	}
 	// 调用服务层方法
-	messageList, total, err := c.messageService.GetUserMessageList(req.UserOneId, req.UserTwoId, req.Page, req.PageSize)
+	peerId := req.UserTwoId
+	if peerId == currentUser {
+		peerId = req.UserOneId
+	}
+	messageList, total, err := c.messageService.GetUserMessageList(currentUser, peerId, req.Page, req.PageSize, req.BeforeMessageId)
 	if err != nil {
 		zlog.Info("获取用户消息列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
@@ -95,4 +102,50 @@ func (c *MessageController) SearchMessageSuggestions(ctx *gin.Context) {
 	resp.Success(ctx, "搜索成功", gin.H{
 		"list": messageList,
 	})
+}
+
+// RecallMessage 提交撤回后向双方推送事件，离线通过历史读取最终状态。
+func (c *MessageController) RecallMessage(ctx *gin.Context) {
+	var req struct {
+		MessageId string `json:"message_id" binding:"required,max=20"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.Error(ctx, "消息编号无效", http.StatusBadRequest)
+		return
+	}
+	message, err := c.messageService.RecallMessage(ctx.Request.Context(), ctx.GetString("Uuid"), req.MessageId)
+	if err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+	event := gin.H{"type": "message_recalled", "uuid": message.Uuid, "send_id": message.SendId, "receive_id": message.ReceiveId}
+	for _, userId := range []string{message.SendId, message.ReceiveId} {
+		myredis.DelKeysWithPattern(constants.SessionListKeyPrefix + userId)
+		if websocket.ChatServer != nil {
+			websocket.ChatServer.PushNotification(userId, event)
+		}
+	}
+	resp.Success(ctx, "撤回成功", event)
+}
+
+// DeleteMessage 只隐藏当前用户的私聊记录，并仅向该用户同步删除事件。
+func (c *MessageController) DeleteMessage(ctx *gin.Context) {
+	var req struct {
+		MessageId string `json:"message_id" binding:"required,max=20"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.Error(ctx, "消息编号无效", http.StatusBadRequest)
+		return
+	}
+	userId := ctx.GetString("Uuid")
+	if err := c.messageService.DeleteMessage(ctx.Request.Context(), userId, req.MessageId); err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+	myredis.DelKeysWithPattern(constants.SessionListKeyPrefix + userId)
+	event := gin.H{"type": "message_deleted", "uuid": req.MessageId, "user_id": userId}
+	if websocket.ChatServer != nil {
+		websocket.ChatServer.PushNotification(userId, event)
+	}
+	resp.Success(ctx, "删除成功", event)
 }

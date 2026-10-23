@@ -117,6 +117,8 @@ func SetupRouter(
 			// 消息
 			protectedGroup.POST("/message/getUserMessageList", messageController.GetUserMessageList)
 
+			protectedGroup.POST("/message/recall", messageController.RecallMessage)
+			protectedGroup.POST("/message/delete", messageController.DeleteMessage)
 			protectedGroup.POST("/message/search", messageController.SearchMessages)
 			protectedGroup.POST("/message/searchSuggestions", messageController.SearchMessageSuggestions)
 			// 文件上传

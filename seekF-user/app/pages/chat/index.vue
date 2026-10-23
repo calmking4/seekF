@@ -93,12 +93,12 @@
           >
             <div ref="messageContentRef" class="p-4 space-y-3">
               <p v-if="locatingMessage" class="py-2 text-center text-sm text-gray-400" role="status">正在定位消息…</p>
-              <div v-if="messageList.length === 0" class="flex items-center justify-center py-20 text-gray-400">
+              <div v-if="messageList.length === 0 && !hasMore" class="flex items-center justify-center py-20 text-gray-400">
                 <p>暂无消息</p>
               </div>
 
               <!-- 加载更多 - 放在顶部 -->
-              <div v-if="hasMore && messageList.length > 0" class="text-center py-2">
+              <div v-if="hasMore && (messageList.length > 0 || historyCursor)" class="text-center py-2">
                 <span v-if="loadingMore" class="text-gray-400 text-sm">加载中...</span>
                 <button v-else class="text-blue-500 text-sm hover:underline disabled:opacity-50" :disabled="locatingMessage" @click="loadMoreMessages">
                   加载更多消息
@@ -111,9 +111,12 @@
                 :key="msg.renderKey || msg.messageId"
                 :data-message-id="msg.renderKey || msg.messageId"
                 tabindex="-1"
-                class="chat-item outline-none"
-                :class="[{ 'chat-item-self': msg.isSelf, 'chat-message-enter': msg.animateEntrance }, messageHighlightClass(msg.messageId)]"
+                class="outline-none"
+                :class="[msg.isRecalled ? 'mb-6 flex justify-center' : 'chat-item', { 'chat-item-self': msg.isSelf && !msg.isRecalled, 'chat-message-enter': msg.animateEntrance && !msg.isExiting, 'chat-message-exit': msg.isExiting }, messageHighlightClass(msg.messageId)]"
+                @animationend="handleMessageExitEnd($event, msg)"
               >
+                <span v-if="msg.isRecalled" tabindex="0" aria-haspopup="menu" class="rounded-full bg-gray-200 px-6 py-1 text-xs text-gray-400 outline-none focus-visible:ring-2 focus-visible:ring-gray-400" @contextmenu.prevent.stop="openMessageMenu($event, msg)" @keydown="handleMessageMenuKey($event, msg)">{{ msg.isSelf ? '你撤回了一条消息' : '对方撤回了一条消息' }}</span>
+                <template v-else>
                 <!-- 用户名 - 在消息行外面 -->
                 <div class="user-name" :class="{ 'user-name-self': msg.isSelf }">
                   {{ msg.isSelf ? '我' : msg.senderName }}
@@ -128,7 +131,7 @@
                         {{ msg.senderName ? msg.senderName.charAt(0) : '?' }}
                       </el-avatar>
                     </NuxtLink>
-                    <div class="bubble bubble-left">
+                    <div class="bubble bubble-left outline-none focus-visible:ring-2 focus-visible:ring-gray-400" tabindex="0" aria-haspopup="menu" @contextmenu.prevent.stop="openMessageMenu($event, msg)" @keydown="handleMessageMenuKey($event, msg)">
                       <div v-if="msg.isImage || isImageUrl(msg.content)">
                         <img :src="msg.content" class="max-w-full rounded cursor-pointer hover:opacity-90" style="max-height: 200px;" @load="restoreHistoryPosition" @error="restoreHistoryPosition" @click="previewImage(msg.content)" />
                       </div>
@@ -139,7 +142,7 @@
 
                   <!-- 自己消息：气泡在左，头像在右 -->
                   <template v-else>
-                    <div class="bubble bubble-right">
+                    <div class="bubble bubble-right outline-none focus-visible:ring-2 focus-visible:ring-gray-400" tabindex="0" aria-haspopup="menu" @contextmenu.prevent.stop="openMessageMenu($event, msg)" @keydown="handleMessageMenuKey($event, msg)">
                       <div v-if="msg.isImage || isImageUrl(msg.content)">
                         <img :src="msg.content" class="max-w-full rounded cursor-pointer hover:opacity-90" style="max-height: 200px;" @load="restoreHistoryPosition" @error="restoreHistoryPosition" @click="previewImage(msg.content)" />
                       </div>
@@ -153,6 +156,7 @@
                     </NuxtLink>
                   </template>
                 </div>
+                </template>
               </div>
             </div>
           </el-scrollbar>
@@ -208,6 +212,8 @@
       </template>
     </main>
 
+    <MessageContextMenu ref="messageMenuRef" :can-recall="!!menuMessage && canRecallMessage(menuMessage)" :busy="!!menuMessage && (recallingMessages.has(menuMessage.messageId) || deletingMessages.has(menuMessage.messageId))" @command="handleMessageMenuCommand" @close="menuMessage = null" />
+
     <!-- 图片预览组件 -->
     <el-image-viewer
       v-if="showImageViewer"
@@ -225,6 +231,7 @@ import { insertEmojiAtSelection } from '~/utils/emoji'
 import { sortChatSessions } from '~/utils/chatSessions'
 import { captureChatHistoryAnchor, hasChatHistoryShifted, restoreChatHistoryAnchor } from '~/utils/chatHistoryAnchor'
 import { createChatInitialBottom } from '~/utils/chatInitialBottom'
+import { createChatMessageReflow } from '~/utils/chatMessageReflow'
 // 页面级 SEO
 useSeoMeta({
   title: '消息',
@@ -243,6 +250,169 @@ const currentUserId = ref('')
 
 const chatList = ref([])
 const activeIndex = ref(-1)
+// recalledMessages 保存本页已收到的撤回状态，防止迟到的历史或消息回显恢复原文。
+const recalledMessages = new Set()
+const recallingMessages = ref(new Set())
+const recallNow = ref(Date.now())
+let recallClock
+const recallKey = uuid => `${currentUserId.value}:${uuid}`
+const canRecallMessage = msg => msg.isSelf && !msg.isRecalled && msg.messageId?.startsWith('M') && recallNow.value - Date.parse(msg.sendTime) <= 120000
+
+const pendingMessageExits = new Map()
+const messageReflow = createChatMessageReflow()
+// commitMessageExit 在占位收起后删除消息或替换提示，不提前改变周围消息布局。
+const commitMessageExit = key => {
+  const job = pendingMessageExits.get(key)
+  if (!job) return
+  clearTimeout(job.timer)
+  pendingMessageExits.delete(key)
+  if (job.owner !== currentUserId.value || job.version !== messageRequestVersion) return
+  const index = messageList.value.findIndex(message => message.messageId === job.id)
+  if (index === -1) return
+  if (job.action === 'delete') messageList.value.splice(index, 1)
+  else Object.assign(messageList.value[index], { isRecalled: true, isImage: false, content: '', isExiting: false, animateEntrance: false })
+}
+
+// finishMessageExit 淡出后先收起占位，再提交删除或撤回状态。
+const finishMessageExit = key => {
+  const job = pendingMessageExits.get(key)
+  if (!job || job.collapsing) return
+  clearTimeout(job.timer)
+  if (job.owner !== currentUserId.value || job.version !== messageRequestVersion) { commitMessageExit(key); return }
+  const message = messageList.value.find(message => message.messageId === job.id)
+  const node = message && [...(messageContentRef.value?.querySelectorAll('[data-message-id]') || [])].find(node => node.dataset.messageId === (message.renderKey || message.messageId))
+  if (!node || !chatPageActive.value || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { commitMessageExit(key); return }
+  job.collapsing = true
+  messageReflow.collapse({
+    node, wrap: scrollbarRef.value?.wrapRef, getAction: () => job.action,
+    onComplete: restore => {
+      commitMessageExit(key)
+      nextTick(() => {
+        restore()
+        if (job.owner === currentUserId.value && job.version === messageRequestVersion && !messageReflow.isActive()) historyAnchor = captureChatHistoryAnchor(historyWrap)
+      })
+    }
+  })
+}
+
+// exitMessage 合并重复通知；删除优先于撤回，避免提示重新出现。
+const exitMessage = (message, action) => {
+  const key = recallKey(message.messageId)
+  const pending = pendingMessageExits.get(key)
+  if (pending) {
+    if (action === 'delete') pending.action = 'delete'
+    return
+  }
+  if (action === 'recall' && message.isRecalled) return
+  const job = { id: message.messageId, owner: currentUserId.value, version: messageRequestVersion, action, timer: null }
+  pendingMessageExits.set(key, job)
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || !chatPageActive.value) {
+    finishMessageExit(key)
+    return
+  }
+  message.isExiting = true
+  // 页面后台或动画事件被取消时，仍及时应用最终状态。
+  job.timer = setTimeout(() => finishMessageExit(key), 400)
+}
+
+// handleMessageExitEnd 只处理整条消息的退场动画，忽略头像等子元素事件。
+const handleMessageExitEnd = (event, message) => {
+  if (event.target === event.currentTarget && event.animationName?.startsWith('message-exit-right')) finishMessageExit(recallKey(message.messageId))
+}
+
+// flushMessageExits 切换、离开及卸载前完成待处理状态并释放计时器。
+const flushMessageExits = () => {
+  for (const key of pendingMessageExits.keys()) commitMessageExit(key)
+  messageReflow.clear()
+}
+
+// applyMessageRecall 原消息向右淡出后显示撤回提示，不重复播放入场动画。
+const applyMessageRecall = event => {
+  const owner = currentUserId.value
+  if (event.send_id !== owner && event.receive_id !== owner) return
+  recalledMessages.add(recallKey(event.uuid))
+  const message = messageList.value.find(item => item.messageId === event.uuid)
+  if (message) exitMessage(message, 'recall')
+  if (menuMessage.value?.messageId === event.uuid) messageMenuRef.value?.close()
+  refreshUnread()
+  loadSessionList()
+}
+
+// recallMessage 成功后应用占位，失败保留原文；响应只作用于原账号。
+const recallMessage = async msg => {
+  if (!canRecallMessage(msg) || recallingMessages.value.has(msg.messageId)) return
+  const owner = currentUserId.value
+  recallingMessages.value.add(msg.messageId)
+  try {
+    const res = await useApi$('/user/message/recall', { body: { message_id: msg.messageId } })
+    if (chatDisposed || owner !== currentUserId.value) return
+    if (res.code !== 200) throw new Error(res.message || '撤回失败')
+    applyMessageRecall(res.data)
+  } catch (error) {
+    if (!chatDisposed && owner === currentUserId.value) ElMessage.error(error.message || '撤回失败，请重试')
+  } finally { recallingMessages.value.delete(msg.messageId) }
+}
+
+const deletedMessages = new Set()
+const deletingMessages = ref(new Set())
+const messageMenuRef = ref(null)
+const menuMessage = ref(null)
+
+// openMessageMenu 只为服务端已保存的私聊消息提供操作。
+const openMessageMenu = (event, message) => {
+  if (!message.messageId?.startsWith('M') || message.isExiting) return
+  menuMessage.value = message
+  messageMenuRef.value?.open(event)
+}
+
+// handleMessageMenuKey 通过菜单键或Shift+F10打开消息操作。
+const handleMessageMenuKey = (event, message) => {
+  if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
+  event.preventDefault()
+  openMessageMenu(event, message)
+}
+
+// handleMessageMenuCommand 保存当前目标后执行菜单操作。
+const handleMessageMenuCommand = command => {
+  const message = menuMessage.value
+  if (!message) return
+  if (command === 'recall') void recallMessage(message)
+  else if (command === 'delete') void deleteMessage(message)
+}
+
+// applyMessageDelete 只应用本人删除事件，并拦截迟到历史及回显恢复。
+const applyMessageDelete = event => {
+  if (event.user_id !== currentUserId.value) return
+  const key = recallKey(event.uuid)
+  const first = !deletedMessages.has(key)
+  deletedMessages.add(key)
+  const index = messageList.value.findIndex(message => message.messageId === event.uuid)
+  if (index !== -1) {
+    if (first) totalMessages.value = Math.max(0, totalMessages.value - 1)
+    exitMessage(messageList.value[index], 'delete')
+  }
+  if (menuMessage.value?.messageId === event.uuid) messageMenuRef.value?.close()
+  refreshUnread()
+  loadSessionList()
+}
+
+// deleteMessage 成功后仅移除本人消息记录，失败保留原消息。
+const deleteMessage = async message => {
+  const id = message.messageId
+  if (!id?.startsWith('M') || deletingMessages.value.has(id) || recallingMessages.value.has(id)) return
+  const owner = currentUserId.value
+  deletingMessages.value.add(id)
+  try {
+    const res = await useApi$('/user/message/delete', { body: { message_id: id } })
+    if (chatDisposed || owner !== currentUserId.value) return
+    if (res.code !== 200) throw new Error(res.message || '删除消息失败')
+    applyMessageDelete(res.data)
+  } catch (error) {
+    if (!chatDisposed && owner === currentUserId.value) ElMessage.error(error.message || '删除消息失败，请重试')
+  } finally { deletingMessages.value.delete(id) }
+}
+
+const historyCursor = ref('')
 const messageList = ref([])
 const locatingMessage = ref(false)
 const locatedMessage = ref('')
@@ -408,7 +578,7 @@ const clearInitialBottom = () => {
 
 // rememberHistoryPosition 跟随用户在请求期间及加载后的滚动，避免迟到图片将其拉回旧位置。
 const rememberHistoryPosition = () => {
-  if (preservingHistory) return
+  if (preservingHistory || messageReflow.isActive()) return
   // 图片重排可能先触发滚动事件再触发ResizeObserver，此时必须保留原消息而非重新选锚点。
   if (hasChatHistoryShifted(historyWrap, historyAnchor)) restoreHistoryPosition()
   else historyAnchor = captureChatHistoryAnchor(historyWrap)
@@ -416,6 +586,7 @@ const rememberHistoryPosition = () => {
 
 // restoreHistoryPosition 在内容尺寸变化时保持当前阅读消息的位置。
 const restoreHistoryPosition = () => {
+  if (messageReflow.isActive()) return
   if (initialBottom) { initialBottom.restore(); return }
   if (!chatDisposed && historyWrap === scrollbarRef.value?.wrapRef) restoreChatHistoryAnchor(historyWrap, historyAnchor)
 }
@@ -592,6 +763,8 @@ const loadSessionList = async () => {
 
 // clearCurrentChat 清理被移除会话的本地消息、输入和图片预览，使迟到消息请求失效。
 const clearCurrentChat = () => {
+  flushMessageExits()
+  messageMenuRef.value?.close()
   clearMessageHighlight()
   locatingMessage.value = false
   clearInitialBottom()
@@ -599,6 +772,7 @@ const clearCurrentChat = () => {
   clearHistoryAnchor()
   messageRequestVersion++
   messageList.value = []
+  historyCursor.value = ''
   currentPage.value = 1
   hasMore.value = false
   loadingMore.value = false
@@ -699,6 +873,8 @@ const deleteSession = async (item) => {
 }
 
 const selectSession = async (index) => {
+  flushMessageExits()
+  messageMenuRef.value?.close()
   clearMessageHighlight()
   locatingMessage.value = false
   clearInitialBottom()
@@ -714,6 +890,7 @@ const selectSession = async (index) => {
   hasMore.value = true
   loadingMore.value = false
   messageList.value = []
+  historyCursor.value = ''
 
   try {
     const loaded = await loadMessageList(session.id)
@@ -751,20 +928,23 @@ const loadMessageList = async (receiveId, page = 1) => {
 
     const data = await useApi$('/user/message/getUserMessageList', {
       method: 'POST',
-      body: { user_one_id: currentUserId.value, user_two_id: receiveId, page, page_size: pageSize }
+      body: { user_one_id: currentUserId.value, user_two_id: receiveId, page, page_size: pageSize, before_message_id: page > 1 ? historyCursor.value || undefined : undefined }
     })
 
     if (chatDisposed || version !== messageRequestVersion) return
     if (data?.code === 200) {
       const list = data.data?.list || []
+      if (list.length) historyCursor.value = list[list.length - 1].uuid
       totalMessages.value = data.data?.total || 0
 
-      const messages = list.map(msg => {
+      const messages = list.filter(msg => !deletedMessages.has(recallKey(msg.uuid))).map(msg => {
         // 文件消息(type=2)使用 url 作为内容，文本消息使用 content
         const isFileMsg = msg.type === 2
-        const messageContent = isFileMsg ? (msg.url || msg.content) : msg.content
+        const isRecalled = msg.type === 9 || recalledMessages.has(recallKey(msg.uuid))
+        const messageContent = isRecalled ? '' : isFileMsg ? (msg.url || msg.content) : msg.content
         return {
           messageId: msg.uuid || msg.messageId,
+          isRecalled,
           readId: msg.id || '0',
           content: messageContent,
           senderName: msg.send_name || msg.senderName,
@@ -1061,6 +1241,8 @@ const handleWebSocketMessage = (data) => {
     console.log('数据不是对象，跳过')
     return
   }
+  if (data?.type === 'message_deleted') { applyMessageDelete(data); return }
+  if (data?.type === 'message_recalled') { applyMessageRecall(data); return }
   if (data?.type === 'error') {
     ElMessage.error(data.message || '私聊消息发送失败')
     return
@@ -1072,6 +1254,7 @@ const handleWebSocketMessage = (data) => {
     return
   }
 
+  if (deletedMessages.has(recallKey(data.uuid))) return
   const currentSession = currentChat.value
   const isSelf = data.send_id === currentUserId.value
   
@@ -1080,23 +1263,27 @@ const handleWebSocketMessage = (data) => {
   const peerId = isSelf ? data.receive_id : data.send_id
   const isCurrentSession = currentSession?.id === peerId
 
+  if (isCurrentSession && messageList.value.some(message => message.messageId === data.uuid)) return
+
   if (isCurrentSession) {
     // 文件消息使用 url 作为内容，文本消息使用 content
-    const messageContent = data.type === 2 ? data.url : data.content
+    const isRecalled = recalledMessages.has(recallKey(data.uuid))
+    const messageContent = isRecalled ? '' : data.type === 2 ? data.url : data.content
     const realMessage = {
       messageId: data.uuid,
+      isRecalled,
       readId: data.id || '0',
       animateEntrance: true,
       content: messageContent,
       senderName: data.send_name,
       avatar: data.send_avatar,
-      sendTime: new Date().toISOString(),
+      sendTime: data.created_at || new Date().toISOString(),
       isSelf: isSelf,
-      isImage: data.type === 2 && isImageUrl(data.url)
+      isImage: !isRecalled && data.type === 2 && isImageUrl(data.url)
     }
 
     if (isSelf) {
-      const tempIndex = messageList.value.findIndex(m => m.messageId?.startsWith('temp_') && m.content === messageContent)
+      const tempIndex = messageList.value.findIndex(m => m.messageId?.startsWith('temp_') && m.content === (data.type === 2 ? data.url : data.content))
       if (tempIndex !== -1) {
         // 服务端回显沿用本地节点且不重复滚动，避免打断正在进行的入场和滚动。
         messageList.value[tempIndex] = { ...realMessage, renderKey: messageList.value[tempIndex].renderKey || messageList.value[tempIndex].messageId }
@@ -1110,7 +1297,7 @@ const handleWebSocketMessage = (data) => {
 
     scrollToBottom(true)
     nextTick(markCurrentChatRead)
-    currentSession.lastMsg = data.type === 2 ? '[图片]' : data.content
+    currentSession.lastMsg = isRecalled ? '撤回了一条消息' : data.type === 2 ? '[图片]' : data.content
     currentSession.time = '刚刚'
     currentSession.lastActivity = Date.now()
     reorderSessions()
@@ -1119,7 +1306,7 @@ const handleWebSocketMessage = (data) => {
     const sessionIndex = chatList.value.findIndex(item => item.id === peerId)
 
     // 文件消息显示[图片]，文本消息显示内容
-    const lastMsg = data.type === 2 ? '[图片]' : data.content
+    const lastMsg = recalledMessages.has(recallKey(data.uuid)) ? '撤回了一条消息' : data.type === 2 ? '[图片]' : data.content
 
     if (sessionIndex !== -1) {
       chatList.value[sessionIndex].lastMsg = lastMsg
@@ -1153,6 +1340,7 @@ watch(() => route.query.userId, (userId) => {
 })
 
 onMounted(async () => {
+  recallClock = setInterval(() => { recallNow.value = Date.now() }, 1000)
   document.addEventListener('visibilitychange', handleChatVisibility)
   await getCurrentUserInfo()
   await loadSessionList()
@@ -1179,9 +1367,12 @@ onActivated(() => {
   refreshUnread()
   nextTick(markCurrentChatRead)
 })
-onDeactivated(() => { chatPageActive.value = false; clearInitialBottom(); clearMessageHighlight() })
+onDeactivated(() => { flushMessageExits(); messageMenuRef.value?.close(); chatPageActive.value = false; clearInitialBottom(); clearMessageHighlight() })
 
 onUnmounted(() => {
+  flushMessageExits()
+  messageMenuRef.value?.close()
+  clearInterval(recallClock)
   clearMessageHighlight()
   clearInitialBottom()
   clearHistoryAnchor()
@@ -1193,6 +1384,20 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 删除与撤回共用向右淡出的整行退场，结束后才移除或替换内容。 */
+.chat-message-exit {
+  pointer-events: none;
+  animation: message-exit-right 0.36s ease-in forwards;
+}
+@keyframes message-exit-right {
+  from { opacity: 1; transform: translateX(0); }
+  35% { opacity: 0.9; }
+  to { opacity: 0; transform: translateX(96px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-message-exit { animation: none; }
+}
+
 /* 删除时保留离场行的位置，其余会话平滑补位，按钮本身使用工具类完成滑入。 */
 .session-list-move,
 .session-list-leave-active {

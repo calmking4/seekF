@@ -11,6 +11,8 @@ import (
 
 // SessionDAO 会话DAO接口
 type SessionDAO interface {
+	// 根据最新消息刷新双方私聊摘要。
+	RefreshPrivateMessagePreview(sendId, receiveId string) error
 	// 查询本人未删除私聊会话的未读数及消息边界。
 	GetUnreadSessions(userId string) ([]SessionUnreadRow, error)
 	// 锁定当前用户拥有的未删除会话。
@@ -55,7 +57,7 @@ func (d *SessionDAOImpl) GetUnreadSessions(userId string) ([]SessionUnreadRow, e
 	err := d.db.Table("session AS s").Select(`s.uuid AS session_id, s.receive_id AS peer_id,
 		s.last_read_message_id, COALESCE(MAX(m.id), 0) AS latest_message_id,
 		COALESCE(SUM(CASE WHEN m.id > s.last_read_message_id THEN 1 ELSE 0 END), 0) AS unread_count`).
-		Joins("LEFT JOIN message AS m ON m.send_id = s.receive_id AND m.receive_id = s.send_id AND m.type IN (0, 2)").
+		Joins("LEFT JOIN message AS m ON m.send_id = s.receive_id AND m.receive_id = s.send_id AND m.type IN (0, 2) AND m.receive_deleted_at IS NULL").
 		Where("s.send_id = ? AND s.receive_id LIKE ? AND s.deleted_at IS NULL", userId, "U%").
 		Where("NOT EXISTS (SELECT 1 FROM user_block b WHERE b.user_id = ? AND b.blocked_user_id = s.receive_id COLLATE utf8mb4_unicode_ci)", userId).
 		Group("s.uuid, s.receive_id, s.last_read_message_id").Scan(&rows).Error
@@ -69,10 +71,10 @@ func (d *SessionDAOImpl) GetOwnedSessionForUpdate(userId string, sessionId strin
 	return session, err
 }
 
-// HasIncomingMessage 校验指定主键属于当前私聊的文字或文件入站消息。
+// HasIncomingMessage 校验入站阅读边界，兼容确认请求到达前消息被撤回。
 func (d *SessionDAOImpl) HasIncomingMessage(userId string, peerId string, messageId int64) (bool, error) {
 	var count int64
-	err := d.db.Model(&models.Message{}).Where("id = ? AND send_id = ? AND receive_id = ? AND type IN (0, 2)", messageId, peerId, userId).Count(&count).Error
+	err := d.db.Model(&models.Message{}).Where("id = ? AND send_id = ? AND receive_id = ? AND type IN (0, 2, 9)", messageId, peerId, userId).Count(&count).Error
 	return count > 0, err
 }
 
@@ -204,4 +206,15 @@ func (d *SessionDAOImpl) UpdateSessionFirstMessage(sessionId string, firstMessag
 	return d.db.Model(&models.Session{}).Where("uuid = ? AND first_message = ''", sessionId).Updates(map[string]interface{}{
 		"first_message": firstMessage,
 	}).Error
+}
+
+// RefreshPrivateMessagePreview 按数据库最新消息刷新摘要，避免迟到投递覆盖撤回。
+func (d *SessionDAOImpl) RefreshPrivateMessagePreview(sendId, receiveId string) error {
+	const latest = ` FROM message m WHERE ((m.send_id = session.send_id AND m.receive_id = session.receive_id AND m.send_deleted_at IS NULL) OR (m.send_id = session.receive_id AND m.receive_id = session.send_id AND m.receive_deleted_at IS NULL)) ORDER BY m.created_at DESC, m.id DESC LIMIT 1)`
+	return d.db.Model(&models.Session{}).
+		Where("(send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?)", sendId, receiveId, receiveId, sendId).
+		Updates(map[string]interface{}{
+			"last_message":    gorm.Expr("COALESCE((SELECT CASE WHEN m.type = 9 THEN '撤回了一条消息' WHEN m.type = 2 THEN CONCAT('[文件]', m.file_name) ELSE m.content END" + latest + ", '')"),
+			"last_message_at": gorm.Expr("(SELECT m.created_at" + latest),
+		}).Error
 }

@@ -1,17 +1,26 @@
 package userdao
 
 import (
-	"seekF-backend/internal/models"
 	"strings"
 
+	"seekF-backend/internal/models"
+	"seekF-backend/internal/pkg/constants"
+
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // MessageDAO 消息DAO接口
 type MessageDAO interface {
+	// 记录当前参与者的个人删除时间，不影响对方。
+	DeleteMessageForUser(userId, messageId string, isSender bool) error
+	// 锁定指定消息，供撤回事务校验。
+	GetMessageForUpdate(uuid string) (models.Message, error)
+	// 清除消息内容并保留撤回占位。
+	RecallMessage(uuid string) error
 	// 按本人有效私聊的双方用户搜索文字，返回本人会话编号及真实分页总数。
 	SearchPrivateMessages(userId, sessionId, keyword string, page, pageSize int) ([]MessageSearchRow, int64, error)
-	GetMessagesBetweenUsers(userOneId string, userTwoId string, limit int, offset int) ([]models.Message, error)
+	GetMessagesBetweenUsers(userOneId string, userTwoId string, limit int, offset int, beforeMessageId ...string) ([]models.Message, error)
 	CountMessagesBetweenUsers(userOneId string, userTwoId string) (int64, error)
 	CreateMessage(message *models.Message) error
 	UpdateMessageStatus(uuid string, status int8) error
@@ -37,6 +46,7 @@ func (d *MessageDAOImpl) SearchPrivateMessages(userId, sessionId, keyword string
 	pattern := "%" + strings.NewReplacer("=", "==", "%", "=%", "_", "=_").Replace(keyword) + "%"
 	query := d.db.Table("message AS m").
 		Joins("JOIN session AS s ON s.send_id = ? AND s.deleted_at IS NULL AND ((m.send_id = s.send_id AND m.receive_id = s.receive_id) OR (m.send_id = s.receive_id AND m.receive_id = s.send_id))", userId).
+		Where("((m.send_id = ? AND m.send_deleted_at IS NULL) OR (m.receive_id = ? AND m.receive_deleted_at IS NULL))", userId, userId).
 		Where("s.receive_id LIKE ? AND m.type = 0 AND m.content LIKE ? ESCAPE '='", "U%", pattern).
 		Where("NOT EXISTS (SELECT 1 FROM user_block b WHERE b.user_id = ? AND b.blocked_user_id = s.receive_id COLLATE utf8mb4_unicode_ci)", userId)
 	if sessionId != "" {
@@ -61,17 +71,27 @@ func NewMessageDAO(db *gorm.DB) MessageDAO {
 	return &MessageDAOImpl{db: db}
 }
 
-// GetMessagesBetweenUsers 获取两个用户之间的消息记录（分页，按时间倒序）
-func (d *MessageDAOImpl) GetMessagesBetweenUsers(userOneId string, userTwoId string, limit int, offset int) ([]models.Message, error) {
-	var messageList []models.Message
-	result := d.db.Where("(send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?)", userOneId, userTwoId, userTwoId, userOneId).Order("created_at DESC, id DESC").Limit(limit).Offset(offset).Find(&messageList)
-	return messageList, result.Error
+// GetMessagesBetweenUsers 返回本人可见记录，使用消息锚点避免删除导致翻页遗漏。
+func (d *MessageDAOImpl) GetMessagesBetweenUsers(userOneId string, userTwoId string, limit int, offset int, beforeMessageId ...string) ([]models.Message, error) {
+	var messages []models.Message
+	query := d.db.Where("(send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?)", userOneId, userTwoId, userTwoId, userOneId).
+		Where("(send_id = ? AND send_deleted_at IS NULL) OR (receive_id = ? AND receive_deleted_at IS NULL)", userOneId, userOneId)
+	if len(beforeMessageId) > 0 && beforeMessageId[0] != "" {
+		var cursor models.Message
+		if err := d.db.Where("uuid = ? AND ((send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?))", beforeMessageId[0], userOneId, userTwoId, userTwoId, userOneId).First(&cursor).Error; err != nil {
+			return nil, err
+		}
+		query = query.Where("created_at < ? OR (created_at = ? AND id < ?)", cursor.CreatedAt, cursor.CreatedAt, cursor.Id)
+		offset = 0
+	}
+	err := query.Order("created_at DESC, id DESC").Limit(limit).Offset(offset).Find(&messages).Error
+	return messages, err
 }
 
 // CountMessagesBetweenUsers 统计两个用户之间的消息总数
 func (d *MessageDAOImpl) CountMessagesBetweenUsers(userOneId string, userTwoId string) (int64, error) {
 	var count int64
-	result := d.db.Model(&models.Message{}).Where("(send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?)", userOneId, userTwoId, userTwoId, userOneId).Count(&count)
+	result := d.db.Model(&models.Message{}).Where("(send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?)", userOneId, userTwoId, userTwoId, userOneId).Where("(send_id = ? AND send_deleted_at IS NULL) OR (receive_id = ? AND receive_deleted_at IS NULL)", userOneId, userOneId).Count(&count)
 	return count, result.Error
 }
 
@@ -163,4 +183,27 @@ func (d *MessageDAOImpl) SearchMessagesBySessionIds(sessionIds []string, keyword
 		Limit(limit).
 		Find(&messageList)
 	return messageList, result.Error
+}
+
+// GetMessageForUpdate 锁定消息以串行处理重复撤回。
+func (d *MessageDAOImpl) GetMessageForUpdate(uuid string) (models.Message, error) {
+	var message models.Message
+	err := d.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", uuid).First(&message).Error
+	return message, err
+}
+
+// RecallMessage 清空正文与文件信息并保留撤回占位。
+func (d *MessageDAOImpl) RecallMessage(uuid string) error {
+	return d.db.Model(&models.Message{}).Where("uuid = ?", uuid).Updates(map[string]interface{}{
+		"type": constants.MessageRecalled, "content": "", "url": "", "file_type": "", "file_name": "", "file_size": "", "sources": "", "posts": "",
+	}).Error
+}
+
+// DeleteMessageForUser 根据已校验的参与者身份写入个人删除标记，重复删除保持原时间。
+func (d *MessageDAOImpl) DeleteMessageForUser(userId, messageId string, isSender bool) error {
+	column, owner := "receive_deleted_at", "receive_id"
+	if isSender {
+		column, owner = "send_deleted_at", "send_id"
+	}
+	return d.db.Model(&models.Message{}).Where("uuid = ? AND "+owner+" = ? AND "+column+" IS NULL", messageId, userId).Update(column, gorm.Expr("CURRENT_TIMESTAMP(3)")).Error
 }
