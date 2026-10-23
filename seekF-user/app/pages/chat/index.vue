@@ -5,7 +5,7 @@
       <!-- 拖动条 -->
       <div class="sidebar-resize-handle" @mousedown="startSidebarResize"></div>
       <!-- 顶部搜索栏 -->
-      <SearchBar @search-select="handleSearchSelect" />
+      <SearchBar :user-id="currentUserId" @search-select="handleSearchSelect" />
 
       <!-- 私聊会话列表 -->
       <div class="flex-1 overflow-y-auto">
@@ -17,7 +17,7 @@
           v-for="(item, index) in chatList"
           :key="item.sessionId"
           class="group/session relative flex items-center gap-3 overflow-hidden px-3 py-3 hover:bg-gray-50 cursor-pointer transition-colors border-b border-gray-100"
-          :class="{ 'bg-gray-100': activeIndex === index }"
+          :class="{ 'bg-gray-100': activeIndex === index, 'bg-gray-50': item.isPinned && activeIndex !== index }"
           @click="selectSession(index)"
         >
           <!-- 头像 -->
@@ -31,6 +31,7 @@
             <div class="flex justify-between items-start">
               <div class="flex items-center gap-2">
                 <h3 class="font-medium text-sm truncate">{{ item.name }}</h3>
+                <span v-if="item.isPinned" class="sr-only">已置顶</span>
               </div>
               <span class="text-xs text-gray-400 transition-transform duration-200 group-hover/session:-translate-x-9 group-focus-within/session:-translate-x-9 motion-reduce:transition-none">{{ item.time }}</span>
             </div>
@@ -70,10 +71,15 @@
           <span class="font-medium text-sm">{{ currentChat.name }}</span>
           <div class="flex-1"></div>
           <div class="flex gap-4 text-gray-500">
-            <button type="button" :disabled="blockStatusLoading || blockSaving" :aria-busy="blockStatusLoading || blockSaving" class="inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 py-2 text-xs font-medium transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 sm:px-4 sm:text-sm" :class="chatIsBlocked ? 'border-blue-200 bg-blue-50 text-blue-500 hover:border-blue-300 hover:bg-blue-100' : 'border-rose-200 bg-rose-50 text-rose-500 hover:border-rose-300 hover:bg-rose-100'" @click="blockStatusUser === currentChat.id ? handleChatBlock(currentChat.id) : refreshChatBlockStatus()">
-              <AccountStatusIcon :loading="blockStatusLoading || blockSaving" :mode="blockStatusUser !== currentChat.id ? 'retry' : chatIsBlocked ? 'unblock' : 'block'" class="text-base" />
-              <span>{{ blockSaving ? '处理中…' : blockStatusLoading ? '加载中…' : blockStatusUser !== currentChat.id ? '重试加载' : chatIsBlocked ? '解除拉黑' : '拉黑' }}</span>
-            </button>
+            <el-dropdown :key="currentChat.sessionId" trigger="hover" placement="bottom-end" @command="handleChatCommand">
+              <button type="button" aria-label="聊天选项" class="flex h-9 w-9 items-center justify-center rounded-full text-gray-500 outline-none hover:bg-gray-100 focus-visible:bg-gray-100"><svg viewBox="0 0 24 24" fill="currentColor" class="h-6 w-6" aria-hidden="true"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg></button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="pin" :disabled="pinSaving.has(currentChat.sessionId) || blockSaving">{{ pinSaving.has(currentChat.sessionId) ? '处理中…' : currentChat.isPinned ? '取消置顶' : '置顶聊天' }}</el-dropdown-item>
+                  <el-dropdown-item command="block" divided :disabled="blockStatusLoading || blockSaving"><span :class="blockStatusUser === currentChat.id && !chatIsBlocked ? 'text-rose-500' : ''">{{ blockSaving ? '处理中…' : blockStatusLoading ? '加载中…' : blockStatusUser !== currentChat.id ? '重试加载拉黑状态' : chatIsBlocked ? '解除拉黑' : '拉黑' }}</span></el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
         </div>
 
@@ -85,7 +91,8 @@
             wrap-class="[overflow-anchor:none]"
             @end-reached="handleEndReached"
           >
-            <div class="p-4 space-y-3">
+            <div ref="messageContentRef" class="p-4 space-y-3">
+              <p v-if="locatingMessage" class="py-2 text-center text-sm text-gray-400" role="status">正在定位消息…</p>
               <div v-if="messageList.length === 0" class="flex items-center justify-center py-20 text-gray-400">
                 <p>暂无消息</p>
               </div>
@@ -93,7 +100,7 @@
               <!-- 加载更多 - 放在顶部 -->
               <div v-if="hasMore && messageList.length > 0" class="text-center py-2">
                 <span v-if="loadingMore" class="text-gray-400 text-sm">加载中...</span>
-                <button v-else class="text-blue-500 text-sm hover:underline" @click="loadMoreMessages">
+                <button v-else class="text-blue-500 text-sm hover:underline disabled:opacity-50" :disabled="locatingMessage" @click="loadMoreMessages">
                   加载更多消息
                 </button>
               </div>
@@ -102,8 +109,10 @@
               <div
                 v-for="msg in messageList"
                 :key="msg.renderKey || msg.messageId"
-                class="chat-item"
-                :class="{ 'chat-item-self': msg.isSelf, 'chat-message-enter': msg.animateEntrance }"
+                :data-message-id="msg.renderKey || msg.messageId"
+                tabindex="-1"
+                class="chat-item outline-none"
+                :class="[{ 'chat-item-self': msg.isSelf, 'chat-message-enter': msg.animateEntrance }, messageHighlightClass(msg.messageId)]"
               >
                 <!-- 用户名 - 在消息行外面 -->
                 <div class="user-name" :class="{ 'user-name-self': msg.isSelf }">
@@ -121,7 +130,7 @@
                     </NuxtLink>
                     <div class="bubble bubble-left">
                       <div v-if="msg.isImage || isImageUrl(msg.content)">
-                        <img :src="msg.content" class="max-w-full rounded cursor-pointer hover:opacity-90" style="max-height: 200px;" @click="previewImage(msg.content)" />
+                        <img :src="msg.content" class="max-w-full rounded cursor-pointer hover:opacity-90" style="max-height: 200px;" @load="restoreHistoryPosition" @error="restoreHistoryPosition" @click="previewImage(msg.content)" />
                       </div>
                       <p v-else class="text-sm">{{ msg.content }}</p>
                       <p class="text-xs text-gray-400 text-right mt-1">{{ formatTime(msg.sendTime) }}</p>
@@ -132,7 +141,7 @@
                   <template v-else>
                     <div class="bubble bubble-right">
                       <div v-if="msg.isImage || isImageUrl(msg.content)">
-                        <img :src="msg.content" class="max-w-full rounded cursor-pointer hover:opacity-90" style="max-height: 200px;" @click="previewImage(msg.content)" />
+                        <img :src="msg.content" class="max-w-full rounded cursor-pointer hover:opacity-90" style="max-height: 200px;" @load="restoreHistoryPosition" @error="restoreHistoryPosition" @click="previewImage(msg.content)" />
                       </div>
                       <p v-else class="text-sm">{{ msg.content }}</p>
                       <p class="msg-time text-xs text-right mt-1">{{ formatTime(msg.sendTime) }}</p>
@@ -159,6 +168,14 @@
 
           <!-- 输入框和发送按钮 -->
           <div class="input-container">
+            <!-- 工具按钮位于输入区左上方，表情面板向上展开到消息区域。 -->
+            <div class="mb-2 flex shrink-0 items-center gap-2.5">
+              <ChatEmojiPicker :user-id="currentUserId" :context-id="currentChat?.sessionId || ''" @select="insertEmoji" />
+              <button class="toolbar-btn" title="发送图片" @click="triggerImageUpload">
+                <Icon name="tabler:photo" class="text-2xl" />
+              </button>
+              <input ref="imageInputRef" type="file" accept="image/*" class="hidden" @change="handleImageUpload" />
+            </div>
             <!-- 待发送图片预览 -->
             <div v-if="pendingImages.length > 0" class="pending-images">
               <div v-for="(img, index) in pendingImages" :key="index" class="pending-image-item">
@@ -169,32 +186,14 @@
               </div>
             </div>
             <textarea
+              ref="messageInputRef"
               v-model="inputMessage"
               placeholder="输入消息..."
               class="message-input"
               @keydown.enter.prevent="sendMessage"
               @paste="handlePaste"
             ></textarea>
-            <div class="toolbar-send">
-              <div class="toolbar">
-                <button class="toolbar-btn" title="表情">
-                  <Icon name="uil:smile" class="text-base" />
-                </button>
-                <button
-                  class="toolbar-btn"
-                  title="发送图片"
-                  @click="triggerImageUpload"
-                >
-                  <Icon name="tabler:photo" class="text-base" />
-                </button>
-                <input
-                  ref="imageInputRef"
-                  type="file"
-                  accept="image/*"
-                  class="hidden"
-                  @change="handleImageUpload"
-                />
-              </div>
+            <div class="mt-3 flex shrink-0 items-center justify-end">
               <button
                 class="send-btn"
                 :disabled="(!inputMessage.trim() && pendingImages.length === 0) || !ws.isConnected"
@@ -222,6 +221,10 @@
 
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { insertEmojiAtSelection } from '~/utils/emoji'
+import { sortChatSessions } from '~/utils/chatSessions'
+import { captureChatHistoryAnchor, hasChatHistoryShifted, restoreChatHistoryAnchor } from '~/utils/chatHistoryAnchor'
+import { createChatInitialBottom } from '~/utils/chatInitialBottom'
 // 页面级 SEO
 useSeoMeta({
   title: '消息',
@@ -241,16 +244,97 @@ const currentUserId = ref('')
 const chatList = ref([])
 const activeIndex = ref(-1)
 const messageList = ref([])
+const locatingMessage = ref(false)
+const locatedMessage = ref('')
+const messageHighlightVisible = ref(false)
+let messageHighlightTimer
+let messageHighlightCleanupTimer
+
+// messageHighlightClass 为整条消息行添加不占布局的灰色底，覆盖用户名、头像、气泡及空白区域。
+const messageHighlightClass = uuid => locatedMessage.value === uuid
+  ? ["relative before:pointer-events-none before:absolute before:-inset-x-2 before:-inset-y-2 before:rounded-xl before:bg-[#dfe3e8] before:content-[''] before:transition-opacity before:duration-[800ms] motion-reduce:before:transition-none [&>*]:relative", messageHighlightVisible.value ? 'before:opacity-100' : 'before:opacity-0']
+  : ''
+
+// clearMessageHighlight 清理高亮及淡出计时器，防止切换会话后残留动画。
+const clearMessageHighlight = () => {
+  clearTimeout(messageHighlightTimer)
+  clearTimeout(messageHighlightCleanupTimer)
+  locatedMessage.value = ''
+  messageHighlightVisible.value = false
+}
+
+// highlightSearchMessage 整行提示停留1.6秒后用800毫秒淡出，便于看清搜索定位目标。
+const highlightSearchMessage = (uuid, version) => {
+  clearMessageHighlight()
+  locatedMessage.value = uuid
+  messageHighlightVisible.value = true
+  messageHighlightTimer = setTimeout(() => {
+    if (chatDisposed || version !== messageRequestVersion) return
+    messageHighlightVisible.value = false
+    messageHighlightCleanupTimer = setTimeout(clearMessageHighlight, 800)
+  }, 1600)
+}
 const deletingSessions = ref(new Set())
+const pinSaving = ref(new Set())
 let messageRequestVersion = 0
 let sessionListVersion = 0
 const inputMessage = ref('')
+const messageInputRef = ref(null)
+// insertEmoji 连续插入表情并推进输入框光标，保留面板焦点以支持重复点击及键盘选择。
+const insertEmoji = async emoji => {
+  const input = messageInputRef.value
+  if (!input) return
+  const result = insertEmojiAtSelection(inputMessage.value, emoji, input.selectionStart, input.selectionEnd)
+  inputMessage.value = result.text
+  await nextTick()
+  if (messageInputRef.value !== input) return
+  input.setSelectionRange(result.caret, result.caret)
+}
 const pendingImages = ref([]) // 待发送的图片列表
 
 const currentChat = computed(() => {
   if (activeIndex.value === -1) return {}
   return chatList.value[activeIndex.value]
 })
+
+// reorderSessions 调整排序时按会话编号保持当前聊天，不重新加载消息或改变输入内容。
+const reorderSessions = () => {
+  const selected = currentChat.value?.sessionId
+  chatList.value = sortChatSessions(chatList.value)
+  activeIndex.value = chatList.value.findIndex(item => item.sessionId === selected)
+}
+
+// toggleChatPin 使用明确目标状态保存置顶，切换会话或账号后不会更新错误对象。
+const toggleChatPin = async () => {
+  const session = currentChat.value
+  const owner = currentUserId.value
+  if (!session?.sessionId || pinSaving.value.has(session.sessionId)) return
+  const pinned = !session.isPinned
+  pinSaving.value.add(session.sessionId)
+  try {
+    const res = await useApi$('/user/session/pin', { body: { session_id: session.sessionId, pinned } })
+    if (chatDisposed || owner !== currentUserId.value) return
+    if (res.code !== 200) throw new Error(res.message || '设置置顶失败')
+    sessionListVersion++
+    const current = chatList.value.find(item => item.sessionId === session.sessionId)
+    if (!current) return
+    current.isPinned = res.data.is_pinned
+    current.pinnedAt = res.data.pinned_at
+    reorderSessions()
+    ElMessage.success(pinned ? '已置顶聊天' : '已取消置顶')
+  } catch (error) {
+    if (!chatDisposed && owner === currentUserId.value) ElMessage.error(error.message || '设置置顶失败，请重试')
+  } finally { pinSaving.value.delete(session.sessionId) }
+}
+
+// handleChatCommand 分派聊天菜单操作，拉黑状态查询失败时允许重试。
+const handleChatCommand = command => {
+  if (command === 'pin') void toggleChatPin()
+  if (command === 'block') {
+    if (blockStatusUser.value === currentChat.value?.id) void handleChatBlock(currentChat.value.id)
+    else void refreshChatBlockStatus()
+  }
+}
 
 const blockVersion = useState('user-block-version', () => 0)
 const blockStatusUser = ref('')
@@ -289,16 +373,17 @@ const handleChatBlock = async (target) => {
   const blocked = !chatIsBlocked.value
   blockSaving.value = true
   try {
-    if (blocked) await ElMessageBox.confirm('拉黑后，首页不再展示对方的帖子，对方无法查看你的帖子或给你发私信。', '拉黑用户', { confirmButtonText: '拉黑', cancelButtonText: '取消', type: 'warning' })
+    if (blocked) await ElMessageBox.confirm('拉黑后，将从你的会话列表移除该聊天并保留历史消息，双方无法发送私信，首页不再展示对方的帖子。', '拉黑用户', { confirmButtonText: '拉黑', cancelButtonText: '取消', type: 'warning' })
     if (chatDisposed || currentChat.value?.id !== target || currentUserId.value !== owner) return
     const res = await useApi$('/user/block/set', { body: { target_user_id: target, blocked } })
     if (res.code !== 200) throw new Error(res.message || '设置拉黑状态失败')
-    if (currentUserId.value !== owner) return
-    blockVersion.value++
-    if (!chatDisposed && currentChat.value?.id === target) {
-      chatIsBlocked.value = blocked
-      ElMessage.success(blocked ? '已拉黑' : '已解除拉黑')
+    if (chatDisposed || currentUserId.value !== owner) return
+    if (blocked) {
+      const session = chatList.value.find(item => item.id === target)
+      if (session) removeLocalSession(session.sessionId)
     }
+    blockVersion.value++
+    ElMessage.success(blocked ? '已拉黑并移除会话' : '已解除拉黑')
   } catch (error) {
     if (!chatDisposed && currentChat.value?.id === target && currentUserId.value === owner && error !== 'cancel' && error !== 'close') ElMessage.error(error.message || '设置拉黑状态失败，请重试')
   } finally { blockSaving.value = false }
@@ -307,6 +392,55 @@ const handleChatBlock = async (target) => {
 watch([() => currentChat.value?.id, currentUserId, blockVersion], refreshChatBlockStatus)
 
 const scrollbarRef = ref()
+const messageContentRef = ref(null)
+let historyAnchor = null
+let historyWrap = null
+let historyResizeObserver = null
+let preservingHistory = false
+let initialBottom = null
+const initializingBottom = ref(false)
+
+// clearInitialBottom 切换会话、主动滚动或开始历史定位时停止首次底部跟随。
+const clearInitialBottom = () => {
+  initialBottom?.dispose()
+  initialBottom = null
+}
+
+// rememberHistoryPosition 跟随用户在请求期间及加载后的滚动，避免迟到图片将其拉回旧位置。
+const rememberHistoryPosition = () => {
+  if (preservingHistory) return
+  // 图片重排可能先触发滚动事件再触发ResizeObserver，此时必须保留原消息而非重新选锚点。
+  if (hasChatHistoryShifted(historyWrap, historyAnchor)) restoreHistoryPosition()
+  else historyAnchor = captureChatHistoryAnchor(historyWrap)
+}
+
+// restoreHistoryPosition 在内容尺寸变化时保持当前阅读消息的位置。
+const restoreHistoryPosition = () => {
+  if (initialBottom) { initialBottom.restore(); return }
+  if (!chatDisposed && historyWrap === scrollbarRef.value?.wrapRef) restoreChatHistoryAnchor(historyWrap, historyAnchor)
+}
+
+// clearHistoryAnchor 切换会话或卸载时释放滚动监听及尺寸观察器。
+const clearHistoryAnchor = () => {
+  historyWrap?.removeEventListener('scroll', rememberHistoryPosition)
+  historyResizeObserver?.disconnect()
+  historyAnchor = null
+  historyWrap = null
+  historyResizeObserver = null
+  preservingHistory = false
+}
+
+// startHistoryAnchor 从当前阅读位置开始观察，图片迟到加载时仍按消息锚点补偿。
+const startHistoryAnchor = () => {
+  clearInitialBottom()
+  clearHistoryAnchor()
+  historyWrap = scrollbarRef.value?.wrapRef
+  if (!historyWrap) return
+  historyAnchor = captureChatHistoryAnchor(historyWrap)
+  historyWrap.addEventListener('scroll', rememberHistoryPosition, { passive: true })
+  historyResizeObserver = new ResizeObserver(restoreHistoryPosition)
+  if (messageContentRef.value) historyResizeObserver.observe(messageContentRef.value)
+}
 const imageInputRef = ref()
 
 // 侧边栏宽度调整
@@ -381,7 +515,11 @@ const totalMessages = ref(0)
 
 // scrollToBottom 历史定位直接到达，实时追加使用平滑滚动，减少动态效果时直接定位。
 const scrollToBottom = (smooth = false) => {
+  if (locatingMessage.value) return
+  const version = messageRequestVersion
+  if (smooth) clearInitialBottom()
   nextTick(() => {
+    if (chatDisposed || version !== messageRequestVersion) return
     if (scrollbarRef.value?.wrapRef) {
       const wrap = scrollbarRef.value.wrapRef
       const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -421,7 +559,7 @@ const getCurrentUserInfo = async () => {
 }
 
 const loadSessionList = async () => {
-  const version = sessionListVersion
+  const version = ++sessionListVersion
   try {
     const data = await useApi$('/user/session/getSessionList', { method: 'POST' })
     if (chatDisposed || version !== sessionListVersion) return
@@ -435,9 +573,13 @@ const loadSessionList = async () => {
         avatar: session.avatar,
         lastMsg: session.last_message || '点击开始聊天',
         time: session.last_message_at || '',
+        isPinned: !!session.is_pinned,
+        pinnedAt: session.pinned_at || '',
+        lastActivity: Date.parse(session.last_message_at || '') || 0,
       }))
 
       activeIndex.value = chatList.value.findIndex(item => item.id === selectedId)
+      if (selectedId && activeIndex.value === -1) clearCurrentChat()
       const { session_id, receive_id } = route.query
       if (session_id || receive_id) {
         selectSessionByParams(session_id, receive_id)
@@ -448,16 +590,80 @@ const loadSessionList = async () => {
   }
 }
 
-// 处理搜索联想选中（跳转到对应会话）
-const handleSearchSelect = (item) => {
-  if (typeof item === 'object' && item.session_id) {
-    // 联想结果：跳转到对应会话
-    const index = chatList.value.findIndex(s => s.sessionId === item.session_id)
-    if (index !== -1) {
-      selectSession(index)
+// clearCurrentChat 清理被移除会话的本地消息、输入和图片预览，使迟到消息请求失效。
+const clearCurrentChat = () => {
+  clearMessageHighlight()
+  locatingMessage.value = false
+  clearInitialBottom()
+  initializingBottom.value = false
+  clearHistoryAnchor()
+  messageRequestVersion++
+  messageList.value = []
+  currentPage.value = 1
+  hasMore.value = false
+  loadingMore.value = false
+  inputMessage.value = ''
+  pendingImages.value.forEach(image => URL.revokeObjectURL(image.preview))
+  pendingImages.value = []
+}
+
+// removeLocalSession 移除已删除或拉黑会话，同时保留其他当前会话的选中状态。
+const removeLocalSession = sessionId => {
+  const selected = currentChat.value?.sessionId
+  sessionListVersion++
+  chatList.value = chatList.value.filter(session => session.sessionId !== sessionId)
+  removeUnreadSession(sessionId)
+  refreshUnread()
+  activeIndex.value = chatList.value.findIndex(session => session.sessionId === selected)
+  if (selected === sessionId) clearCurrentChat()
+}
+
+// 其他页面拉黑用户后同步移除会话，并重新读取未读统计。
+watch(blockVersion, () => { void loadSessionList(); void refreshUnread() })
+
+// handleSearchSelect 打开本人会话并加载到匹配消息，定位期间切换会话立即终止旧操作。
+const handleSearchSelect = async item => {
+  if (!item?.session_id || !item.uuid) return
+  let index = chatList.value.findIndex(session => session.sessionId === item.session_id)
+  if (index < 0) {
+    await loadSessionList()
+    index = chatList.value.findIndex(session => session.sessionId === item.session_id)
+  }
+  if (index < 0) { ElMessage.info('该会话已删除或暂不可见'); return }
+  const version = await selectSession(index)
+  if (chatDisposed || version !== messageRequestVersion) return
+  clearInitialBottom()
+  clearHistoryAnchor()
+  locatingMessage.value = true
+  try {
+    while (!messageList.value.some(message => message.messageId === item.uuid)) {
+      if (!hasMore.value) throw new Error('该消息已删除或暂不可见')
+      const previousLength = messageList.value.length
+      const page = currentPage.value + 1
+      const loaded = await loadMessageList(currentChat.value.id, page)
+      if (chatDisposed || version !== messageRequestVersion) return
+      if (!loaded) throw new Error('加载目标消息失败，请重新搜索后重试')
+      currentPage.value = page
+      await nextTick()
+      if (messageList.value.length === previousLength) throw new Error('未能加载目标消息，请重试')
     }
-  } else if (typeof item === 'string') {
-    // 搜索历史关键词：可以触发搜索（当前不处理）
+    await nextTick()
+    if (chatDisposed || version !== messageRequestVersion) return
+    const wrap = scrollbarRef.value?.wrapRef
+    const node = [...(wrap?.querySelectorAll('[data-message-id]') || [])].find(element => element.dataset.messageId === item.uuid)
+    if (!node || !wrap) throw new Error('暂时无法定位该消息，请重试')
+    const bounds = wrap.getBoundingClientRect()
+    const rect = node.getBoundingClientRect()
+    const scale = bounds.height / wrap.clientHeight || 1
+    wrap.scrollTo({ top: Math.max(0, wrap.scrollTop + (rect.top - bounds.top) / scale - Math.max(0, (wrap.clientHeight - rect.height / scale) / 2)), behavior: 'instant' })
+    node.focus({ preventScroll: true })
+    startHistoryAnchor()
+    historyAnchor = captureChatHistoryAnchor(wrap, node)
+    highlightSearchMessage(item.uuid, version)
+  } catch (error) {
+    if (!chatDisposed && version === messageRequestVersion) ElMessage.error(error.message || '定位消息失败，请重试')
+  } finally {
+    if (version === messageRequestVersion) { locatingMessage.value = false; preservingHistory = false }
   }
 }
 
@@ -484,22 +690,7 @@ const deleteSession = async (item) => {
     const res = await useApi$('/user/session/deleteSession', { body: { session_id: sessionId } })
     if (chatDisposed || owner !== currentUserId.value) return
     if (res.code !== 200) throw new Error(res.message || '删除会话失败')
-    const selected = currentChat.value?.sessionId
-    sessionListVersion++
-    chatList.value = chatList.value.filter(session => session.sessionId !== sessionId)
-    removeUnreadSession(sessionId)
-    refreshUnread()
-    activeIndex.value = chatList.value.findIndex(session => session.sessionId === selected)
-    if (selected === sessionId) {
-      messageRequestVersion++
-      messageList.value = []
-      currentPage.value = 1
-      hasMore.value = false
-      loadingMore.value = false
-      inputMessage.value = ''
-      pendingImages.value.forEach(image => URL.revokeObjectURL(image.preview))
-      pendingImages.value = []
-    }
+    removeLocalSession(sessionId)
   } catch (error) {
     if (!chatDisposed && owner === currentUserId.value) ElMessage.error(error.message || '删除会话失败，请重试')
   } finally {
@@ -508,22 +699,48 @@ const deleteSession = async (item) => {
 }
 
 const selectSession = async (index) => {
+  clearMessageHighlight()
+  locatingMessage.value = false
+  clearInitialBottom()
+  clearHistoryAnchor()
   const version = ++messageRequestVersion
   activeIndex.value = index
   const session = chatList.value[index]
+  initializingBottom.value = false
   if (!session) return
+  initializingBottom.value = true
 
   currentPage.value = 1
   hasMore.value = true
   loadingMore.value = false
   messageList.value = []
 
-  await loadMessageList(session.id)
-  if (version !== messageRequestVersion) return
-  scrollToBottom()
-
-  if (route.query.session_id || route.query.receive_id || route.query.userId) {
-    router.replace({ path: '/chat' })
+  try {
+    const loaded = await loadMessageList(session.id)
+    await nextTick()
+    if (chatDisposed || version !== messageRequestVersion || !loaded) return
+    const wrap = scrollbarRef.value?.wrapRef
+    const content = messageContentRef.value
+    if (wrap && content) {
+      initialBottom = createChatInitialBottom({
+        wrap, content, root: scrollbarRef.value.$el || wrap,
+        isCurrent: () => !chatDisposed && version === messageRequestVersion,
+        onStop: () => { if (version === messageRequestVersion) initialBottom = null }
+      })
+      // 覆盖组件更新及下一帧视口布局，随后继续跟随迟到图片，直到用户开始操作。
+      await nextTick()
+      if (version !== messageRequestVersion) return
+      initialBottom?.restore()
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      if (version !== messageRequestVersion) return
+      initialBottom?.restore()
+    }
+    if (route.query.session_id || route.query.receive_id || route.query.userId) {
+      router.replace({ path: '/chat' })
+    }
+    return version
+  } finally {
+    if (version === messageRequestVersion) initializingBottom.value = false
   }
 }
 
@@ -561,37 +778,53 @@ const loadMessageList = async (receiveId, page = 1) => {
       if (page === 1) {
         messageList.value = messages.reverse()
       } else {
-        messageList.value = [...messages.reverse(), ...messageList.value]
+        // 在真正前插前记录最新阅读位置，请求期间用户可以继续滚动。
+        historyAnchor = captureChatHistoryAnchor(historyWrap)
+        preservingHistory = true
+        const existing = new Set(messageList.value.map(message => message.messageId))
+        messageList.value = [...messages.reverse().filter(message => !existing.has(message.messageId)), ...messageList.value]
       }
 
-      hasMore.value = messageList.value.length < totalMessages.value
+      hasMore.value = list.length > 0 && messageList.value.length < totalMessages.value
       nextTick(markCurrentChatRead)
+      return true
     }
+    throw new Error(data?.message || '获取聊天记录失败')
   } catch (error) {
-    console.error('获取消息列表失败:', error)
+    if (!chatDisposed && version === messageRequestVersion) {
+      console.error('获取消息列表失败:', error)
+      ElMessage.error(error.message || '获取聊天记录失败，请重试')
+    }
+    return false
   }
 }
 
 const loadMoreMessages = async () => {
-  if (loadingMore.value || !hasMore.value) return
+  if (locatingMessage.value || initializingBottom.value || loadingMore.value || preservingHistory || !hasMore.value || !currentChat.value?.id) return
   const version = messageRequestVersion
+  startHistoryAnchor()
   loadingMore.value = true
-
-  const oldScrollHeight = scrollbarRef.value?.wrapRef?.scrollHeight || 0
-
-  currentPage.value++
-  await loadMessageList(currentChat.value.id, currentPage.value)
-  if (version !== messageRequestVersion) return
-
-  nextTick(() => {
+  try {
+    const page = currentPage.value + 1
+    const loaded = await loadMessageList(currentChat.value.id, page)
+    if (chatDisposed || version !== messageRequestVersion) return
+    if (loaded) currentPage.value = page
+    await nextTick()
     if (version !== messageRequestVersion) return
-    if (scrollbarRef.value?.wrapRef) {
-      const newScrollHeight = scrollbarRef.value.wrapRef.scrollHeight
-      scrollbarRef.value.setScrollTop(newScrollHeight - oldScrollHeight)
+    restoreHistoryPosition()
+    // 加载指示器切回按钮或移除后再定位一遍，并覆盖浏览器下一帧的布局及滚动事件。
+    loadingMore.value = false
+    await nextTick()
+    if (version !== messageRequestVersion) return
+    restoreHistoryPosition()
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    if (version === messageRequestVersion) restoreHistoryPosition()
+  } finally {
+    if (version === messageRequestVersion) {
+      preservingHistory = false
+      loadingMore.value = false
     }
-  })
-
-  loadingMore.value = false
+  }
 }
 
 const sendMessage = async () => {
@@ -638,6 +871,8 @@ const sendMessage = async () => {
 
       session.lastMsg = inputMessage.value.trim()
       session.time = '刚刚'
+      session.lastActivity = Date.now()
+      reorderSessions()
       inputMessage.value = ''
 
       scrollToBottom(true)
@@ -775,6 +1010,8 @@ const uploadAndSendImage = async (file) => {
 
         session.lastMsg = '[图片]'
         session.time = '刚刚'
+        session.lastActivity = Date.now()
+        reorderSessions()
 
         scrollToBottom(true)
         ElMessage.success('图片发送成功')
@@ -873,6 +1110,10 @@ const handleWebSocketMessage = (data) => {
 
     scrollToBottom(true)
     nextTick(markCurrentChatRead)
+    currentSession.lastMsg = data.type === 2 ? '[图片]' : data.content
+    currentSession.time = '刚刚'
+    currentSession.lastActivity = Date.now()
+    reorderSessions()
   } else {
     console.log('不是当前会话，更新会话列表')
     const sessionIndex = chatList.value.findIndex(item => item.id === peerId)
@@ -883,12 +1124,8 @@ const handleWebSocketMessage = (data) => {
     if (sessionIndex !== -1) {
       chatList.value[sessionIndex].lastMsg = lastMsg
       chatList.value[sessionIndex].time = '刚刚'
-      // 将会话移到顶部
-      const updatedSession = chatList.value[sessionIndex]
-      const selectedId = currentChat.value?.id
-      chatList.value.splice(sessionIndex, 1)
-      chatList.value.unshift(updatedSession)
-      activeIndex.value = chatList.value.findIndex(item => item.id === selectedId)
+      chatList.value[sessionIndex].lastActivity = Date.now()
+      reorderSessions()
     } else {
       // 会话不存在，重新加载会话列表
       console.log('会话不存在，重新加载会话列表')
@@ -942,9 +1179,12 @@ onActivated(() => {
   refreshUnread()
   nextTick(markCurrentChatRead)
 })
-onDeactivated(() => { chatPageActive.value = false })
+onDeactivated(() => { chatPageActive.value = false; clearInitialBottom(); clearMessageHighlight() })
 
 onUnmounted(() => {
+  clearMessageHighlight()
+  clearInitialBottom()
+  clearHistoryAnchor()
   chatDisposed = true
   blockStatusRequest++
   ws.removeMessageCallback(handleWebSocketMessage)
@@ -1144,22 +1384,6 @@ onUnmounted(() => {
 
 .message-input::placeholder {
   color: #9ca3af;
-}
-
-/* 工具栏和发送按钮容器 */
-.toolbar-send {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 12px;
-  flex-shrink: 0;
-}
-
-/* 工具栏 */
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 2px;
 }
 
 .toolbar-btn {

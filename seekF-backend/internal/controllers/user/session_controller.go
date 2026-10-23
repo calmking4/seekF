@@ -2,6 +2,7 @@ package user
 
 import (
 	"net/http"
+	"time"
 
 	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/pkg/resp"
@@ -13,6 +14,30 @@ import (
 
 type SessionController struct {
 	sessionService userservice.SessionService
+}
+
+// Pin 设置本人私聊置顶状态并返回实际保存的时间。
+func (c *SessionController) Pin(ctx *gin.Context) {
+	userId, exists := ctx.Get("Uuid")
+	if !exists {
+		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
+		return
+	}
+	var request userreq.SessionPinRequest
+	if err := ctx.ShouldBindJSON(&request); err != nil {
+		resp.Error(ctx, "会话编号或置顶状态无效", http.StatusBadRequest)
+		return
+	}
+	pinnedAt, err := c.sessionService.SetPinned(ctx.Request.Context(), userId.(string), request.SessionId, *request.Pinned)
+	if err != nil {
+		resp.Error(ctx, err.Error(), http.StatusBadRequest)
+		return
+	}
+	value := ""
+	if pinnedAt != nil {
+		value = pinnedAt.Format(time.RFC3339Nano)
+	}
+	resp.Success(ctx, "设置置顶成功", gin.H{"is_pinned": pinnedAt != nil, "pinned_at": value})
 }
 
 // Unread 获取当前用户的私聊未读统计。

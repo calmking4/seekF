@@ -2,7 +2,7 @@ package userreq
 
 // SearchMessageRequest 搜索聊天消息请求
 type SearchMessageRequest struct {
-	SessionId string `json:"session_id" binding:"required"`
+	SessionId string `json:"session_id"`
 	Keyword   string `json:"keyword" binding:"required"`
 	Page      int    `json:"page"`
 	PageSize  int    `json:"page_size"`

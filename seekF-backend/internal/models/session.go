@@ -18,6 +18,7 @@ type Session struct {
 	CreatedAt         time.Time      `gorm:"column:created_at;Index;type:datetime;comment:创建时间"`
 	DeletedAt         gorm.DeletedAt `gorm:"column:deleted_at;Index;type:datetime;comment:删除时间"`
 	LastReadMessageId int64          `gorm:"column:last_read_message_id;not null;default:0;comment:本人已读入站私信的消息主键上界，0表示尚未阅读"`
+	PinnedAt          *time.Time     `gorm:"column:pinned_at;type:datetime(3);comment:本人会话置顶时间，NULL表示未置顶"`
 }
 
 func (Session) TableName() string {

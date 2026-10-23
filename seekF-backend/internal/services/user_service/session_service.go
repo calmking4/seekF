@@ -2,7 +2,6 @@ package userservice
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -19,7 +18,6 @@ import (
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -29,6 +27,8 @@ type OpenSessionResult struct {
 }
 
 type SessionService interface {
+	// 在事务内设置本人私聊置顶状态，返回实际保存的置顶时间。
+	SetPinned(ctx context.Context, userId, sessionId string, pinned bool) (*time.Time, error)
 	// 获取本人有效私聊会话的未读数。
 	GetUnreadSessions(userId string) (*userresp.SessionUnreadRespond, error)
 	// 校验实际入站消息后单调推进已读边界。
@@ -209,26 +209,41 @@ func (s *SessionServiceImpl) CreateSession(sendId string, receiveId string) (str
 	return session.Uuid, nil
 }
 
-// GetSessionList 获取用户私聊列表，过滤旧缓存中的群聊与 AI 会话。
-func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessionListRespond, error) {
-	key := constants.SessionListKeyPrefix + userId
-	cached, err := myredis.GetKeyNilIsErr(key)
-	if err == nil {
-		var list []userresp.GetSessionListRespond
-		if err := json.Unmarshal([]byte(cached), &list); err != nil {
-			return nil, fmt.Errorf("解析私聊会话缓存失败: %w", err)
+// SetPinned 锁定本人有效私聊后幂等更新置顶状态，重复置顶保留原时间。
+func (s *SessionServiceImpl) SetPinned(ctx context.Context, userId, sessionId string, pinned bool) (*time.Time, error) {
+	var pinnedAt *time.Time
+	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		dao := userdao.NewSessionDAO(tx)
+		session, err := dao.GetOwnedSessionForUpdate(userId, sessionId)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("会话不存在或已删除")
 		}
-		result := make([]userresp.GetSessionListRespond, 0, len(list))
-		for _, item := range list {
-			if strings.HasPrefix(item.Id, "U") {
-				result = append(result, item)
+		if err != nil {
+			return fmt.Errorf("查询置顶会话失败: %w", err)
+		}
+		if !strings.HasPrefix(session.ReceiveId, "U") {
+			return fmt.Errorf("仅支持置顶私聊会话")
+		}
+		if err := checkUserBlock(tx, userId, session.ReceiveId); err != nil {
+			return err
+		}
+		if pinned {
+			pinnedAt = session.PinnedAt
+			if pinnedAt == nil {
+				now := time.Now().Truncate(time.Millisecond)
+				pinnedAt = &now
 			}
 		}
-		return result, nil
-	}
-	if !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("读取私聊会话缓存失败: %w", err)
-	}
+		if err := dao.SetPinnedAt(userId, sessionId, pinnedAt); err != nil {
+			return fmt.Errorf("设置会话置顶失败: %w", err)
+		}
+		return nil
+	})
+	return pinnedAt, err
+}
+
+// GetSessionList 读取当前数据库会话状态，避免旧缓存恢复已取消置顶或拉黑移除的会话。
+func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessionListRespond, error) {
 	sessions, err := s.sessionDAO.GetSessionListBySendId(userId)
 	if err != nil {
 		return nil, fmt.Errorf("查询私聊会话失败: %w", err)
@@ -251,6 +266,9 @@ func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessio
 	}
 	result := make([]userresp.GetSessionListRespond, 0, len(ids))
 	for _, session := range sessions {
+		if !strings.HasPrefix(session.ReceiveId, "U") {
+			continue
+		}
 		user, ok := users[session.ReceiveId]
 		if !ok {
 			continue
@@ -259,17 +277,15 @@ func (s *SessionServiceImpl) GetSessionList(userId string) ([]userresp.GetSessio
 		if session.LastMessageAt.Valid {
 			lastMessageAt = session.LastMessageAt.Time.Format("2006-01-02 15:04:05")
 		}
+		pinnedAt := ""
+		if session.PinnedAt != nil {
+			pinnedAt = session.PinnedAt.Format(time.RFC3339Nano)
+		}
 		result = append(result, userresp.GetSessionListRespond{
 			SessionId: session.Uuid, Id: session.ReceiveId, Name: user.Nickname,
 			Avatar: user.Avatar, LastMessage: session.LastMessage, LastMessageAt: lastMessageAt,
+			IsPinned: session.PinnedAt != nil, PinnedAt: pinnedAt,
 		})
-	}
-	payload, err := json.Marshal(result)
-	if err != nil {
-		return nil, fmt.Errorf("序列化私聊会话失败: %w", err)
-	}
-	if err := myredis.SetKeyEx(key, string(payload), time.Minute*constants.REDIS_TIMEOUT); err != nil {
-		zlog.Error("缓存私聊会话失败: " + err.Error())
 	}
 	return result, nil
 }

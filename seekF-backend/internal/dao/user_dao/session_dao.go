@@ -19,6 +19,10 @@ type SessionDAO interface {
 	HasIncomingMessage(userId string, peerId string, messageId int64) (bool, error)
 	// 单调推进本人会话的阅读边界。
 	AdvanceRead(userId string, sessionId string, messageId int64) error
+	// 更新本人已锁定会话的置顶时间，nil表示取消置顶。
+	SetPinnedAt(userId, sessionId string, pinnedAt *time.Time) error
+	// 软删除本人对指定用户的会话并清除置顶，不影响历史消息。
+	DeletePeerSessions(userId, peerId string) error
 	GetSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error)
 	GetDeletedSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error)
 	RestoreSession(sessionId string) error
@@ -53,6 +57,7 @@ func (d *SessionDAOImpl) GetUnreadSessions(userId string) ([]SessionUnreadRow, e
 		COALESCE(SUM(CASE WHEN m.id > s.last_read_message_id THEN 1 ELSE 0 END), 0) AS unread_count`).
 		Joins("LEFT JOIN message AS m ON m.send_id = s.receive_id AND m.receive_id = s.send_id AND m.type IN (0, 2)").
 		Where("s.send_id = ? AND s.receive_id LIKE ? AND s.deleted_at IS NULL", userId, "U%").
+		Where("NOT EXISTS (SELECT 1 FROM user_block b WHERE b.user_id = ? AND b.blocked_user_id = s.receive_id COLLATE utf8mb4_unicode_ci)", userId).
 		Group("s.uuid, s.receive_id, s.last_read_message_id").Scan(&rows).Error
 	return rows, err
 }
@@ -112,14 +117,26 @@ func (d *SessionDAOImpl) CreateSession(session *models.Session) error {
 
 // DeleteSession 按归属软删除私聊会话，重复删除保持幂等。
 func (d *SessionDAOImpl) DeleteSession(userId string, sessionId string) error {
-	result := d.db.Where("send_id = ? AND receive_id LIKE ?", userId, "U%").Delete(&models.Session{}, "uuid = ?", sessionId)
-	return result.Error
+	return d.db.Model(&models.Session{}).Where("send_id = ? AND receive_id LIKE ? AND uuid = ?", userId, "U%", sessionId).
+		Updates(map[string]any{"deleted_at": time.Now(), "pinned_at": nil}).Error
 }
 
-// GetSessionListBySendId 根据发送者ID获取用户会话列表
+// SetPinnedAt 更新事务内已锁定的本人会话置顶状态。
+func (d *SessionDAOImpl) SetPinnedAt(userId, sessionId string, pinnedAt *time.Time) error {
+	return d.db.Model(&models.Session{}).Where("send_id = ? AND uuid = ?", userId, sessionId).Update("pinned_at", pinnedAt).Error
+}
+
+// DeletePeerSessions 拉黑时软删除本人对应会话并清除置顶，重复执行保持幂等。
+func (d *SessionDAOImpl) DeletePeerSessions(userId, peerId string) error {
+	return d.db.Model(&models.Session{}).Where("send_id = ? AND receive_id = ?", userId, peerId).
+		Updates(map[string]any{"deleted_at": time.Now(), "pinned_at": nil}).Error
+}
+
+// GetSessionListBySendId 查询本人会话并过滤主动拉黑目标，置顶优先后按最近活动排序。
 func (d *SessionDAOImpl) GetSessionListBySendId(userId string) ([]models.Session, error) {
 	var sessionList []models.Session
-	result := d.db.Order("created_at DESC").Where("send_id = ?", userId).Find(&sessionList)
+	result := d.db.Order("pinned_at DESC, COALESCE(last_message_at, created_at) DESC, id DESC").Where("send_id = ?", userId).
+		Where("NOT EXISTS (SELECT 1 FROM user_block b WHERE b.user_id = ? AND b.blocked_user_id = session.receive_id COLLATE utf8mb4_unicode_ci)", userId).Find(&sessionList)
 	return sessionList, result.Error
 }
 

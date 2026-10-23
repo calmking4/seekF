@@ -6,15 +6,13 @@ import (
 
 	userdao "seekF-backend/internal/dao/user_dao"
 	userresp "seekF-backend/internal/dto/user/user_resp"
-	"seekF-backend/internal/models"
-	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/zlog"
 )
 
 // MessageService 消息服务接口
 type MessageService interface {
 	GetUserMessageList(userOneId string, userTwoId string, page int, pageSize int) ([]userresp.GetMessageListRespond, int64, error)
-	// 搜索当前用户的私聊消息（ES 全文搜索）。
+	// 搜索当前用户的私聊消息（双向文字匹配）。
 	SearchMessages(userId string, sessionId string, keyword string, page int, pageSize int) ([]userresp.GetMessageListRespond, int64, error)
 	// 查询当前用户的跨私聊会话消息联想。
 	SearchMessageSuggestions(userId string, keyword string, pageSize int) ([]userresp.SearchMessageSuggestionResp, error)
@@ -82,14 +80,26 @@ func (s *MessageServiceImpl) GetUserMessageList(userOneId string, userTwoId stri
 	return rspList, total, nil
 }
 
-// SearchMessages 搜索聊天消息（ES全文搜索）
+// SearchMessages 搜索本人有效私聊中的双向文字消息，并返回本人会话编号。
 func (s *MessageServiceImpl) SearchMessages(userId string, sessionId string, keyword string, page int, pageSize int) ([]userresp.GetMessageListRespond, int64, error) {
-	session, err := s.sessionDAO.GetSessionByUuid(sessionId)
-	if err != nil {
-		return nil, 0, fmt.Errorf("查询私聊会话失败: %w", err)
+	keyword = strings.TrimSpace(keyword)
+	if userId == "" {
+		return nil, 0, fmt.Errorf("无法获取用户信息")
 	}
-	if session.SendId != userId || !strings.HasPrefix(session.ReceiveId, "U") {
-		return nil, 0, fmt.Errorf("只能搜索自己的私聊记录")
+	if keyword == "" {
+		return []userresp.GetMessageListRespond{}, 0, nil
+	}
+	if len([]rune(keyword)) > 200 {
+		return nil, 0, fmt.Errorf("搜索关键词不能超过200个字符")
+	}
+	if sessionId != "" {
+		session, err := s.sessionDAO.GetSessionByUuid(sessionId)
+		if err != nil {
+			return nil, 0, fmt.Errorf("查询私聊会话失败: %w", err)
+		}
+		if session.SendId != userId || !strings.HasPrefix(session.ReceiveId, "U") {
+			return nil, 0, fmt.Errorf("只能搜索自己的私聊记录")
+		}
 	}
 	if page < 1 {
 		page = 1
@@ -97,104 +107,43 @@ func (s *MessageServiceImpl) SearchMessages(userId string, sessionId string, key
 	if pageSize < 1 {
 		pageSize = 20
 	}
-
-	// 检查ES是否可用
-	if db.ESClient == nil {
-		return nil, 0, fmt.Errorf("搜索服务暂不可用")
+	if pageSize > 50 {
+		pageSize = 50
 	}
-
-	esMessageDAO := userdao.NewESMessageDAO()
-	messages, total, err := esMessageDAO.SearchMessages(sessionId, keyword, page, pageSize)
+	rows, total, err := s.messageDAO.SearchPrivateMessages(userId, sessionId, keyword, page, pageSize)
 	if err != nil {
-		zlog.Error("ES搜索消息失败: " + err.Error())
-		return nil, 0, fmt.Errorf("搜索失败")
+		return nil, 0, fmt.Errorf("搜索聊天记录失败: %w", err)
 	}
-
-	var rspList []userresp.GetMessageListRespond
-	for _, message := range messages {
-		rspList = append(rspList, userresp.GetMessageListRespond{
-			Id:         message.Id,
-			Uuid:       message.Uuid,
-			SessionId:  message.SessionId,
-			SendId:     message.SendId,
-			SendName:   message.SendName,
-			SendAvatar: message.SendAvatar,
-			ReceiveId:  message.ReceiveId,
-			Content:    message.Content,
-			Url:        message.Url,
-			Type:       message.Type,
-			FileType:   message.FileType,
-			FileName:   message.FileName,
-			FileSize:   message.FileSize,
-			CreatedAt:  message.CreatedAt.Format("2006-01-02 15:04:05"),
+	result := make([]userresp.GetMessageListRespond, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, userresp.GetMessageListRespond{
+			Id: row.Id, Uuid: row.Uuid, SessionId: row.ViewerSessionId,
+			SendId: row.SendId, SendName: row.SendName, SendAvatar: row.SendAvatar,
+			ReceiveId: row.ReceiveId, Content: row.Content, Type: row.Type,
+			CreatedAt: row.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
-
-	return rspList, total, nil
+	return result, total, nil
 }
 
-// SearchMessageSuggestions 搜索消息联想（跨会话）
+// SearchMessageSuggestions 复用双向私聊搜索生成联想，结果携带定位消息所需的编号。
 func (s *MessageServiceImpl) SearchMessageSuggestions(userId string, keyword string, pageSize int) ([]userresp.SearchMessageSuggestionResp, error) {
-	if keyword == "" {
-		return nil, nil
-	}
 	if pageSize < 1 {
 		pageSize = 5
 	}
-
-	// 获取用户所有会话ID列表
-	sessions, err := s.sessionDAO.GetSessionListBySendId(userId)
+	if pageSize > 10 {
+		pageSize = 10
+	}
+	messages, _, err := s.SearchMessages(userId, "", keyword, 1, pageSize)
 	if err != nil {
-		zlog.Error("获取用户会话列表失败: " + err.Error())
-		return nil, fmt.Errorf("系统错误")
+		return nil, err
 	}
-	if len(sessions) == 0 {
-		return nil, nil
-	}
-
-	var sessionIds []string
-	for _, sess := range sessions {
-		if strings.HasPrefix(sess.ReceiveId, "U") {
-			sessionIds = append(sessionIds, sess.Uuid)
-		}
-	}
-
-	if len(sessionIds) == 0 {
-		return nil, nil
-	}
-
-	// 优先ES搜索，降级到MySQL
-	var messages []models.Message
-	if db.ESClient != nil {
-		esMessageDAO := userdao.NewESMessageDAO()
-		msgs, _, searchErr := esMessageDAO.SearchMessagesBySessionIds(sessionIds, keyword, pageSize)
-		if searchErr == nil {
-			messages = msgs
-		} else {
-			zlog.Error("ES搜索消息联想失败，降级到MySQL: " + searchErr.Error())
-			messages, err = s.messageDAO.SearchMessagesBySessionIds(sessionIds, keyword, pageSize)
-			if err != nil {
-				zlog.Error("MySQL搜索消息联想失败: " + err.Error())
-				return nil, fmt.Errorf("搜索失败")
-			}
-		}
-	} else {
-		messages, err = s.messageDAO.SearchMessagesBySessionIds(sessionIds, keyword, pageSize)
-		if err != nil {
-			zlog.Error("MySQL搜索消息联想失败: " + err.Error())
-			return nil, fmt.Errorf("搜索失败")
-		}
-	}
-
-	var respList []userresp.SearchMessageSuggestionResp
-	for _, msg := range messages {
-		respList = append(respList, userresp.SearchMessageSuggestionResp{
-			SessionId: msg.SessionId,
-			Content:   msg.Content,
-			SendName:  msg.SendName,
-			CreatedAt: msg.CreatedAt.Format("2006-01-02 15:04:05"),
+	result := make([]userresp.SearchMessageSuggestionResp, 0, len(messages))
+	for _, message := range messages {
+		result = append(result, userresp.SearchMessageSuggestionResp{
+			Uuid: message.Uuid, SessionId: message.SessionId, Content: message.Content,
+			SendName: message.SendName, CreatedAt: message.CreatedAt,
 		})
 	}
-
-	return respList, nil
+	return result, nil
 }

@@ -2,12 +2,15 @@ package userdao
 
 import (
 	"seekF-backend/internal/models"
+	"strings"
 
 	"gorm.io/gorm"
 )
 
 // MessageDAO 消息DAO接口
 type MessageDAO interface {
+	// 按本人有效私聊的双方用户搜索文字，返回本人会话编号及真实分页总数。
+	SearchPrivateMessages(userId, sessionId, keyword string, page, pageSize int) ([]MessageSearchRow, int64, error)
 	GetMessagesBetweenUsers(userOneId string, userTwoId string, limit int, offset int) ([]models.Message, error)
 	CountMessagesBetweenUsers(userOneId string, userTwoId string) (int64, error)
 	CreateMessage(message *models.Message) error
@@ -23,6 +26,31 @@ type MessageDAO interface {
 	SearchMessagesBySessionIds(sessionIds []string, keyword string, limit int) ([]models.Message, error)
 }
 
+// MessageSearchRow 消息与查询用户会话编号的关联结果，不对应额外数据库字段。
+type MessageSearchRow struct {
+	models.Message
+	ViewerSessionId string `gorm:"column:viewer_session_id"`
+}
+
+// SearchPrivateMessages 同时查询本人发送和收到的消息，避免双方会话编号不同导致漏搜。
+func (d *MessageDAOImpl) SearchPrivateMessages(userId, sessionId, keyword string, page, pageSize int) ([]MessageSearchRow, int64, error) {
+	pattern := "%" + strings.NewReplacer("=", "==", "%", "=%", "_", "=_").Replace(keyword) + "%"
+	query := d.db.Table("message AS m").
+		Joins("JOIN session AS s ON s.send_id = ? AND s.deleted_at IS NULL AND ((m.send_id = s.send_id AND m.receive_id = s.receive_id) OR (m.send_id = s.receive_id AND m.receive_id = s.send_id))", userId).
+		Where("s.receive_id LIKE ? AND m.type = 0 AND m.content LIKE ? ESCAPE '='", "U%", pattern).
+		Where("NOT EXISTS (SELECT 1 FROM user_block b WHERE b.user_id = ? AND b.blocked_user_id = s.receive_id COLLATE utf8mb4_unicode_ci)", userId)
+	if sessionId != "" {
+		query = query.Where("s.uuid = ?", sessionId)
+	}
+	var total int64
+	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	rows := make([]MessageSearchRow, 0)
+	err := query.Select("m.*, s.uuid AS viewer_session_id").Order("m.created_at DESC, m.id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&rows).Error
+	return rows, total, err
+}
+
 // MessageDAOImpl 消息DAO实现
 type MessageDAOImpl struct {
 	db *gorm.DB
@@ -36,7 +64,7 @@ func NewMessageDAO(db *gorm.DB) MessageDAO {
 // GetMessagesBetweenUsers 获取两个用户之间的消息记录（分页，按时间倒序）
 func (d *MessageDAOImpl) GetMessagesBetweenUsers(userOneId string, userTwoId string, limit int, offset int) ([]models.Message, error) {
 	var messageList []models.Message
-	result := d.db.Where("(send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?)", userOneId, userTwoId, userTwoId, userOneId).Order("created_at DESC").Limit(limit).Offset(offset).Find(&messageList)
+	result := d.db.Where("(send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?)", userOneId, userTwoId, userTwoId, userOneId).Order("created_at DESC, id DESC").Limit(limit).Offset(offset).Find(&messageList)
 	return messageList, result.Error
 }
 

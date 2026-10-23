@@ -5,23 +5,28 @@
         type="text"
         v-model="searchKeyword"
         placeholder="搜索聊天记录"
+        maxlength="200"
         class="w-full pl-4 pr-4 py-2 rounded-lg bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm"
         @focus="showSearchPanel = true"
+        @keydown.enter="submitSearch"
+        @keydown.esc="showSearchPanel = false"
       >
       <!-- 搜索联想面板 -->
       <ChatSearchPanel
-        v-if="showSearchPanel"
+        v-if="showSearchPanel && searchKeyword.trim()"
         ref="chatSearchPanelRef"
         :keyword="searchKeyword"
+        :user-id="userId"
         @select="handleSearchSelect"
-        @clear-history="handleClearHistory"
       />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, nextTick, watch } from 'vue'
+
+const props = defineProps({ userId: { type: String, default: '' } })
 
 const emit = defineEmits(['search-select'])
 
@@ -30,23 +35,22 @@ const searchKeyword = ref('')
 const showSearchPanel = ref(false)
 const searchContainerRef = ref(null)
 const chatSearchPanelRef = ref(null)
+watch(() => props.userId, () => { searchKeyword.value = ''; showSearchPanel.value = false })
 
 // 处理搜索联想选中
 const handleSearchSelect = (item) => {
-  // 保存搜索历史
-  if (chatSearchPanelRef.value && typeof item === 'string') {
-    chatSearchPanelRef.value.saveHistory(item)
-  } else if (chatSearchPanelRef.value && typeof item === 'object') {
-    chatSearchPanelRef.value.saveHistory(searchKeyword.value)
-  }
   showSearchPanel.value = false
   searchKeyword.value = ''
   emit('search-select', item)
 }
 
-// 清空搜索历史
-const handleClearHistory = () => {
-  // 历史已在组件内清空
+// submitSearch Enter实际执行完整搜索，输入法组合输入期间不触发。
+const submitSearch = async event => {
+  if (event?.isComposing || event?.keyCode === 229) return
+  event?.preventDefault()
+  showSearchPanel.value = true
+  await nextTick()
+  void chatSearchPanelRef.value?.searchNow()
 }
 
 // 点击外部关闭搜索面板

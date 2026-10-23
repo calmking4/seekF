@@ -41,6 +41,11 @@ func (s *BlockService) Set(ctx context.Context, userId, target string, blocked b
 		if err := userdao.NewBlockDAO(tx).Set(userId, target, blocked); err != nil {
 			return fmt.Errorf("设置拉黑状态失败: %w", err)
 		}
+		if blocked {
+			if err := userdao.NewSessionDAO(tx).DeletePeerSessions(userId, target); err != nil {
+				return fmt.Errorf("移除拉黑用户会话失败: %w", err)
+			}
+		}
 		return nil
 	})
 }
