@@ -357,7 +357,9 @@ func (s *SupportServiceImpl) ListSupport(ctx context.Context, userId, kind strin
 		}
 		result := make([]*userresp.SupportOrderRespond, 0, len(rows))
 		for i := range rows {
-			result = append(result, supportOrderRespond(&rows[i]))
+			item := supportOrderRespond(&rows[i].SupportOrder)
+			item.CreatorNickname = rows[i].CreatorNickname
+			result = append(result, item)
 		}
 		return map[string]any{"list": result, "total": total}, nil
 	case "entitlements":
@@ -367,7 +369,7 @@ func (s *SupportServiceImpl) ListSupport(ctx context.Context, userId, kind strin
 		}
 		result := make([]map[string]any, 0, len(rows))
 		for _, row := range rows {
-			result = append(result, map[string]any{"creator_id": row.CreatorId, "expires_at": row.ExpiresAt})
+			result = append(result, map[string]any{"creator_id": row.CreatorId, "creator_nickname": row.CreatorNickname, "expires_at": row.ExpiresAt})
 		}
 		return result, nil
 	case "income":

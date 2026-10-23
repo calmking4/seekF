@@ -135,6 +135,7 @@ type ListCollectedPostsRequest struct {
 	FolderUuid string `json:"folder_uuid" form:"folder_uuid"`
 	Page       int    `json:"page" form:"page"`
 	PageSize   int    `json:"page_size" form:"page_size"`
+	Offset     *int   `json:"offset" form:"offset" binding:"omitempty,min=0"` // 按当前已加载数量续读，避免取消收藏后翻页漏项。
 }
 
 type SearchPostsRequest struct {

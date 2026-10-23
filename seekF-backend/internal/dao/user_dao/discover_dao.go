@@ -23,6 +23,16 @@ type DiscoverMediaInfo struct {
 
 // DiscoverDAO 发现页帖子、媒体和互动数据访问接口。
 type DiscoverDAO interface {
+	// 锁定收藏目标，包含已软删除帖子，供取消收藏维护计数。
+	FindCollectionPostForUpdate(uuid string) (*models.DiscoverPost, error)
+	// 锁定收藏夹，串行处理重复取消并校验归属。
+	FindFolderForUpdate(uuid string) (*models.DiscoverCollectionFolder, error)
+	// 取消收藏时减少帖子计数，包含软删除记录并保证非负。
+	DecrementCollectionTargetCount(postId int64) error
+	// 按收藏记录分页保留失效帖子，供服务层输出占位卡片。
+	ListCollectionEntries(folderId int64, viewerId string, page, pageSize int, offsetOverride ...int) ([]CollectionPostRow, error)
+	// 统计收藏记录数量，包含需要展示失效占位的帖子。
+	CountCollectionEntries(folderId int64) (int64, error)
 	// 查询关注作者及公开新作品的更新边界。
 	FollowingUpdates(ctx context.Context, userId string) ([]FollowingAuthorUpdate, error)
 	// 在当前关注与公开权限内查询指定作者的时间流。
@@ -610,6 +620,9 @@ func (d *DiscoverDAOImpl) DeleteCollection(userId string, folderId int64, target
 func (d *DiscoverDAOImpl) FindCollectionInFolder(userId string, folderId int64, targetUuid string) (*models.DiscoverCollection, error) {
 	var col models.DiscoverCollection
 	result := d.db.Where("user_id = ? AND folder_id = ? AND target_uuid = ?", userId, folderId, targetUuid).Find(&col)
+	if result.Error != nil {
+		return nil, result.Error
+	}
 	if result.RowsAffected == 0 {
 		return nil, nil
 	}
@@ -643,7 +656,7 @@ func (d *DiscoverDAOImpl) IncrementFolderPostCount(folderId int64) error {
 
 // DecrementFolderPostCount 减少收藏夹的帖子数。
 func (d *DiscoverDAOImpl) DecrementFolderPostCount(folderId int64) error {
-	return d.db.Model(&models.DiscoverCollectionFolder{}).Where("id = ?", folderId).UpdateColumn("post_count", gorm.Expr("post_count - 1")).Error
+	return d.db.Model(&models.DiscoverCollectionFolder{}).Where("id = ?", folderId).UpdateColumn("post_count", gorm.Expr("GREATEST(post_count - 1, 0)")).Error
 }
 
 // IncrementCollectCount 增加帖子的收藏数。
@@ -773,4 +786,58 @@ func (d *DiscoverDAOImpl) FindPublicPostsByUuids(ctx context.Context, uuids []st
 	query = WithoutHiddenAuthors(query, viewerId, "discover_post")
 	err := query.Find(&posts).Error
 	return posts, err
+}
+
+// FindCollectionPostForUpdate 锁定收藏原帖子，软删除目标仍允许减少收藏计数。
+func (d *DiscoverDAOImpl) FindCollectionPostForUpdate(uuid string) (*models.DiscoverPost, error) {
+	var post models.DiscoverPost
+	err := d.db.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", uuid).First(&post).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &post, err
+}
+
+// FindFolderForUpdate 锁定未删除收藏夹，供服务层校验所有者并处理幂等。
+func (d *DiscoverDAOImpl) FindFolderForUpdate(uuid string) (*models.DiscoverCollectionFolder, error) {
+	var folder models.DiscoverCollectionFolder
+	err := d.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", uuid).First(&folder).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &folder, err
+}
+
+// DecrementCollectionTargetCount 更新取消收藏后的目标计数，原帖失效不影响移除收藏。
+func (d *DiscoverDAOImpl) DecrementCollectionTargetCount(postId int64) error {
+	return d.db.Unscoped().Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("collect_count", gorm.Expr("GREATEST(collect_count - 1, 0)")).Error
+}
+
+// CollectionPostRow 收藏记录关联帖子与查看者权限的查询结果，不对应表字段。
+type CollectionPostRow struct {
+	models.DiscoverPost
+	CollectionUuid  string    `gorm:"column:collection_uuid"`
+	CollectedAt     time.Time `gorm:"column:collected_at"`
+	IsAuthorBlocked bool      `gorm:"column:is_author_blocked"`
+}
+
+// ListCollectionEntries 从收藏记录出发关联帖子，保留下架、软删除及已不存在的目标。
+func (d *DiscoverDAOImpl) ListCollectionEntries(folderId int64, viewerId string, page, pageSize int, offsetOverride ...int) ([]CollectionPostRow, error) {
+	rows := make([]CollectionPostRow, 0)
+	offset := (page - 1) * pageSize
+	if len(offsetOverride) > 0 && offsetOverride[0] >= 0 {
+		offset = offsetOverride[0]
+	}
+	err := d.db.Table("discover_collection AS c").
+		Select("p.*, c.target_uuid AS collection_uuid, c.created_at AS collected_at, EXISTS(SELECT 1 FROM user_block b WHERE b.user_id = ? AND b.blocked_user_id = p.user_id COLLATE utf8mb4_unicode_ci) AS is_author_blocked", viewerId).
+		Joins("LEFT JOIN discover_post AS p ON p.uuid = c.target_uuid").Where("c.folder_id = ?", folderId).
+		Order("COALESCE(p.created_at, c.created_at) DESC, c.id DESC").Offset(offset).Limit(pageSize).Scan(&rows).Error
+	return rows, err
+}
+
+// CountCollectionEntries 统计收藏夹中的原收藏记录，与占位分页使用同一范围。
+func (d *DiscoverDAOImpl) CountCollectionEntries(folderId int64) (int64, error) {
+	var count int64
+	err := d.db.Model(&models.DiscoverCollection{}).Where("folder_id = ?", folderId).Count(&count).Error
+	return count, err
 }

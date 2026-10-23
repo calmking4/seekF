@@ -50,8 +50,8 @@
                 <div v-else-if="folders.length === 0" class="empty-state"><Icon name="uil:folder" class="mb-4 text-4xl text-gray-300" /><p>{{ foldersError || '暂无公开收藏夹' }}</p><el-button v-if="foldersError" class="mt-4" @click="fetchFolders">重试</el-button></div>
                 <div v-else class="grid grid-cols-2 gap-4 md:grid-cols-3">
                   <button v-for="folder in folders" :key="folder.uuid" type="button" class="profile-card overflow-hidden rounded-xl border border-gray-100 bg-white text-left shadow-sm transition-shadow hover:shadow-md" @click="enterFolder(folder)">
-                    <div class="h-40 bg-gray-100"><img v-if="folder.cover_url" :src="folder.cover_url" :alt="folder.name" class="h-full w-full object-cover" /><div v-else class="flex h-full items-center justify-center text-gray-300"><Icon name="uil:folder" class="text-4xl" /></div></div>
-                    <div class="p-3"><h3 class="truncate text-sm font-medium text-gray-800">{{ folder.name }}</h3><p v-if="folder.description" class="mt-1 truncate text-xs text-gray-500">{{ folder.description }}</p><div class="mt-2 flex justify-between text-xs"><span class="text-gray-400">{{ folder.post_count || 0 }} 篇</span><span class="text-blue-400">公开</span></div></div>
+                    <div class="h-40 bg-gray-100"><div v-if="isFolderBlocked(folder)" class="flex h-full flex-col items-center justify-center gap-2 text-gray-400"><Icon name="mdi:account-lock-outline" class="text-3xl" /><span class="text-xs">内容暂不可见</span></div><img v-else-if="folder.cover_url" :src="folder.cover_url" :alt="folder.name" class="h-full w-full object-cover" /><div v-else class="flex h-full items-center justify-center text-gray-300"><Icon name="uil:folder" class="text-4xl" /></div></div>
+                    <div class="p-3"><h3 class="truncate text-sm font-medium text-gray-800">{{ isFolderBlocked(folder) ? '已被拉黑' : folder.name }}</h3><p v-if="!isFolderBlocked(folder) && folder.description" class="mt-1 truncate text-xs text-gray-500">{{ folder.description }}</p><div v-if="!isFolderBlocked(folder)" class="mt-2 flex justify-between text-xs"><span class="text-gray-400">{{ folder.post_count || 0 }} 篇</span><span class="text-blue-400">公开</span></div></div>
                   </button>
                 </div>
               </template>
@@ -240,7 +240,11 @@ const loadFolderPosts = async () => {
   }
 }
 
+// isFolderBlocked 同时使用接口及主页拉黑状态，避免旧收藏夹数据露出内容。
+const isFolderBlocked = folder => !!(folder.is_blocked_by || (!isSelf.value && profile.value?.is_blocked_by))
+
 const enterFolder = (folder) => {
+  if (isFolderBlocked(folder)) { ElMessage.warning('已被拉黑'); return }
   backToFolders()
   currentFolder.value = folder
   return loadFolderPosts()

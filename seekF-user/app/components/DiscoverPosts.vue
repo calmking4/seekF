@@ -19,8 +19,8 @@
       >
         <!-- 缩略图 -->
         <img
-          v-if="post.src"
-          :src="discoverMediaURL(post.src, apiBase)"
+          v-if="discoverPostCover(post)"
+          :src="discoverMediaURL(discoverPostCover(post), apiBase)"
           class="w-16 h-16 rounded object-cover flex-shrink-0"
         />
         <div
@@ -68,6 +68,7 @@
 
 <script setup>
 import { discoverMediaURL } from '~/utils/discoverAccess'
+import { discoverPostCover } from '~/utils/discover'
 const apiBase = useRuntimeConfig().public.apiBase
 defineProps({
   posts: { type: Array, default: () => [] }

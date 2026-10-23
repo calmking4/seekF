@@ -72,7 +72,7 @@ type DiscoverService interface {
 	DeleteFolder(ctx context.Context, userId, folderUuid string) error
 	ListFolders(ctx context.Context, userId, viewerId string) ([]FolderInfo, error)
 	GetFolderDetail(ctx context.Context, userId, folderUuid string) (*FolderDetailInfo, error)
-	ListCollectedPosts(ctx context.Context, userId, folderUuid string, page, pageSize int) ([]PostInfo, int64, error)
+	ListCollectedPosts(ctx context.Context, userId, folderUuid string, page, pageSize int, offsetOverride ...int) ([]PostInfo, int64, error)
 
 	// 收藏
 	CollectPost(ctx context.Context, userId, postUuid, folderUuid string) (bool, int, error)
@@ -95,6 +95,7 @@ type MediaSize struct {
 
 // PostInfo 帖子列表展示信息。
 type PostInfo struct {
+	IsUnavailable    bool
 	IsBlockedBy      bool
 	ReviewNote       string
 	SupportOnly      int8
@@ -168,6 +169,8 @@ type CommentInfo struct {
 }
 
 type FolderInfo struct {
+	// 夹主是否拉黑了当前查看者，此时只返回锁定占位。
+	IsBlockedBy bool
 	Uuid        string
 	Name        string
 	Description string
@@ -1174,12 +1177,30 @@ func (s *DiscoverServiceImpl) DeleteFolder(ctx context.Context, userId, folderUu
 
 // ListFolders 按查看者权限装配收藏夹封面与列表。
 func (s *DiscoverServiceImpl) ListFolders(ctx context.Context, userId, viewerId string) ([]FolderInfo, error) {
+	blockedBy := false
+	if userId != viewerId {
+		blocked, by, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).Status(viewerId, userId)
+		if err != nil {
+			return nil, fmt.Errorf("查询收藏夹拉黑权限失败: %w", err)
+		}
+		if blocked {
+			return []FolderInfo{}, nil
+		}
+		blockedBy = by
+	}
 	folders, err := s.discoverDAO.ListFoldersByUserId(userId)
 	if err != nil {
 		return nil, err
 	}
 	var result []FolderInfo
 	for _, f := range folders {
+		if userId != viewerId && f.IsPublic != 1 {
+			continue
+		}
+		if blockedBy {
+			result = append(result, FolderInfo{Uuid: f.Uuid, Name: "已被拉黑", IsPublic: true, IsBlockedBy: true})
+			continue
+		}
 		// 获取收藏夹第一张图片作为封面
 		coverUrl := ""
 		posts, _ := s.discoverDAO.ListCollectedPostsByFolder(f.Id, viewerId, 1, 1)
@@ -1205,6 +1226,7 @@ func (s *DiscoverServiceImpl) ListFolders(ctx context.Context, userId, viewerId 
 	return result, nil
 }
 
+// GetFolderDetail 按收藏夹可见性及夹主拉黑状态检查详情读取权限。
 func (s *DiscoverServiceImpl) GetFolderDetail(ctx context.Context, userId, folderUuid string) (*FolderDetailInfo, error) {
 	folder, err := s.discoverDAO.FindFolderByUuid(folderUuid)
 	if err != nil {
@@ -1216,6 +1238,9 @@ func (s *DiscoverServiceImpl) GetFolderDetail(ctx context.Context, userId, folde
 	if folder.UserId != userId && folder.IsPublic != 1 {
 		return nil, fmt.Errorf("无权查看私密收藏夹")
 	}
+	if err := checkFolderBlockAccess(ctx, userId, folder.UserId); err != nil {
+		return nil, err
+	}
 	return &FolderDetailInfo{
 		Uuid:        folder.Uuid,
 		Name:        folder.Name,
@@ -1226,8 +1251,26 @@ func (s *DiscoverServiceImpl) GetFolderDetail(ctx context.Context, userId, folde
 	}, nil
 }
 
+// checkFolderBlockAccess 限制拉黑双方读取对方收藏夹详情及夹内帖子，不影响本人管理。
+func checkFolderBlockAccess(ctx context.Context, viewerId, ownerId string) error {
+	if viewerId == ownerId {
+		return nil
+	}
+	blocked, by, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).Status(viewerId, ownerId)
+	if err != nil {
+		return fmt.Errorf("查询收藏夹拉黑权限失败: %w", err)
+	}
+	if by {
+		return fmt.Errorf("已被拉黑")
+	}
+	if blocked {
+		return fmt.Errorf("你已拉黑该用户")
+	}
+	return nil
+}
+
 // ListCollectedPosts 查询收藏夹内的帖子及互动状态。
-func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, folderUuid string, page, pageSize int) ([]PostInfo, int64, error) {
+func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, folderUuid string, page, pageSize int, offsetOverride ...int) ([]PostInfo, int64, error) {
 	folder, err := s.discoverDAO.FindFolderByUuid(folderUuid)
 	if err != nil {
 		return nil, 0, err
@@ -1238,18 +1281,60 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 	if folder.UserId != userId && folder.IsPublic != 1 {
 		return nil, 0, fmt.Errorf("无权查看私密收藏夹")
 	}
-
-	posts, err := s.discoverDAO.ListCollectedPostsByFolder(folder.Id, userId, page, pageSize)
-	if err != nil {
+	if err := checkFolderBlockAccess(ctx, userId, folder.UserId); err != nil {
 		return nil, 0, err
 	}
 
-	total, err := s.discoverDAO.CountCollectedPostsByFolder(folder.Id, userId)
+	entries, err := s.discoverDAO.ListCollectionEntries(folder.Id, userId, page, pageSize, offsetOverride...)
 	if err != nil {
 		return nil, 0, err
 	}
+	total, err := s.discoverDAO.CountCollectionEntries(folder.Id)
+	if err != nil {
+		return nil, 0, err
+	}
+	visible := make([]models.DiscoverPost, 0, len(entries))
+	items := make(map[string]PostInfo, len(entries))
+	for _, entry := range entries {
+		reason := collectionUnavailableReason(entry, userId)
+		if reason == "" {
+			visible = append(visible, entry.DiscoverPost)
+			continue
+		}
+		items[entry.CollectionUuid] = PostInfo{Uuid: entry.CollectionUuid, Title: reason, IsUnavailable: true, LockReason: reason, IsCollected: true, Width: 4, Height: 3, CreatedAt: entry.CollectedAt.Format("2006-01-02 15:04:05")}
+	}
+	posts, _, err := s.buildPostInfoList(ctx, userId, visible, total)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, post := range posts {
+		items[post.Uuid] = post
+	}
+	result := make([]PostInfo, 0, len(entries))
+	for _, entry := range entries {
+		result = append(result, items[entry.CollectionUuid])
+	}
+	return result, total, nil
+}
 
-	return s.buildPostInfoList(ctx, userId, posts, total)
+// collectionUnavailableReason 为失效收藏生成不含原正文和媒体的状态说明。
+func collectionUnavailableReason(entry userdao.CollectionPostRow, viewerId string) string {
+	if entry.Id == 0 || entry.DeletedAt.Valid {
+		return "帖子已删除"
+	}
+	if entry.IsAuthorBlocked {
+		return "你已拉黑该作者"
+	}
+	if entry.Status == 1 {
+		return "帖子已下架"
+	}
+	if entry.Status != 0 {
+		return "帖子暂不可见"
+	}
+	if entry.Visibility != 0 && entry.UserId != viewerId {
+		return "帖子已设为私密"
+	}
+	return ""
 }
 
 // ========== 收藏/取消收藏 ==========
@@ -1327,41 +1412,63 @@ func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid,
 	return true, collectCount, nil
 }
 
-// UncollectPost 删除收藏并在事务内维护收藏夹和帖子计数。
+// UncollectPost 允许移除失效收藏，事务内加锁并幂等更新收藏夹和帖子计数。
 func (s *DiscoverServiceImpl) UncollectPost(ctx context.Context, userId, postUuid, folderUuid string) (bool, int, error) {
-	folder, err := s.discoverDAO.FindFolderByUuid(folderUuid)
-	if err != nil {
-		return false, 0, err
+	if userId == "" || postUuid == "" || folderUuid == "" {
+		return false, 0, fmt.Errorf("缺少取消收藏所需的信息")
 	}
-	if folder == nil {
-		return false, 0, fmt.Errorf("收藏夹不存在")
-	}
-
-	existing, _ := s.discoverDAO.FindCollectionInFolder(userId, folder.Id, postUuid)
-	if existing == nil {
-		return false, 0, fmt.Errorf("未收藏该帖子")
-	}
-
-	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-
+	collectCount := 0
+	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
-
-		if err := txDiscoverDAO.DeleteCollection(userId, folder.Id, postUuid); err != nil {
-			return err
+		// 与收藏写入的收藏夹计数、帖子计数顺序一致，避免交叉持锁。
+		folder, err := txDiscoverDAO.FindFolderForUpdate(folderUuid)
+		if err != nil {
+			return fmt.Errorf("查询收藏夹失败: %w", err)
 		}
-
-		if err := txDiscoverDAO.DecrementFolderPostCount(folder.Id); err != nil {
-			return fmt.Errorf("更新收藏夹帖子数失败: %w", err)
+		if folder == nil {
+			return fmt.Errorf("收藏夹不存在")
 		}
-
-		post, err := txDiscoverDAO.FindPostByUuid(postUuid)
+		if folder.UserId != userId {
+			return fmt.Errorf("只能取消自己收藏夹中的收藏")
+		}
+		post, err := txDiscoverDAO.FindCollectionPostForUpdate(postUuid)
 		if err != nil {
 			return fmt.Errorf("查询收藏帖子失败: %w", err)
 		}
+		existing, err := txDiscoverDAO.FindCollectionInFolder(userId, folder.Id, postUuid)
+		if err != nil {
+			return fmt.Errorf("查询收藏记录失败: %w", err)
+		}
 		if post != nil {
-			if err := txDiscoverDAO.DecrementCollectCount(post.Id); err != nil {
-				return fmt.Errorf("更新帖子收藏数失败: %w", err)
+			collectCount = post.CollectCount
+		}
+		if existing != nil {
+			if err := txDiscoverDAO.DeleteCollection(userId, folder.Id, postUuid); err != nil {
+				return fmt.Errorf("删除收藏记录失败: %w", err)
 			}
+			if err := txDiscoverDAO.DecrementFolderPostCount(folder.Id); err != nil {
+				return fmt.Errorf("更新收藏夹帖子数失败: %w", err)
+			}
+			if post != nil {
+				if err := txDiscoverDAO.DecrementCollectionTargetCount(post.Id); err != nil {
+					return fmt.Errorf("更新帖子收藏数失败: %w", err)
+				}
+				if collectCount > 0 {
+					collectCount--
+				}
+			}
+		}
+		// 无权查看的帖子只返回取消结果，不暴露真实互动计数。
+		if post == nil || !CanViewDiscoverPost(post, userId) {
+			collectCount = 0
+			return nil
+		}
+		blocked, by, err := userdao.NewBlockDAO(tx).Status(userId, post.UserId)
+		if err != nil {
+			return fmt.Errorf("查询收藏帖子权限失败: %w", err)
+		}
+		if blocked || by {
+			collectCount = 0
 		}
 		return nil
 	})
@@ -1369,11 +1476,7 @@ func (s *DiscoverServiceImpl) UncollectPost(ctx context.Context, userId, postUui
 		return false, 0, err
 	}
 
-	updatedPost, _ := s.discoverDAO.FindPostByUuid(postUuid)
-	if canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), updatedPost, userId) {
-		return false, updatedPost.CollectCount, nil
-	}
-	return false, 0, nil
+	return false, collectCount, nil
 }
 
 // CheckCollected 仅对当前身份可访问的作品查询收藏状态。

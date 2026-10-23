@@ -5,7 +5,7 @@
       @click="openPost(post)" @keydown.enter.self.prevent="openPost(post)" @keydown.space.self.prevent="openPost(post)">
       <div class="relative aspect-[4/3] bg-gray-100">
         <span v-if="post.visibility === 1" class="absolute left-2 top-2 z-10 rounded bg-black/40 px-2 py-1 text-xs text-white">仅自己可见</span>
-        <div v-if="post.is_blocked_by" class="flex h-full flex-col items-center justify-center gap-2 text-gray-400"><Icon name="mdi:account-lock-outline" class="text-3xl" /><span class="text-xs">内容暂不可见</span></div>
+        <div v-if="post.is_blocked_by || post.is_unavailable" class="flex h-full flex-col items-center justify-center gap-2 text-gray-400"><Icon :name="post.is_blocked_by ? 'mdi:account-lock-outline' : 'mdi:file-document-remove-outline'" class="text-3xl" /><span class="text-xs">{{ post.is_unavailable ? post.lock_reason : '内容暂不可见' }}</span></div>
         <img v-else-if="post.cover_url || (post.media_type !== 1 && post.first_url)" :src="post.cover_url || post.first_url" :alt="post.title" class="h-full w-full object-cover" loading="lazy" />
         <div v-else class="flex h-full items-center justify-center text-gray-300"><Icon :name="post.media_type === 1 ? 'uil:video' : 'uil:image'" class="text-4xl" /></div>
         <span v-if="post.media_type === 1" class="absolute right-2 rounded-full bg-black/40 p-1 text-white" :class="post.support_only === 1 ? 'bottom-2' : 'top-2'"><Icon name="mdi:play" class="block text-lg" /></span>
@@ -13,12 +13,12 @@
       </div>
       <div class="p-3">
         <h3 class="mb-3 line-clamp-2 text-sm font-medium text-gray-800">{{ post.title || '未命名帖子' }}</h3>
-        <div class="flex items-center justify-between gap-2 text-xs text-gray-500">
+        <div class="flex items-center justify-between gap-2 text-xs text-gray-500" :class="{ invisible: post.is_unavailable }">
           <NuxtLink v-if="post.user_id" :to="`/user/${encodeURIComponent(post.user_id)}`" class="flex min-w-0 items-center gap-2 hover:text-blue-500" @click.stop>
             <el-avatar :size="24" :src="post.avatar"><Icon name="uil:user" /></el-avatar><span class="truncate">{{ post.nickname || '用户' }}</span>
           </NuxtLink>
           <span v-else class="truncate">{{ post.nickname || '用户' }}</span>
-          <button type="button" class="flex shrink-0 items-center gap-1 hover:text-red-500" :class="{ 'text-red-500': post.is_liked }" :aria-label="post.is_liked ? '取消点赞' : '点赞'" :disabled="post.is_blocked_by" @click.stop="$emit('like', post)">
+          <button type="button" class="flex shrink-0 items-center gap-1 hover:text-red-500" :class="{ 'text-red-500': post.is_liked }" :aria-label="post.is_liked ? '取消点赞' : '点赞'" :disabled="post.is_blocked_by || post.is_unavailable" @click.stop="$emit('like', post)">
             <Icon :name="post.is_liked ? 'mdi:heart' : 'mdi:heart-outline'" class="text-base" /><span>{{ post.like_count || 0 }}</span>
           </button>
         </div>
@@ -32,5 +32,5 @@ import { ElMessage } from 'element-plus'
 import { discoverSupportLabel } from '~/utils/discover'
 defineProps({ posts: { type: Array, default: () => [] } })
 const emit = defineEmits(['open', 'like'])
-const openPost = post => { if (post.is_blocked_by) { ElMessage.warning('已被拉黑'); return }; emit('open',post) }
+const openPost = post => { if (post.is_unavailable) { ElMessage.warning(post.lock_reason || '帖子暂不可见'); return }; if (post.is_blocked_by) { ElMessage.warning('已被拉黑'); return }; emit('open',post) }
 </script>

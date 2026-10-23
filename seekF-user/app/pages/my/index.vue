@@ -74,14 +74,14 @@
                 <Icon name="uil:bookmark" class="text-2xl" />
               </div>
               <p class="text-sm text-gray-500 mb-4">暂无收藏夹</p>
-              <button class="px-4 py-2 text-white rounded-lg text-sm transition-colors" style="background-color: #60a5fa;" @click="showCreateFolder = true">
+              <button class="px-4 py-2 text-white rounded-lg text-sm transition-colors" style="background-color: #60a5fa;" @click="openCreateFolder">
                 创建收藏夹
               </button>
             </div>
             <div v-else>
               <div class="flex justify-between items-center mb-4">
                 <span class="text-sm text-gray-500">共 {{ folders.length }} 个收藏夹</span>
-                <button class="px-3 py-1.5 text-white rounded-lg text-xs transition-colors" style="background-color: #60a5fa;" @click="showCreateFolder = true">
+                <button class="px-3 py-1.5 text-white rounded-lg text-xs transition-colors" style="background-color: #60a5fa;" @click="openCreateFolder">
                   新建
                 </button>
               </div>
@@ -98,16 +98,16 @@
                       <Icon name="uil:folder" class="text-4xl" />
                     </div>
                   </div>
-                  <div class="p-3">
-                    <h3 class="text-sm font-medium truncate">{{ folder.name }}</h3>
+                  <div class="relative p-3">
+                    <h3 class="pr-9 text-sm font-medium truncate">{{ folder.name }}</h3>
+                    <p v-if="folder.description" class="mt-1 line-clamp-2 break-words text-xs text-gray-500">{{ folder.description }}</p>
                     <div class="flex items-center justify-between mt-1">
                       <span class="text-xs text-gray-400">{{ folder.post_count }} 篇</span>
                       <span v-if="folder.is_public" class="text-xs text-blue-400">公开</span>
                       <span v-else class="text-xs text-gray-400">私密</span>
                     </div>
-                  </div>
-                  <!-- 更多操作 -->
-                  <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <!-- 更多操作放在文字区右侧，与收藏夹名称对齐。 -->
+                  <div class="absolute top-2 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
                     <el-dropdown trigger="click" @command="(cmd) => handleFolderCommand(cmd, folder)">
                       <button class="w-7 h-7 rounded-full bg-black/40 text-white flex items-center justify-center" @click.stop>
                         <Icon name="mdi:dots-vertical" class="text-sm" />
@@ -119,6 +119,7 @@
                         </el-dropdown-menu>
                       </template>
                     </el-dropdown>
+                  </div>
                   </div>
                 </div>
               </div>
@@ -151,24 +152,26 @@
                 @click="handleCollectedItemClick(item)"
               >
                 <div class="relative w-full h-48 bg-gray-100">
-                  <div v-if="item.is_blocked_by" class="flex h-full flex-col items-center justify-center gap-2 text-gray-400"><Icon name="mdi:account-lock-outline" class="text-3xl" /><span class="text-xs">内容暂不可见</span></div>
-                  <img v-else-if="item.first_url" :src="item.first_url" :alt="item.title" class="w-full h-full object-cover" />
+                  <div v-if="item.is_blocked_by || item.is_unavailable" class="flex h-full flex-col items-center justify-center gap-2 text-gray-400"><Icon :name="item.is_blocked_by ? 'mdi:account-lock-outline' : 'mdi:file-document-remove-outline'" class="text-3xl" /><span class="text-xs">{{ item.is_unavailable ? item.lock_reason : '内容暂不可见' }}</span></div>
+                  <img v-else-if="discoverPostCover(item)" :src="discoverPostCover(item)" :alt="item.title" class="w-full h-full object-cover" />
                   <div v-else class="w-full h-full flex items-center justify-center text-gray-400">
                     <Icon name="uil:image" class="text-3xl" />
                   </div>
+                  <span v-if="item.media_type === 1 && !item.is_blocked_by" aria-hidden="true" class="pointer-events-none absolute right-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/40 text-white" :class="item.support_only === 1 ? 'bottom-2' : 'top-2'"><Icon name="mdi:play" class="text-base" /></span>
                   <span v-if="item.support_only === 1" class="pointer-events-none absolute right-2 top-2 inline-flex h-6 items-center justify-center gap-1 rounded-md bg-[#60A5FA] pl-1.5 pr-2 text-xs font-semibold text-white"><Icon name="mdi:lightning-bolt" class="block shrink-0 text-base" aria-hidden="true" /><span class="block leading-none">{{ discoverSupportLabel(item) }}</span></span>
                 </div>
                 <div class="p-3">
                   <h3 class="text-sm font-medium line-clamp-2 mb-2">{{ item.title }}</h3>
                   <div class="flex items-center justify-between text-xs text-gray-500">
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-2" :class="{ invisible: item.is_unavailable }">
                       <img v-if="item.avatar" :src="item.avatar" class="w-6 h-6 rounded-full object-cover" />
                       <div v-else class="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs" :style="{ backgroundColor: getAvatarColor(item.uuid) }">
                         {{ item.title?.slice(0, 1) || '?' }}
                       </div>
                       <span>{{ item.nickname || '用户' }}</span>
                     </div>
-                    <div class="flex items-center gap-1 text-orange-500">
+                    <button v-if="item.is_unavailable || item.is_blocked_by" type="button" class="ml-auto inline-flex items-center gap-1 text-orange-500 hover:text-orange-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-400 disabled:cursor-wait disabled:opacity-50" :disabled="uncollectingItems.has(item.uuid)" :aria-busy="uncollectingItems.has(item.uuid)" :aria-label="uncollectingItems.has(item.uuid) ? '正在取消收藏' : '取消收藏'" title="取消收藏" @click.stop="uncollectUnavailableItem(item)"><Icon name="mdi:bookmark" class="text-sm" /></button>
+                    <div v-else class="flex items-center gap-1 text-orange-500">
                       <Icon name="mdi:bookmark" class="text-sm" />
                       <span>{{ item.collect_count }}</span>
                     </div>
@@ -209,14 +212,15 @@
                 <div class="relative w-full h-48 bg-gray-100">
                   <div v-if="item.is_blocked_by" class="flex h-full flex-col items-center justify-center gap-2 text-gray-400"><Icon name="mdi:account-lock-outline" class="text-3xl" /><span class="text-xs">内容暂不可见</span></div>
                   <img
-                    v-else-if="item.first_url"
-                    :src="item.first_url"
+                    v-else-if="discoverPostCover(item)"
+                    :src="discoverPostCover(item)"
                     :alt="item.title"
                     class="w-full h-full object-cover"
                   />
                   <div v-else class="w-full h-full flex items-center justify-center text-gray-400">
                     <Icon name="uil:image" class="text-3xl" />
                   </div>
+                  <span v-if="item.media_type === 1 && !item.is_blocked_by" aria-hidden="true" class="pointer-events-none absolute right-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/40 text-white" :class="item.support_only === 1 ? 'bottom-2' : 'top-2'"><Icon name="mdi:play" class="text-base" /></span>
                   <span v-if="item.support_only === 1" class="pointer-events-none absolute right-2 top-2 inline-flex h-6 items-center justify-center gap-1 rounded-md bg-[#60A5FA] pl-1.5 pr-2 text-xs font-semibold text-white"><Icon name="mdi:lightning-bolt" class="block shrink-0 text-base" aria-hidden="true" /><span class="block leading-none">{{ discoverSupportLabel(item) }}</span></span>
                 </div>
                 <!-- 内容 -->
@@ -305,16 +309,16 @@
       </el-upload>
       <el-form :model="editForm" label-position="top" class="[&_.el-form-item]:!mb-5 [&_.el-form-item\_\_label]:!pb-2 [&_.el-form-item\_\_label]:!text-xs [&_.el-form-item\_\_label]:!font-medium [&_.el-form-item\_\_label]:!text-gray-600 [&_.el-input\_\_wrapper]:!min-h-11 [&_.el-input\_\_wrapper]:!rounded-xl [&_.el-input\_\_wrapper]:!bg-gray-50/60 [&_.el-textarea\_\_inner]:!rounded-xl [&_.el-textarea\_\_inner]:!bg-gray-50/60 [&_.el-textarea\_\_inner]:!p-3 [&_.el-input\_\_count]:!bg-transparent" @submit.prevent>
         <div class="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
-          <el-form-item label="昵称"><el-input v-model="editForm.nickname" placeholder="请输入昵称" /></el-form-item>
+          <el-form-item label="昵称"><el-input v-model="editForm.nickname" :spellcheck="false" placeholder="请输入昵称" /></el-form-item>
           <el-form-item label="生日">
             <el-config-provider :locale="zhCn">
               <el-date-picker v-model="editForm.birthday" type="date" placeholder="选择生日" format="YYYY-MM-DD" value-format="YYYY-MM-DD" class="!w-full" />
             </el-config-provider>
           </el-form-item>
         </div>
-        <el-form-item label="邮箱"><el-input v-model="editForm.email" placeholder="请输入邮箱地址" /></el-form-item>
+        <el-form-item label="邮箱"><el-input v-model="editForm.email" :spellcheck="false" placeholder="请输入邮箱地址" /></el-form-item>
         <el-form-item label="个性签名" class="!mb-0">
-          <el-input v-model="editForm.signature" type="textarea" :rows="3" placeholder="分享你的兴趣，或写一句喜欢的话…" maxlength="100" show-word-limit />
+          <el-input v-model="editForm.signature" :spellcheck="false" type="textarea" :rows="3" placeholder="分享你的兴趣，或写一句喜欢的话…" maxlength="100" show-word-limit />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -355,7 +359,7 @@
     />
 
     <!-- 创建/编辑收藏夹弹窗 -->
-    <el-dialog v-model="showCreateFolder" :title="editingFolder ? '编辑收藏夹' : '新建收藏夹'" width="400px" center>
+    <el-dialog v-model="showCreateFolder" :title="editingFolder ? '编辑收藏夹' : '新建收藏夹'" width="400px" center @closed="handleFolderDialogClosed">
       <el-form :model="folderForm" label-width="80px" @submit.prevent>
         <el-form-item label="名称">
           <el-input v-model="folderForm.name" placeholder="请输入收藏夹名称" maxlength="50"></el-input>
@@ -382,7 +386,7 @@ import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { useApi$ } from '~/composables/useApi'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
-import { discoverSupportLabel } from '~/utils/discover'
+import { discoverPostCover, discoverSupportLabel } from '~/utils/discover'
 
 // 页面级 SEO
 useSeoMeta({
@@ -434,6 +438,11 @@ const folderPostsNoMore = ref(false)
 const folderPostsPage = ref(1)
 const folderPostsPageSize = 12
 const selectedCollectedItem = ref(null)
+const uncollectingItems = ref(new Set())
+const removedFolderItems = new Set()
+let folderPostsRequestVersion = 0
+const uncollectAuth = useAuthState()
+let myPageDisposed = false
 const showCreateFolder = ref(false)
 const editingFolder = ref(null)
 const folderSaving = ref(false)
@@ -713,6 +722,8 @@ const loadFolders = async () => {
 }
 
 const backToFolders = () => {
+  folderPostsRequestVersion++
+  folderPostsLoading.value = false
   currentFolder.value = null
   folderPosts.value = []
   folderPostsPage.value = 1
@@ -721,6 +732,8 @@ const backToFolders = () => {
 }
 
 const enterFolder = (folder) => {
+  folderPostsRequestVersion++
+  folderPostsLoading.value = false
   currentFolder.value = folder
   folderPosts.value = []
   folderPostsPage.value = 1
@@ -730,29 +743,56 @@ const enterFolder = (folder) => {
 
 const loadFolderPosts = async () => {
   if (folderPostsLoading.value || folderPostsNoMore.value || !currentFolder.value) return
+  const version = folderPostsRequestVersion
+  const folderId = currentFolder.value.uuid
   folderPostsLoading.value = true
   try {
     const res = await useApi$('/user/discover/collected-list', {
       method: 'POST',
-      body: { folder_uuid: currentFolder.value.uuid, page: folderPostsPage.value, page_size: folderPostsPageSize },
+      body: { folder_uuid: folderId, page: folderPostsPage.value, page_size: folderPostsPageSize, offset: folderPosts.value.length },
     })
+    if (version !== folderPostsRequestVersion || currentFolder.value?.uuid !== folderId) return
     if (res.code === 200 && res.data) {
       const list = res.data.list || []
       if (list.length < folderPostsPageSize) {
         folderPostsNoMore.value = true
       }
-      folderPosts.value = [...folderPosts.value, ...list]
+      const existing = new Set(folderPosts.value.map(post => post.uuid))
+      folderPosts.value = [...folderPosts.value, ...list.filter(post => !removedFolderItems.has(`${folderId}:${post.uuid}`) && !existing.has(post.uuid))]
       folderPostsPage.value++
       observeNewItems()
     }
   } catch (e) {
     console.error('加载收藏夹帖子失败:', e)
   } finally {
-    folderPostsLoading.value = false
+    if (version === folderPostsRequestVersion) folderPostsLoading.value = false
   }
 }
 
+// uncollectUnavailableItem 从本人的收藏夹移除失效占位，失败时保留卡片和计数。
+const uncollectUnavailableItem = async item => {
+  const folder = currentFolder.value
+  const owner = uncollectAuth.getUser()?.uuid
+  if (!folder || !owner || owner !== userInfo.uuid || uncollectingItems.value.has(item.uuid)) return
+  uncollectingItems.value.add(item.uuid)
+  try {
+    const res = await useApi$('/user/discover/uncollect', { body: { post_uuid: item.uuid, folder_uuid: folder.uuid }, retry: 0 })
+    if (myPageDisposed || uncollectAuth.getUser()?.uuid !== owner) return
+    if (res.code !== 200) throw new Error(res.message || '取消收藏失败')
+    removedFolderItems.add(`${folder.uuid}:${item.uuid}`)
+    const remaining = Math.max(0, (folder.post_count || 0) - 1)
+    for (const target of new Set([folder, folders.value.find(row => row.uuid === folder.uuid), currentFolder.value])) {
+      if (target?.uuid === folder.uuid) target.post_count = remaining
+    }
+    if (currentFolder.value?.uuid === folder.uuid) folderPosts.value = folderPosts.value.filter(post => post.uuid !== item.uuid)
+    ElMessage.success('已取消收藏')
+  } catch (error) {
+    if (!myPageDisposed && uncollectAuth.getUser()?.uuid === owner) ElMessage.error(error.message || '取消收藏失败，请重试')
+  } finally { uncollectingItems.value.delete(item.uuid) }
+}
+
 const handleCollectedItemClick = (item) => {
+  if (item.is_unavailable) { ElMessage.warning(item.lock_reason || '帖子暂不可见'); return }
   if (item.is_blocked_by) { ElMessage.warning('已被拉黑'); return }
   selectedCollectedItem.value = {
     ...item,
@@ -781,8 +821,29 @@ const handleCollectedItemUpdated = ({ postId, isCollected, collectCount }) => {
   }
 }
 
+// resetFolderForm 清理收藏夹模式和表单，避免编辑数据沿用到新建。
+const resetFolderForm = () => {
+  editingFolder.value = null
+  folderForm.name = ''
+  folderForm.description = ''
+  folderForm.isPublic = false
+}
+
+// openCreateFolder 每次新建都从空表单开始，保存期间不切换操作目标。
+const openCreateFolder = () => {
+  if (folderSaving.value) return
+  resetFolderForm()
+  showCreateFolder.value = true
+}
+
+// handleFolderDialogClosed 覆盖取消、关闭按钮、Esc及遮罩关闭，忽略重新打开后的旧关闭事件。
+const handleFolderDialogClosed = () => {
+  if (!showCreateFolder.value) resetFolderForm()
+}
+
 const handleFolderCommand = (cmd, folder) => {
   if (cmd === 'edit') {
+    if (folderSaving.value) return
     editingFolder.value = folder
     folderForm.name = folder.name
     folderForm.description = folder.description || ''
@@ -811,6 +872,7 @@ const deleteFolder = async (folder) => {
 }
 
 const handleSaveFolder = async () => {
+  if (folderSaving.value) return
   if (!folderForm.name.trim()) {
     ElMessage.error('请输入收藏夹名称')
     return
@@ -833,6 +895,7 @@ const handleSaveFolder = async () => {
         await loadFolders()
       } else {
         ElMessage.error(res.message || '更新失败')
+        return
       }
     } else {
       // 新建
@@ -849,13 +912,10 @@ const handleSaveFolder = async () => {
         await loadFolders()
       } else {
         ElMessage.error(res.message || '创建失败')
+        return
       }
     }
     showCreateFolder.value = false
-    editingFolder.value = null
-    folderForm.name = ''
-    folderForm.description = ''
-    folderForm.isPublic = false
   } catch (e) {
     console.error('保存收藏夹失败:', e)
   } finally {
@@ -954,6 +1014,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  myPageDisposed = true
+  folderPostsRequestVersion++
   likedRequestId++
   ownPostsRequestId++
   followCountsRequestId++

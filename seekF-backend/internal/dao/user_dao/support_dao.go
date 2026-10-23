@@ -48,11 +48,11 @@ type SupportDAO interface {
 	// 更新持锁权益的截止时间。
 	SaveExpiry(id int64, expires time.Time) error
 	// 分页查询本人已确认付款的订单。
-	ListOrders(environment, userId string, page int) ([]models.SupportOrder, int64, error)
+	ListOrders(environment, userId string, page int) ([]SupportOrderListRow, int64, error)
 	// 分页查询本人作为创作者收到的已付款助力记录。
 	ListReceivedOrders(environment, creatorId string, page int) ([]SupportReceivedOrder, int64, error)
 	// 分页查询本人权益。
-	ListMyEntitlements(environment, userId string, page int) ([]models.SupportEntitlement, error)
+	ListMyEntitlements(environment, userId string, page int) ([]SupportEntitlementListRow, error)
 	// 汇总创作者实收、退款及净额。
 	Income(environment, creatorId string) (*SupportIncome, error)
 	// 在业务事务中分批领取到期订单。
@@ -74,6 +74,18 @@ type SupportReceivedOrder struct {
 	RefundStatus  int8
 	PaidAt        *time.Time
 	ConfirmedAt   *time.Time
+}
+
+// SupportOrderListRow 订单及创作者公开昵称的关联查询结果，不增加订单表字段。
+type SupportOrderListRow struct {
+	models.SupportOrder
+	CreatorNickname string `gorm:"column:creator_nickname"`
+}
+
+// SupportEntitlementListRow 权益及创作者公开昵称的关联查询结果，不增加权益表字段。
+type SupportEntitlementListRow struct {
+	models.SupportEntitlement
+	CreatorNickname string `gorm:"column:creator_nickname"`
 }
 
 // NewSupportDAO 创建绑定指定连接的助力DAO。
@@ -163,15 +175,17 @@ func (d *SupportDAOImpl) SaveExpiry(id int64, expires time.Time) error {
 	return d.db.Model(&models.SupportEntitlement{}).Where("id = ?", id).Update("expires_at", expires).Error
 }
 
-// ListOrders 分页查询本人已付款订单，未付款与已关闭订单保留供支付及补偿使用。
-func (d *SupportDAOImpl) ListOrders(environment, userId string, page int) ([]models.SupportOrder, int64, error) {
-	rows := make([]models.SupportOrder, 0)
+// ListOrders 分页查询本人已付款订单并关联创作者公开昵称，保留已注销用户的历史订单。
+func (d *SupportDAOImpl) ListOrders(environment, userId string, page int) ([]SupportOrderListRow, int64, error) {
+	rows := make([]SupportOrderListRow, 0)
 	var count int64
-	q := d.db.Model(&models.SupportOrder{}).Where("environment = ? AND user_id = ? AND status = ?", environment, userId, constants.SupportOrderPaid)
+	q := d.db.Model(&models.SupportOrder{}).Where("support_order.environment = ? AND support_order.user_id = ? AND support_order.status = ?", environment, userId, constants.SupportOrderPaid)
 	if err := q.Count(&count).Error; err != nil {
 		return nil, 0, err
 	}
-	err := q.Order("id DESC").Offset((page - 1) * constants.SupportOrderPageSize).Limit(constants.SupportOrderPageSize).Find(&rows).Error
+	err := q.Select("support_order.*, COALESCE(creator.nickname, '') AS creator_nickname").
+		Joins("LEFT JOIN user_info AS creator ON creator.uuid = support_order.creator_id AND creator.deleted_at IS NULL").
+		Order("support_order.id DESC").Offset((page - 1) * constants.SupportOrderPageSize).Limit(constants.SupportOrderPageSize).Scan(&rows).Error
 	return rows, count, err
 }
 
@@ -187,10 +201,14 @@ func (d *SupportDAOImpl) ListReceivedOrders(environment, creatorId string, page 
 	return rows, total, err
 }
 
-// ListMyEntitlements 分页查询本人的权益汇总。
-func (d *SupportDAOImpl) ListMyEntitlements(environment, userId string, page int) ([]models.SupportEntitlement, error) {
-	rows := make([]models.SupportEntitlement, 0)
-	err := d.db.Where("environment = ? AND user_id = ?", environment, userId).Order("id DESC").Offset((page - 1) * constants.SupportOrderPageSize).Limit(constants.SupportOrderPageSize).Find(&rows).Error
+// ListMyEntitlements 分页查询本人权益汇总并关联创作者公开昵称。
+func (d *SupportDAOImpl) ListMyEntitlements(environment, userId string, page int) ([]SupportEntitlementListRow, error) {
+	rows := make([]SupportEntitlementListRow, 0)
+	err := d.db.Model(&models.SupportEntitlement{}).
+		Select("support_entitlement.*, COALESCE(creator.nickname, '') AS creator_nickname").
+		Joins("LEFT JOIN user_info AS creator ON creator.uuid = support_entitlement.creator_id AND creator.deleted_at IS NULL").
+		Where("support_entitlement.environment = ? AND support_entitlement.user_id = ?", environment, userId).
+		Order("support_entitlement.id DESC").Offset((page - 1) * constants.SupportOrderPageSize).Limit(constants.SupportOrderPageSize).Scan(&rows).Error
 	return rows, err
 }
 

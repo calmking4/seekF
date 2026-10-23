@@ -21,6 +21,14 @@ export function discoverSupportLabel(post) {
   return post.can_play === true && expiresAt > Date.now() ? '已助力' : '助力专属'
 }
 
+// discoverPostCover 区分视频封面与原媒体，避免将视频或其OSS鉴权地址放入图片标签。
+export function discoverPostCover(post) {
+  if (post.is_blocked_by) return ''
+  const cover = post.cover_url || post.coverUrl || ''
+  if (post.media_type === 1 || post.type === 'video') return cover
+  return post.first_url || post.src || cover
+}
+
 // 未知尺寸使用稳定比例，长图限制在 3:4，视频默认 16:9。
 export function discoverAspectRatio(post) {
   const ratio = post.width > 0 && post.height > 0 ? post.width / post.height : (post.type === 'video' ? 16 / 9 : 4 / 3)

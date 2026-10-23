@@ -633,6 +633,7 @@ func (c *DiscoverController) ListFolders(ctx *gin.Context) {
 			continue
 		}
 		items = append(items, userresp.FolderItem{
+			IsBlockedBy: f.IsBlockedBy,
 			Uuid:        f.Uuid,
 			Name:        f.Name,
 			Description: f.Description,
@@ -699,7 +700,11 @@ func (c *DiscoverController) ListCollectedPosts(ctx *gin.Context) {
 		req.PageSize = 12
 	}
 
-	posts, total, err := c.discoverService.ListCollectedPosts(ctx.Request.Context(), userId, req.FolderUuid, req.Page, req.PageSize)
+	var offset []int
+	if req.Offset != nil {
+		offset = append(offset, *req.Offset)
+	}
+	posts, total, err := c.discoverService.ListCollectedPosts(ctx.Request.Context(), userId, req.FolderUuid, req.Page, req.PageSize, offset...)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -708,7 +713,7 @@ func (c *DiscoverController) ListCollectedPosts(ctx *gin.Context) {
 	var items []userresp.PostItem
 	for _, p := range posts {
 		items = append(items, userresp.PostItem{
-			IsBlockedBy: p.IsBlockedBy, SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
+			IsUnavailable: p.IsUnavailable, IsBlockedBy: p.IsBlockedBy, SupportOnly: p.SupportOnly, CanPlay: p.CanPlay, LockReason: p.LockReason, SupportExpiresAt: p.SupportExpiresAt, Visibility: p.Visibility, Version: p.Version,
 			Uuid:         p.Uuid,
 			UserId:       p.UserId,
 			Nickname:     p.Nickname,

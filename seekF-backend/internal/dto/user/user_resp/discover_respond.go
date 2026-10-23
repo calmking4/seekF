@@ -2,6 +2,7 @@ package userresp
 
 // PostItem 帖子列表信息及首个媒体的像素尺寸。
 type PostItem struct {
+	IsUnavailable    bool     `json:"is_unavailable"` // 失效收藏仅展示占位，不能打开或互动。
 	IsBlockedBy      bool     `json:"is_blocked_by"`
 	ReviewNote       string   `json:"review_note,omitempty"`
 	SupportOnly      int8     `json:"support_only"`
@@ -88,6 +89,7 @@ type AICommentRespond struct {
 }
 
 type FolderItem struct {
+	IsBlockedBy bool   `json:"is_blocked_by"` // 夹主拉黑查看者时仅展示锁定占位。
 	Uuid        string `json:"uuid"`
 	Name        string `json:"name"`
 	Description string `json:"description"`

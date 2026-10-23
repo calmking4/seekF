@@ -29,16 +29,17 @@ type SupportOrderRespond struct {
 	RefundedAt        *time.Time `json:"refunded_at"`
 	CanRefund         bool       `json:"can_refund"`
 
-	OrderNo       string     `json:"order_no"`
-	RequestKey    string     `json:"request_key"`
-	CreatorId     string     `json:"creator_id"`
-	Amount        string     `json:"amount"`
-	DurationHours int        `json:"duration_hours"`
-	Status        int8       `json:"status"`
-	RefundStatus  int8       `json:"refund_status"`
-	ExpiresAt     time.Time  `json:"expires_at"`
-	PaidAt        *time.Time `json:"paid_at"`
-	ConfirmedAt   *time.Time `json:"confirmed_at"`
-	CreatedAt     time.Time  `json:"created_at"`
-	HasError      bool       `json:"has_error"`
+	OrderNo         string     `json:"order_no"`
+	RequestKey      string     `json:"request_key"`
+	CreatorId       string     `json:"creator_id"`
+	CreatorNickname string     `json:"creator_nickname"`
+	Amount          string     `json:"amount"`
+	DurationHours   int        `json:"duration_hours"`
+	Status          int8       `json:"status"`
+	RefundStatus    int8       `json:"refund_status"`
+	ExpiresAt       time.Time  `json:"expires_at"`
+	PaidAt          *time.Time `json:"paid_at"`
+	ConfirmedAt     *time.Time `json:"confirmed_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+	HasError        bool       `json:"has_error"`
 }

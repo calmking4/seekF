@@ -26,7 +26,7 @@
           </template>
           <template v-else-if="active === 'orders'">
             <div class="flex flex-wrap items-start justify-between gap-3">
-              <div class="min-w-0"><p class="break-all text-sm font-medium text-gray-700">订单号：{{ row.order_no }}</p><NuxtLink :to="`/user/${encodeURIComponent(row.creator_id)}`" class="mt-2 inline-block break-all text-xs text-blue-500 hover:text-blue-600 focus-visible:outline-blue-400">创作者：{{ row.creator_id }}</NuxtLink></div>
+              <div class="min-w-0"><p class="break-all text-sm font-medium text-gray-700">订单号：{{ row.order_no }}</p><NuxtLink :to="`/user/${encodeURIComponent(row.creator_id)}`" class="mt-2 inline-block break-all text-xs text-blue-500 hover:text-blue-600 focus-visible:outline-blue-400">创作者：{{ row.creator_nickname || '用户已注销' }}（{{ row.creator_id }}）</NuxtLink></div>
               <div class="text-right"><p class="text-lg font-semibold text-gray-800">¥{{ money(row.amount) }}</p><span class="text-xs" :class="orderStatusClass(row)">{{ orderStatus(row) }}</span></div>
             </div>
             <div class="mt-4 flex flex-wrap gap-x-6 gap-y-1 text-xs leading-6 text-gray-400"><span>助力期限：{{ row.duration_hours / 24 }}天</span><time>创建时间：{{ date(row.created_at) }}</time><time v-if="row.paid_at">付款时间：{{ date(row.paid_at) }}</time></div>
@@ -51,7 +51,7 @@
             </div>
           </template>
           <template v-else>
-            <div class="flex flex-wrap items-center justify-between gap-3"><NuxtLink :to="`/user/${encodeURIComponent(row.creator_id)}`" class="break-all text-sm font-medium text-gray-700 hover:text-blue-500 focus-visible:outline-blue-400">创作者：{{ row.creator_id }}</NuxtLink><span class="rounded-full px-3 py-1 text-xs" :class="hasAccess(row) ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-400'">{{ hasAccess(row) ? '权益有效' : row.expires_at ? '已到期' : '暂无有效权益' }}</span></div>
+            <div class="flex flex-wrap items-center justify-between gap-3"><NuxtLink :to="`/user/${encodeURIComponent(row.creator_id)}`" class="break-all text-sm font-medium text-gray-700 hover:text-blue-500 focus-visible:outline-blue-400">创作者：{{ row.creator_nickname || '用户已注销' }}（{{ row.creator_id }}）</NuxtLink><span class="rounded-full px-3 py-1 text-xs" :class="hasAccess(row) ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-400'">{{ hasAccess(row) ? '权益有效' : row.expires_at ? '已到期' : '暂无有效权益' }}</span></div>
             <div class="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-gray-400"><span>权益截止：{{ date(row.expires_at) }}</span><NuxtLink :to="`/user/${encodeURIComponent(row.creator_id)}`" class="text-blue-500 hover:text-blue-600 focus-visible:outline-blue-400">查看创作者作品</NuxtLink></div>
           </template>
         </article>
