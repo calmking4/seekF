@@ -1398,7 +1398,7 @@ func (s *DiscoverServiceImpl) CheckCollected(ctx context.Context, userId, postUu
 	return true, folder.Uuid, nil
 }
 
-// SearchPosts 优先全文搜索并回数据库核对权限；同步积压或ES故障时回退数据库。
+// SearchPosts 合并全文和实时作者昵称候选后核对权限并分页，积压或ES故障时回退数据库。
 func (s *DiscoverServiceImpl) SearchPosts(ctx context.Context, userId, keyword string, page, pageSize int) ([]PostInfo, int64, error) {
 	if page < 1 {
 		page = 1
@@ -1413,12 +1413,19 @@ func (s *DiscoverServiceImpl) SearchPosts(ctx context.Context, userId, keyword s
 			searchCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			ids, searchErr := userdao.NewESDiscoverDAO().SearchPostIDs(searchCtx, keyword)
 			cancel()
-			if searchErr == nil && len(ids) > 0 {
-				posts, total, verifyErr := s.filterDiscoverSearch(ctx, userId, ids, page, pageSize)
-				if verifyErr != nil {
-					return nil, 0, verifyErr
+			if searchErr == nil {
+				authorIDs, authorErr := s.discoverDAO.SearchAuthorPostIDs(ctx, keyword, userId)
+				if authorErr != nil {
+					return nil, 0, authorErr
 				}
-				return s.buildPostInfoList(ctx, userId, posts, total)
+				// 候选过多时不截断作者作品，改用数据库完整分页；去重在权限核对后完成。
+				if len(authorIDs) <= constants.DiscoverSearchCandidateLimit && len(ids)+len(authorIDs) > 0 {
+					posts, total, verifyErr := s.filterDiscoverSearch(ctx, userId, append(ids, authorIDs...), page, pageSize)
+					if verifyErr != nil {
+						return nil, 0, verifyErr
+					}
+					return s.buildPostInfoList(ctx, userId, posts, total)
+				}
 			}
 			if searchErr != nil && ctx.Err() == nil {
 				zlog.Warn("全文搜索降级为数据库查询: " + searchErr.Error())

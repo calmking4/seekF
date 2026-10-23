@@ -45,7 +45,7 @@
                 class="cover-image"
                 :class="currentIndex > 0 ? 'cover-image--slide' : 'cover-image--first w-full h-full'"
                 @load="onCarouselImageLoad"
-                @error="imageError = true"
+                @error="onCarouselImageError"
               />
             </Transition>
             <!-- 左右切换箭头 -->
@@ -75,7 +75,7 @@
             :alt="item.title"
             class="cover-image cover-image--first w-full h-full"
             @load="onCarouselImageLoad"
-                @error="imageError = true"
+            @error="onCarouselImageError"
           />
           <!-- 回退：无媒体 -->
           <div v-else class="image-content">
@@ -106,7 +106,7 @@
           </div>
 
           <!-- 可滚动的中间区域 -->
-          <div class="scroll-area">
+          <div ref="commentScrollerRef" class="scroll-area">
             <div v-if="detailLoading && !detail" class="py-6 flex items-center justify-center text-sm text-gray-500" role="status"><Icon name="uil:spinner" class="animate-spin text-xl mr-2" />正在加载动态</div>
             <div v-if="detailError" class="py-6 text-center text-sm text-gray-500" role="alert"><p>{{ detailError }}</p><button type="button" class="mt-3 text-blue-500" @click="fetchDetail">重试</button></div>
             <template v-else>
@@ -125,13 +125,13 @@
             <div class="comment-section">
               <div class="flex items-center justify-between">
                 <p class="comment-title">共 {{ detail?.comment_count ?? 0 }} 条评论</p>
-                <button type="button" class="mb-[15px] inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50" :aria-label="commentsLoading ? '正在刷新评论' : '刷新评论'" :title="commentsLoading ? '正在刷新评论' : '刷新评论'" :aria-busy="commentsLoading" :disabled="!detail || commentsLoading || submitting" @click="fetchComments(true)">
+                <button type="button" class="mb-[15px] inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50" :aria-label="commentsLoading ? '正在刷新评论' : '刷新评论'" :title="commentsLoading ? '正在刷新评论' : '刷新评论'" :aria-busy="commentsLoading" :disabled="!detail || commentsLoading || locatingComment || submitting" @click="fetchComments(true)">
                   <Icon name="mdi:refresh" class="text-lg" :class="{ 'animate-spin': commentsLoading }" />
                 </button>
               </div>
               <div v-if="comments.length === 0 && !commentsLoading && !commentsError" class="no-comment">暂无评论</div>
               <div class="comment-item" v-for="c in comments" :key="c.uuid">
-                <div class="comment-main">
+                <div class="comment-main" :data-comment-uuid="c.uuid" :class="commentHighlightClass(c.uuid)">
                   <div class="comment-avatar-col">
                     <span class="comment-author">{{ c.nickname }}</span>
                     <el-avatar :size="32" :src="c.avatar" />
@@ -153,7 +153,7 @@
                   </div>
                 </div>
                 <!-- 回复沿用独立分页；网格行过渡支持不同回复数量，收起时禁止隐藏内容获得焦点。 -->
-                <button v-if="c.reply_count || c.replies?.length" type="button" class="ml-[42px] mt-3 inline-flex items-center gap-1 rounded-full bg-slate-50 px-2.5 py-1 text-xs text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200" :aria-expanded="c.expanded" :aria-controls="'discover-replies-' + c.uuid" @click="toggleReplies(c)">
+                <button v-if="c.reply_count || c.replies?.length" type="button" class="ml-[42px] mt-3 inline-flex items-center gap-1 rounded-full bg-slate-50 px-2.5 py-1 text-xs text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200" :disabled="locatingComment" :aria-expanded="c.expanded" :aria-controls="'discover-replies-' + c.uuid" @click="toggleReplies(c)">
                   <span>{{ c.expanded ? '收起回复' : '展开 ' + c.reply_count + ' 条回复' }}</span>
                   <Icon name="mdi:chevron-down" class="text-sm transition-transform duration-200 motion-reduce:transition-none" :class="{ 'rotate-180': c.expanded }" />
                 </button>
@@ -161,7 +161,7 @@
                   <div class="min-h-0 overflow-hidden">
                     <div class="reply-list">
                       <p v-if="c.replyLoading && !c.replies.length" class="flex items-center gap-1.5 py-1 text-xs text-slate-400" role="status"><Icon name="uil:spinner" class="animate-spin" />正在加载回复...</p>
-                      <div class="reply-item" v-for="reply in c.replies" :key="reply.uuid">
+                      <div class="reply-item" v-for="reply in c.replies" :key="reply.uuid" :data-comment-uuid="reply.uuid" :class="commentHighlightClass(reply.uuid)">
                         <div class="comment-main">
                           <div class="comment-avatar-col">
                             <span class="comment-author">{{ reply.nickname }}</span>
@@ -185,13 +185,15 @@
                         </div>
                       </div>
                       <p v-if="c.replyError" class="text-xs text-red-500" role="alert">{{ c.replyError }}</p>
-                      <button v-if="c.replyHasMore || c.replyError" type="button" class="text-xs text-blue-500 disabled:opacity-50" :disabled="c.replyLoading" @click="loadReplies(c)">{{ c.replyLoading ? '正在加载回复...' : c.replyError ? '重试加载回复' : '加载更多回复' }}</button>
+                      <button v-if="c.replyHasMore || c.replyError" type="button" class="text-xs text-blue-500 disabled:opacity-50" :disabled="c.replyLoading || locatingComment" @click="loadReplies(c)">{{ c.replyLoading ? '正在加载回复...' : c.replyError ? '重试加载回复' : '加载更多回复' }}</button>
                     </div>
                   </div>
                 </div>
               </div>
+              <p v-if="locatingComment" class="py-2 text-center text-xs text-gray-400" role="status">正在定位评论...</p>
+              <p v-if="commentLocationError" class="py-2 text-center text-xs text-gray-500" role="status">{{ commentLocationError }}<button v-if="commentLocationRetry" type="button" class="ml-2 text-blue-500" @click="locateInitialComment(detailVersion)">重试定位</button></p>
               <p v-if="commentsError" class="text-center text-xs text-red-500" role="alert">{{ commentsError }}</p>
-              <button v-if="commentsHasMore || commentsError" type="button" class="w-full py-3 text-sm text-blue-500 disabled:opacity-50" :disabled="commentsLoading" @click="fetchComments()">{{ commentsLoading ? '正在加载评论...' : commentsError ? '重试加载评论' : '加载更多评论' }}</button>
+              <button v-if="commentsHasMore || commentsError" type="button" class="w-full py-3 text-sm text-blue-500 disabled:opacity-50" :disabled="commentsLoading || locatingComment" @click="fetchComments()">{{ commentsLoading ? '正在加载评论...' : commentsError ? '重试加载评论' : '加载更多评论' }}</button>
             </div>
             </template>
           </div>
@@ -281,9 +283,11 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { mergeDiscoverPage, discoverMediaWidth } from '~/utils/discover'
+import { locateDiscoverComment } from '~/utils/commentLocator'
 const props = defineProps({ item: { type: Object, default: null }, standalone: Boolean })
 const emit = defineEmits(['close', 'like-updated', 'collect-updated', 'follow-updated'])
 const auth = useAuthState()
+const route = useRoute()
 const show = ref(false)
 const detail = ref(null)
 const isSupportLocked = computed(() => (detail.value?.support_only ?? props.item?.support_only) === 1 && detail.value?.can_play !== true)
@@ -316,6 +320,25 @@ const commentsHasMore = ref(true)
 const commentsLoading = ref(false)
 const commentsError = ref('')
 const commentsRetryReset = ref(false)
+const commentScrollerRef = ref(null)
+const locatingComment = ref(false)
+const highlightedComment = ref('')
+const commentHighlightVisible = ref(false)
+let commentHighlightTimer
+let commentHighlightCleanupTimer
+// commentHighlightClass 使用不占布局空间的圆角浅灰底，避免高亮引起评论位移。
+const commentHighlightClass = uuid => highlightedComment.value === uuid
+  ? ["relative before:pointer-events-none before:absolute before:-inset-x-2 before:-inset-y-2 before:rounded-xl before:bg-[#f5f5f5] before:content-[''] before:transition-opacity before:duration-700 motion-reduce:before:transition-none [&>*]:relative", commentHighlightVisible.value ? 'before:opacity-100' : 'before:opacity-0']
+  : ''
+// clearCommentHighlight 清理高亮状态及计时器，防止关闭弹窗后残留回调。
+const clearCommentHighlight = () => {
+  clearTimeout(commentHighlightTimer)
+  clearTimeout(commentHighlightCleanupTimer)
+  highlightedComment.value = ''
+  commentHighlightVisible.value = false
+}
+const commentLocationError = ref('')
+const commentLocationRetry = ref(false)
 const dialogRef = ref(null)
 const mediaContainerRef = ref(null)
 const contentContainerRef = ref(null)
@@ -350,6 +373,13 @@ const onCarouselImageLoad = event => {
   scheduleMediaWidth()
 }
 
+// onCarouselImageError 仅记录当前图片失败，避免旧预览或上一张图片的迟到错误覆盖详情。
+const onCarouselImageError = event => {
+  const image = event?.target
+  const activeSource = detail.value?.urls?.[currentIndex.value] || props.item?.src
+  if (activeSource && (image?.currentSrc || image?.src) === activeSource) imageError.value = true
+}
+
 const onVideoMetadataLoad = event => {
   const video = event?.target
   if (!video?.videoWidth || !video?.videoHeight) return
@@ -372,6 +402,7 @@ const fetchDetail = async () => {
   if (!props.item?.id || detailLoading.value) return
   const wasSupportLocked = detail.value?.support_only === 1 && detail.value?.can_play === false
   const version = ++detailVersion
+  clearCommentHighlight(); commentLocationError.value = ''; commentLocationRetry.value = false
   const viewerId = auth.getUser()?.uuid || auth.getUser()?.Uuid || ''
   detailLoading.value = true
   detailError.value = ''
@@ -395,7 +426,10 @@ const fetchDetail = async () => {
     collectCount.value = response.data.collect_count || 0
     fetchFollowState()
     if (isCollected.value) checkCollectedFolder()
-    fetchComments(true)
+    await fetchComments(true)
+    if (disposed || version !== detailVersion) return
+    await locateInitialComment(version)
+    if (disposed || version !== detailVersion || !show.value) return
     if (props.item.initialReply) {
       const comment = props.item.initialReply
       startReply(comment, comment.parent_id ? { uuid: comment.parent_id } : undefined)
@@ -410,8 +444,9 @@ const fetchDetail = async () => {
 watch(() => auth.getUser()?.uuid || auth.getUser()?.Uuid || '', () => {
   detailVersion++
   detail.value = null
+  locatingComment.value = false; clearCommentHighlight(); commentLocationError.value = ''; commentLocationRetry.value = false
   comments.value = []; showCommentInput.value = false; commentText.value = ''; replyTarget.value = null; showCollectDialog.value = false
-  detailLoading.value = false
+  detailLoading.value = false; commentsLoading.value = false
   if (!disposed && show.value) void fetchDetail()
 })
 const fetchFollowState = async () => {
@@ -435,7 +470,7 @@ const toggleFollow = async () => {
   } catch (err) { if (!disposed) ElMessage.error(err?.data?.message || '关注操作失败，请稍后重试') }
   finally { if (!disposed) followLoading.value = false }
 }
-const goToAuthor = () => { if (authorId.value) { emit('close', 'author'); navigateTo('/user/' + encodeURIComponent(authorId.value)) } }
+const goToAuthor = () => { if (authorId.value) { emit('close', 'author'); navigateTo('/user/' + encodeURIComponent(authorId.value) + (route.path === '/notification' ? '?from=notification' : '')) } }
 
 const buildComment = comment => ({ ...comment, replies: [], expanded: false, replyPage: 1, replyHasMore: true, replyLoading: false, replyError: '' })
 const fetchComments = async (reset = false) => {
@@ -454,8 +489,8 @@ const fetchComments = async (reset = false) => {
     commentsPage.value = page + 1
     commentsHasMore.value = !!response.data.has_more
     commentsRetryReset.value = false
-  } catch (err) { if (!disposed) { commentsRetryReset.value = reset; commentsError.value = err?.data?.message || '获取评论失败，请重试' } }
-  finally { if (!disposed) commentsLoading.value = false }
+  } catch (err) { if (!disposed && version === detailVersion) { commentsRetryReset.value = reset; commentsError.value = err?.data?.message || '获取评论失败，请重试' } }
+  finally { if (!disposed && version === detailVersion) commentsLoading.value = false }
 }
 const loadReplies = async comment => {
   if (!detail.value || isSupportLocked.value || comment.replyLoading || !comment.replyHasMore) return
@@ -469,12 +504,65 @@ const loadReplies = async comment => {
     comment.replies = mergeDiscoverPage(comment.replies, response.data.list)
     comment.replyPage++
     comment.replyHasMore = !!response.data.has_more
-  } catch (err) { if (!disposed) comment.replyError = err?.data?.message || '获取回复失败，请重试' }
-  finally { if (!disposed) comment.replyLoading = false }
+  } catch (err) { if (!disposed && version === detailVersion) comment.replyError = err?.data?.message || '获取回复失败，请重试' }
+  finally { if (!disposed && version === detailVersion) comment.replyLoading = false }
 }
 const toggleReplies = comment => {
+  if (locatingComment.value) return
   comment.expanded = !comment.expanded
   if (comment.expanded && comment.replyPage === 1) loadReplies(comment)
+}
+
+// locateInitialComment 加载通知目标所在的分页，展开回复并只滚动弹窗内容区。
+const locateInitialComment = async version => {
+  const target = props.item?.initialComment
+  if (!target?.uuid || locatingComment.value || !detail.value || isSupportLocked.value) return
+  locatingComment.value = true
+  commentLocationError.value = ''; commentLocationRetry.value = false
+  const isCurrent = () => !disposed && version === detailVersion && show.value && !isSupportLocked.value
+  try {
+    // 等待弹窗挂载，保持原入场和回复展开动画，完成后再计算最终滚动位置。
+    await nextTick()
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    if (!isCurrent()) return
+    if (commentsError.value) await fetchComments()
+    if (commentsError.value) throw new Error(commentsError.value)
+    const found = await locateDiscoverComment({
+      target, getComments: () => comments.value, hasMore: () => commentsHasMore.value, isCurrent,
+      loadMore: async () => { await fetchComments(); if (commentsError.value) throw new Error(commentsError.value) },
+      loadReplies: async root => { await loadReplies(root); if (root.replyError) throw new Error(root.replyError) }
+    })
+    if (!isCurrent()) return
+    if (!found) { commentLocationError.value = '该评论已删除或暂不可见'; return }
+    await nextTick()
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    if (!isCurrent()) return
+    const scroller = commentScrollerRef.value
+    const element = Array.from(scroller?.querySelectorAll('[data-comment-uuid]') || []).find(node => node.dataset.commentUuid === target.uuid)
+    if (!element || !scroller) return
+    const replyPanel = element.closest('[id^="discover-replies-"]')
+    const animations = [dialogRef.value, replyPanel].flatMap(node => node?.getAnimations?.() || [])
+    await Promise.all(animations.map(animation => animation.finished.catch(() => {})))
+    if (!isCurrent()) return
+    const bounds = scroller.getBoundingClientRect()
+    const commentBounds = element.getBoundingClientRect()
+    const scale = bounds.height / scroller.clientHeight || 1
+    const top = scroller.scrollTop + (commentBounds.top - bounds.top) / scale - Math.max(0, (scroller.clientHeight - commentBounds.height / scale) / 2)
+    scroller.scrollTo({ top: Math.max(0, top), behavior: 'instant' })
+    clearCommentHighlight()
+    highlightedComment.value = target.uuid
+    commentHighlightVisible.value = true
+    // 定位完成后保留一秒，再用七百毫秒淡出，仅背景变化，文字与评论位置保持不变。
+    commentHighlightTimer = setTimeout(() => {
+      if (!isCurrent()) return
+      commentHighlightVisible.value = false
+      commentHighlightCleanupTimer = setTimeout(clearCommentHighlight, 700)
+    }, 1000)
+  } catch (err) {
+    if (isCurrent()) { commentLocationError.value = err?.message || '评论定位失败，请重试'; commentLocationRetry.value = true }
+  } finally {
+    if (!disposed && version === detailVersion) locatingComment.value = false
+  }
 }
 const updateCommentLike = result => {
   for (const comment of comments.value) {
@@ -595,6 +683,7 @@ const sharePost = async () => {
 const handleClose = () => {
   if (props.standalone || showCollectDialog.value) return
   show.value = false
+  clearCommentHighlight()
   clearTimeout(closeTimer)
   closeTimer = setTimeout(() => emit('close'), 300)
 }
@@ -632,6 +721,7 @@ onMounted(() => {
   fetchDetail()
 })
 onUnmounted(() => {
+  clearCommentHighlight()
   disposed = true
   detailVersion++
   clearTimeout(closeTimer)

@@ -9,7 +9,7 @@
     </div>
     <div class="relative grid min-h-0 flex-1 overflow-hidden">
     <Transition :name="slideDirection">
-    <div :key="displayedFilter" ref="worksScroller" :inert="loading && displayedFilter !== filter" class="col-start-1 row-start-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain">
+    <div :key="displayedFilter" ref="worksScroller" :inert="loading && displayedFilter !== filter" class="col-start-1 row-start-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
     <div v-if="loading && displayedFilter === filter" class="flex justify-center gap-2 py-20 text-sm text-gray-400" role="status"><Icon name="mdi:loading" class="animate-spin text-xl" />加载作品...</div>
     <div v-else-if="error" class="py-20 text-center"><p class="mb-4 text-sm text-gray-500">{{ error }}</p><el-button @click="loadWorks">重新加载</el-button></div>
     <div v-else-if="!posts.length" class="flex flex-col items-center py-20 text-gray-400"><Icon name="mdi:clipboard-text-outline" class="mb-4 text-5xl text-gray-200" /><p class="text-sm">{{ appliedKeyword ? '没有找到相关作品' : '暂无作品' }}</p><NuxtLink to="/discover/create" class="mt-5 rounded-full bg-[#60a5fa] px-6 py-2.5 text-sm text-white">去发布</NuxtLink></div>

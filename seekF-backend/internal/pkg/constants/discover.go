@@ -3,6 +3,8 @@ package constants
 import "time"
 
 const (
+	// 单路搜索最多合并10000条候选，超出后使用数据库完整分页。
+	DiscoverSearchCandidateLimit = 10000
 	// 帖子状态：已发布、已下架、审核中、未通过。
 	DiscoverPostPublished int8 = 0
 	DiscoverPostOffline   int8 = 1

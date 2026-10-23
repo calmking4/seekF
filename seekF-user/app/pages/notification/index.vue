@@ -49,7 +49,7 @@
             <div class="notification-content">
               <button class="actor-name" :disabled="!item.actor_id" @click="openActor(item)">{{ item.actor_name || '未知用户' }}</button>
               <div class="event-meta"><span>{{ actionText(item.type) }}</span><time :datetime="item.created_at" :title="fullTime(item.created_at)">{{ formatTime(item.created_at) }}</time></div>
-              <NuxtLink v-if="item.type === 7 || item.type === 8" :to="item.type === 8 ? '/discover/support-records' : item.actor_id ? `/user/${encodeURIComponent(item.actor_id)}` : '/discover'" class="mt-2 block text-sm text-blue-500" @click="readItem(item)">{{ item.type === 8 ? '查看助力记录' : '查看创作者作品' }}</NuxtLink>
+              <NuxtLink v-if="item.type === 7 || item.type === 8" :to="item.type === 8 ? '/discover/support-records' : item.actor_id ? `/user/${encodeURIComponent(item.actor_id)}?from=notification` : '/discover'" class="mt-2 block text-sm text-blue-500" @click="readItem(item)">{{ item.type === 8 ? '查看助力记录' : '查看创作者作品' }}</NuxtLink>
               <button v-else-if="item.type !== 4" class="post-message" @click="openPost(item)">
                 <span v-if="isComment(item) || item.type === 6" class="comment-text">{{ commentContent(item) }}</span>
                 <span class="post-reference"><Icon name="uil:file-alt" />{{ item.target_available ? (item.post_title || '查看原帖') : '原帖已删除或不可见' }}</span>
@@ -211,13 +211,14 @@ async function readItem(item) {
 function openActor(item) {
   if (!item.actor_id) return
   readItem(item)
-  navigateTo(`/user/${encodeURIComponent(item.actor_id)}`)
+  navigateTo(`/user/${encodeURIComponent(item.actor_id)}?from=notification`)
 }
 function openPost(item, reply = false) {
   readItem(item)
   if (!item.target_available || !item.target_uuid) { ElMessage.info('原帖已删除或不可见'); return }
   selectedPost.value = {
     id: item.target_uuid, title: item.post_title, src: item.post_cover,
+    initialComment: isComment(item) && item.comment_uuid ? { uuid: item.comment_uuid, parent_id: item.comment_parent_uuid } : null,
     initialReply: reply && item.comment_uuid ? {
       uuid: item.comment_uuid, parent_id: item.comment_parent_uuid,
       user_id: item.actor_id, nickname: item.actor_name, content: commentContent(item),

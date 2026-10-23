@@ -251,11 +251,6 @@ function Console({ user, onLogout }: { user: Identity; onLogout: () => void }) {
             <p className="text-xs font-medium text-emerald-50">
               管理员工作空间
             </p>
-            <p className="mt-2 text-[11px] leading-5 text-emerald-100/45">
-              业务概览与运行状态，
-              <br />
-              清晰呈现每一次变化。
-            </p>
           </div>
           <div className="mt-5 flex items-center gap-3 border-t border-white/10 pt-5">
             <span className="grid size-9 shrink-0 place-items-center rounded-full bg-[#b7edcc]/15 text-sm text-[#b7edcc]">

@@ -148,7 +148,17 @@ func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, pageSize int, cu
 	}
 
 	var rspList []userresp.GetAIMessageHistoryRespond
+	var referencedPosts []toolpkg.DiscoverPostItem
+	postCounts := make(map[int]int)
 	for _, msg := range messages {
+		if msg.Posts != "" {
+			var posts []toolpkg.DiscoverPostItem
+			if err := json.Unmarshal([]byte(msg.Posts), &posts); err != nil {
+				return nil, 0, fmt.Errorf("解析AI参考帖子失败: %w", err)
+			}
+			postCounts[len(rspList)] = len(posts)
+			referencedPosts = append(referencedPosts, posts...)
+		}
 		rspList = append(rspList, userresp.GetAIMessageHistoryRespond{
 			SessionId: msg.SessionId,
 			SendId:    msg.SendId,
@@ -162,7 +172,60 @@ func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, pageSize int, cu
 		})
 	}
 
+	if len(referencedPosts) > 0 {
+		session, err := s.sessionDAO.GetAISessionByUuid(sessionId)
+		if err != nil || session == nil {
+			return nil, 0, fmt.Errorf("获取AI会话失败")
+		}
+		if err := refreshAIPostSupport(context.Background(), session.SendId, referencedPosts); err != nil {
+			return nil, 0, err
+		}
+		offset := 0
+		for i := range rspList {
+			if count := postCounts[i]; count > 0 {
+				data, err := json.Marshal(referencedPosts[offset : offset+count])
+				if err != nil {
+					return nil, 0, fmt.Errorf("序列化AI参考帖子失败: %w", err)
+				}
+				rspList[i].Posts = string(data)
+				offset += count
+			}
+		}
+	}
 	return rspList, total, nil
+}
+
+// refreshAIPostSupport 批量刷新参考帖子的助力属性及当前权益，兼容缺少属性的旧聊天记录。
+func refreshAIPostSupport(ctx context.Context, userId string, items []toolpkg.DiscoverPostItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	posts, err := userdao.NewDiscoverDAO(db.GormDB).FindPublicPostsByUuids(ctx, ids, userId)
+	if err != nil {
+		return fmt.Errorf("查询AI参考帖子失败: %w", err)
+	}
+	expiries, err := discoverSupportExpiries(ctx, userId, posts)
+	if err != nil {
+		return err
+	}
+	byID := make(map[string]models.DiscoverPost, len(posts))
+	for _, post := range posts {
+		byID[post.Uuid] = post
+	}
+	now := time.Now()
+	for i := range items {
+		item := &items[i]
+		item.CanPlay, item.SupportExpiresAt = false, ""
+		if post, ok := byID[item.ID]; ok && !item.IsBlockedBy {
+			item.SupportOnly = post.SupportOnly
+			item.CanPlay, _, item.SupportExpiresAt = discoverPlaybackAccess(post, userId, expiries[post.UserId], now)
+		}
+	}
+	return nil
 }
 
 // SendMessageStream 流式发送消息：
@@ -376,6 +439,9 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		return fmt.Errorf("AI响应失败")
 	}
 	if handled {
+		if err := refreshAIPostSupport(ctx, userId, posts); err != nil {
+			return err
+		}
 		// 如果有搜索来源数据，通过 onSources 回调推送给前端
 		if len(sources) > 0 && onSources != nil {
 			if err := onSources(sources); err != nil {

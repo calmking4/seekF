@@ -307,7 +307,9 @@
         <div class="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
           <el-form-item label="昵称"><el-input v-model="editForm.nickname" placeholder="请输入昵称" /></el-form-item>
           <el-form-item label="生日">
-            <el-date-picker v-model="editForm.birthday" type="date" placeholder="选择生日" format="YYYY-MM-DD" value-format="YYYY-MM-DD" class="!w-full" />
+            <el-config-provider :locale="zhCn">
+              <el-date-picker v-model="editForm.birthday" type="date" placeholder="选择生日" format="YYYY-MM-DD" value-format="YYYY-MM-DD" class="!w-full" />
+            </el-config-provider>
           </el-form-item>
         </div>
         <el-form-item label="邮箱"><el-input v-model="editForm.email" placeholder="请输入邮箱地址" /></el-form-item>
@@ -379,6 +381,7 @@
 import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { useApi$ } from '~/composables/useApi'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { discoverSupportLabel } from '~/utils/discover'
 
 // 页面级 SEO

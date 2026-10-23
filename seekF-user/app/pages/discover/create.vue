@@ -265,7 +265,7 @@
 
       <div class="mb-5 flex items-center gap-3 text-sm text-gray-500"><span>谁可以看</span><el-radio-group v-model="visibility" :disabled="publishing"><el-radio-button :value="0">公开</el-radio-button><el-radio-button :value="1">仅自己可见</el-radio-button></el-radio-group></div>
       <div class="mb-5 space-y-2">
-        <div class="flex flex-wrap items-center gap-3 text-sm text-gray-500"><span>观看方式</span><el-radio-group v-model="supportOnly" :disabled="publishing || isEditing"><el-radio-button :value="0">免费</el-radio-button><el-radio-button :value="1" :disabled="supportLoading || !supportSettings?.activated">助力专属</el-radio-button></el-radio-group></div>
+        <div class="flex flex-wrap items-center gap-3 text-sm text-gray-500"><span>观看方式</span><el-radio-group v-model="supportOnly" :disabled="publishing || isEditing"><el-radio-button :value="0">免费</el-radio-button><el-radio-button :value="1" :disabled="publishing || isEditing || supportLoading || !supportSettings?.activated">助力专属</el-radio-button></el-radio-group></div>
         <p class="text-xs text-gray-400">发布后不能切换免费或助力属性。<NuxtLink v-if="!isEditing" to="/discover/support" class="text-blue-500">{{ supportSettings?.activated ? '管理助力价格' : '开通创作者助力' }}</NuxtLink></p>
         <p v-if="mediaType === 'image' && supportOnly === 1" class="text-xs text-gray-400">首张图片作为公开封面，正文及其余图片仅助力用户可见。</p>
         <p v-if="supportError" class="text-xs text-gray-500" role="alert">{{ supportError }}<button type="button" class="ml-2 text-blue-500" @click="loadSupportSettings">重试</button></p>
@@ -887,8 +887,16 @@ const editTag = index => { editingTagIndex.value = index; tagInputValue.value = 
 const showDraftList = () => { draftList.value = listDiscoverDrafts(); draftCount.value = draftList.value.length; showDrafts.value = true }
 const openDraft = async draft => {
   if (hasActiveUpload.value || savingDraft.value) { ElMessage.info('请先完成或暂停上传及保存'); return }
-  setActiveDiscoverDraft(draft.id); draftId.value = draft.id; restoreDraftOnMount(); await refreshDraftResources(); showDrafts.value = false
-  await nextTick(); await navigateTo('/discover/create?draft=' + encodeURIComponent(draftId.value), { replace: true })
+  setActiveDiscoverDraft(draft.id)
+  showDrafts.value = false
+  // 同一路由不会重新挂载，直接恢复；切换草稿交由新页面初始化，避免重复恢复和提示。
+  if (route.path === '/discover/create' && route.query.draft === draft.id && !route.query.edit) {
+    draftId.value = draft.id
+    restoreDraftOnMount()
+    await refreshDraftResources()
+    return
+  }
+  await navigateTo('/discover/create?draft=' + encodeURIComponent(draft.id), { replace: true })
 }
 const deleteDraft = async id => { clearDiscoverDraft(id); draftList.value = listDiscoverDrafts(); draftCount.value = draftList.value.length; if (draftId.value === id) { draftId.value = ''; draftSaveStatus.value = '草稿已删除，当前输入仍保留'; } }
 

@@ -25,6 +25,8 @@
   </div>
 </template>
 <script setup>
+// 创作中心普通页面由文档滚动，统一预留滚动条宽度，布局卸载后自动移除。
+useHead({ htmlAttrs: { class: '[scrollbar-gutter:stable]' } })
 const route = useRoute()
 const creatorNav = [{ path: '/discover/create', label: '发布', icon: 'uil:plus-square' }, { path: '/discover/manage', label: '作品管理', icon: 'uil:clipboard-notes' }]
 const supportNav = [{ path: '/discover/support', label: '助力设置' }, { path: '/discover/support-records', label: '助力记录' }, { path: '/discover/support-wallet', label: '收益与提现' }]

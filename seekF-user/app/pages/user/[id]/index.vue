@@ -1,5 +1,5 @@
 <template>
-  <UserProfile :user-id="String(route.params.id || '')" />
+  <UserProfile :user-id="String(route.params.id || '')" :from-notification="route.query.from === 'notification'" />
 </template>
 
 <script setup>

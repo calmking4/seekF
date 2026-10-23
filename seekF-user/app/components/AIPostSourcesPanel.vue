@@ -16,7 +16,8 @@
                         <div v-if="post.is_blocked_by" class="flex flex-col items-center gap-2 text-gray-400"><Icon name="mdi:account-lock-outline" class="text-4xl" /><span class="text-xs">内容暂不可见</span></div>
                         <img v-else-if="getPostCover(post)" :src="getPostCover(post)" :alt="post.title || '帖子封面'" loading="lazy" @error="markCoverFailed(post)" />
                         <Icon v-else :name="isVideoPost(post) ? 'uil:video' : 'uil:image'" class="text-4xl text-gray-300" />
-                        <span v-if="isVideoPost(post)" class="video-badge" aria-label="视频帖子"><Icon name="mdi:play" class="block text-lg" /></span>
+                        <span v-if="isVideoPost(post)" class="video-badge" :class="{ '!top-auto bottom-2': post.support_only === 1 }" aria-label="视频帖子"><Icon name="mdi:play" class="block text-lg" /></span>
+                        <span v-if="post.support_only === 1" class="pointer-events-none absolute right-2 top-2 inline-flex h-6 items-center justify-center gap-1 rounded-md bg-[#60A5FA] pl-1.5 pr-2 text-xs font-semibold text-white"><Icon name="mdi:lightning-bolt" class="block shrink-0 text-base" aria-hidden="true" /><span class="block leading-none">{{ discoverSupportLabel(post) }}</span></span>
                     </div>
                     <p class="source-title">{{ post.title || '未命名帖子' }}</p>
                     <div class="source-footer">
@@ -39,6 +40,8 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { discoverMediaURL } from '~/utils/discoverAccess'
+import { discoverSupportLabel } from '~/utils/discover'
 
 defineProps({ posts: { type: Array, default: () => [] } })
 const emit = defineEmits(['close', 'post-click'])
@@ -48,12 +51,14 @@ const closeButton = ref(null)
 onMounted(() => closeButton.value?.focus({ preventScroll: true }))
 
 const failedCoverUrls = ref(new Set())
+const apiBase = useRuntimeConfig().public.apiBase
 // 旧聊天记录没有媒体类型，兼容通过视频地址判断。
 const isVideoPost = post => Number(post.media_type) === 1 || post.type === 'video' ||
     /\.(mp4|webm|mov|m4v|avi|mkv|m3u8)(?:$|[?#])/i.test(post.src || '')
 
 const getPostCover = post => {
-    const cover = post.cover_url || (isVideoPost(post) ? '' : post.src) || ''
+    // SSE 和历史聊天中的原始媒体地址同样需要通过后端鉴权读取。
+    const cover = discoverMediaURL(post.cover_url || (isVideoPost(post) ? '' : post.src) || '', apiBase)
     return failedCoverUrls.value.has(cover) ? '' : cover
 }
 

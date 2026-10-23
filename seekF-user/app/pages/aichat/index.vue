@@ -216,6 +216,7 @@
                         </div>
 
                         <textarea
+                            spellcheck="false"
                             ref="textareaRef"
                             v-model="inputMessage"
                             placeholder="搜索或者输入任何问题"
@@ -367,6 +368,9 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import AIPostSourcesPanel from '~/components/AIPostSourcesPanel.vue'
+import { discoverMediaURL } from '~/utils/discoverAccess'
+
+const discoverApiBase = useRuntimeConfig().public.apiBase
 
 // 页面级 SEO
 useSeoMeta({
@@ -698,9 +702,11 @@ const previewImage = (url) => {
 // 打开帖子详情
 const openDiscoverDetail = (post) => {
     selectedDiscoverItem.value = {
+        ...post,
         id: post.id,
-        src: post.src,
-        type: Number(post.media_type) === 1 || /\.(mp4|webm|mov|m4v|avi|mkv|m3u8)(?:$|[?#])/i.test(post.src || '') ? 'video' : 'image',
+        src: discoverMediaURL(post.src, discoverApiBase),
+        cover_url: discoverMediaURL(post.cover_url, discoverApiBase),
+        type: Number(post.media_type) === 1 || post.type === 'video' || /\.(mp4|webm|mov|m4v|avi|mkv|m3u8)(?:$|[?#])/i.test(post.src || '') ? 'video' : 'image',
         title: post.title,
         avatar: post.avatar,
         nickname: post.nickname

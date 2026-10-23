@@ -16,19 +16,21 @@ import (
 
 // DiscoverPostItem 帖子结构化数据（供前端渲染）
 type DiscoverPostItem struct {
-	IsBlockedBy  bool     `json:"is_blocked_by"`
-	SupportOnly  int8     `json:"support_only"`
-	ID           string   `json:"id"`
-	Src          string   `json:"src"`
-	MediaType    int8     `json:"media_type"`
-	CoverUrl     string   `json:"cover_url"`
-	Title        string   `json:"title"`
-	Avatar       string   `json:"avatar"`
-	Nickname     string   `json:"nickname"`
-	Content      string   `json:"content"`
-	Tags         []string `json:"tags"`
-	LikeCount    int      `json:"like_count"`
-	CommentCount int      `json:"comment_count"`
+	IsBlockedBy      bool     `json:"is_blocked_by"`
+	SupportOnly      int8     `json:"support_only"`
+	CanPlay          bool     `json:"can_play"`
+	SupportExpiresAt string   `json:"support_expires_at"`
+	ID               string   `json:"id"`
+	Src              string   `json:"src"`
+	MediaType        int8     `json:"media_type"`
+	CoverUrl         string   `json:"cover_url"`
+	Title            string   `json:"title"`
+	Avatar           string   `json:"avatar"`
+	Nickname         string   `json:"nickname"`
+	Content          string   `json:"content"`
+	Tags             []string `json:"tags"`
+	LikeCount        int      `json:"like_count"`
+	CommentCount     int      `json:"comment_count"`
 }
 
 // DiscoverPostsTool 查询平台发现页帖子的 MCP 工具

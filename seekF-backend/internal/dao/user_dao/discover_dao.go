@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"seekF-backend/internal/models"
+	"seekF-backend/internal/pkg/constants"
 	"strings"
 	"time"
 
@@ -85,8 +86,10 @@ type DiscoverDAO interface {
 	GetUserTotalLikes(userId, viewerId string) (int, error)
 
 	// ========== 搜索 ==========
-	// 在全文检索不可用时按关键词分页查询并返回真实总数。
+	// 按标题、正文、标签和作者当前昵称搜索，返回真实分页与总数。
 	SearchPostsPage(keyword string, page, pageSize int, viewerId string) ([]models.DiscoverPost, int64, error)
+	// 按作者当前昵称召回公开帖子，超出候选上限时由服务层回退数据库完整分页。
+	SearchAuthorPostIDs(ctx context.Context, keyword, viewerId string) ([]string, error)
 
 	// ========== 媒体 ==========
 	// 保存帖子媒体信息。
@@ -285,7 +288,29 @@ func (d *DiscoverDAOImpl) GetUserTotalLikes(userId, viewerId string) (int, error
 
 // ========== 搜索 ==========
 
-// SearchPostsPage 在全文检索不可用时按关键词分页查询并返回真实总数。
+// discoverSearchAuthors 按作者当前昵称进行字面包含匹配，排除已删除作者。
+func (d *DiscoverDAOImpl) discoverSearchAuthors(keyword string) *gorm.DB {
+	pattern := "%" + strings.NewReplacer("=", "==", "%", "=%", "_", "=_").Replace(strings.TrimSpace(keyword)) + "%"
+	return d.db.Model(&models.UserInfo{}).Select("uuid").Where("nickname LIKE ? ESCAPE '='", pattern)
+}
+
+// SearchAuthorPostIDs 读取实时昵称匹配的公开帖子，沿用当前用户主动拉黑过滤。
+func (d *DiscoverDAOImpl) SearchAuthorPostIDs(ctx context.Context, keyword, viewerId string) ([]string, error) {
+	ids := make([]string, 0)
+	if strings.TrimSpace(keyword) == "" {
+		return ids, nil
+	}
+	query := d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("status = 0 AND visibility = 0")
+	query = WithoutHiddenAuthors(query, viewerId, "discover_post")
+	err := query.Where("user_id IN (?)", d.discoverSearchAuthors(keyword)).
+		Order("created_at DESC, id DESC").Limit(constants.DiscoverSearchCandidateLimit+1).Pluck("uuid", &ids).Error
+	if err != nil {
+		return nil, fmt.Errorf("按作者昵称搜索帖子失败：%w", err)
+	}
+	return ids, nil
+}
+
+// SearchPostsPage 按内容或作者当前昵称分页搜索，权限条件作用于全部匹配分支。
 func (d *DiscoverDAOImpl) SearchPostsPage(keyword string, page, pageSize int, viewerId string) ([]models.DiscoverPost, int64, error) {
 	query := d.db.Model(&models.DiscoverPost{}).Where("status = 0 AND visibility = 0")
 	query = WithoutHiddenAuthors(query, viewerId, "discover_post")
@@ -295,7 +320,7 @@ func (d *DiscoverDAOImpl) SearchPostsPage(keyword string, page, pageSize int, vi
 		if err != nil {
 			return nil, 0, fmt.Errorf("处理搜索关键词失败: %w", err)
 		}
-		query = query.Where("title LIKE ? OR content LIKE ? OR JSON_CONTAINS(tags, ?)", "%"+keyword+"%", "%"+keyword+"%", string(tag))
+		query = query.Where("title LIKE ? OR content LIKE ? OR JSON_CONTAINS(tags, ?) OR user_id IN (?)", "%"+keyword+"%", "%"+keyword+"%", string(tag), d.discoverSearchAuthors(keyword))
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
