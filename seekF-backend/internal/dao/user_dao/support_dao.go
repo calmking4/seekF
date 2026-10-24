@@ -29,7 +29,7 @@ type SupportDAO interface {
 
 	// 查询创作者的助力开通记录。
 	FindActivate(userId string) (*models.SupportActivate, error)
-	// 保存开通记录或更新现有价格，保留首次开通时间。
+	// 保存开通价格和规则确认快照，保留首次开通时间。
 	SaveActivate(activate *models.SupportActivate) error
 	// 批量查询当前用户对指定创作者的权益，包含已过期记录。
 	ListEntitlements(environment, userId string, creatorIds []string) ([]models.SupportEntitlement, error)
@@ -101,9 +101,9 @@ func (d *SupportDAOImpl) FindActivate(userId string) (*models.SupportActivate, e
 	return &activate, err
 }
 
-// SaveActivate 使用用户唯一键原子保存价格，避免并发首次开通产生重复记录。
+// SaveActivate 原子保存价格和收益规则确认快照，事务及本人锁由Service管理。
 func (d *SupportDAOImpl) SaveActivate(activate *models.SupportActivate) error {
-	return d.db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}}, DoUpdates: clause.AssignmentColumns([]string{"price", "updated_at"})}).Create(activate).Error
+	return d.db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}}, DoUpdates: clause.AssignmentColumns([]string{"price", "updated_at", "terms_version", "terms_accepted_at", "terms_platform_rate_bps"})}).Create(activate).Error
 }
 
 // ListEntitlements 批量读取权益，观看资格由Service按当前时间判断。

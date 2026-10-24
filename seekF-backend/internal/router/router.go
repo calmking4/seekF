@@ -158,6 +158,8 @@ func SetupRouter(
 			protectedGroup.POST("/discover/following/updates", discoverController.FollowingUpdates)
 			protectedGroup.POST("/discover/following/read", discoverController.ReadFollowingUpdates)
 			protectedGroup.POST("/discover/click", discoverController.RecordClick)
+			protectedGroup.POST("/discover/analytics", discoverController.CreatorAnalytics)
+			protectedGroup.POST("/discover/share", discoverController.RecordShare)
 			protectedGroup.POST("/discover/feedback", discoverController.SetFeedback)
 			protectedGroup.POST("/discover/search", discoverController.SearchPosts)
 			protectedGroup.POST("/discover/profile", discoverController.GetUserProfile)

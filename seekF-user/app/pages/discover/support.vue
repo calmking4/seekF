@@ -47,9 +47,24 @@
         </div>
 
         <div class="mt-7 flex items-start gap-2 rounded-xl bg-slate-50 px-4 py-3 text-xs leading-6 text-slate-500"><Icon name="lucide:info" class="mt-1 shrink-0 text-sm text-slate-400" /><p>{{ settings?.activated ? '改价仅影响新订单，已支付订单的价格和权益保持不变。' : '开通后即可在发布图文或视频时选择「助力专属」，让支持者观看你的专属内容。' }}</p></div>
+        <section aria-labelledby="support-income-rules" class="mt-6 rounded-xl border border-blue-100 bg-blue-50/40 p-4 sm:p-5">
+          <h3 id="support-income-rules" class="flex items-center gap-2 text-sm font-semibold text-slate-700"><Icon name="lucide:coins" class="text-base text-blue-500" />收益分配与退款规则</h3>
+          <template v-if="rulesReady">
+            <div class="mt-4 grid grid-cols-2 gap-3"><div class="rounded-lg bg-white px-4 py-3"><p class="text-xs text-gray-400">创作者获得</p><p class="mt-1 text-xl font-semibold text-blue-500">{{ formatRate(settings.creator_rate_bps) }}%</p></div><div class="rounded-lg bg-white px-4 py-3"><p class="text-xs text-gray-400">平台服务费</p><p class="mt-1 text-xl font-semibold text-slate-600">{{ formatRate(settings.platform_rate_bps) }}%</p></div></div>
+            <p v-if="previewPrice !== '—'" class="mt-3 text-xs leading-6 text-slate-500">以一次助力 {{ previewPrice }} 元为例：创作者收益 <strong class="font-semibold text-blue-500">{{ exampleCreatorAmount }} 元</strong>，平台服务费 {{ examplePlatformAmount }} 元。创作者份额按分向下取整。</p>
+            <ul class="mt-3 space-y-2 text-xs leading-6 text-slate-500">
+              <li>付款确认后，创作者份额记入收益账户；绑定本人支付宝后可申请提现，支付与提现渠道手续费由平台承担。</li>
+              <li>退款申请会预留相应收益，退款成功后扣回对应创作者份额。余额不足时由平台先行垫付，后续收益优先抵扣，补足前不可提现。</li>
+              <li>比例调整仅影响新订单，已有订单按下单时的价格和分配比例计算；历史未入账订单不自动补入可提现余额。</li>
+            </ul>
+          </template>
+          <p v-else role="alert" class="mt-3 text-xs leading-6 text-amber-600">暂时无法读取收益规则，请<button type="button" class="ml-1 rounded font-medium underline focus-visible:outline-amber-500" @click="loadSettings">重新加载</button>后再保存。</p>
+        </section>
+        <el-checkbox v-if="requiresTermsAcceptance" v-model="acceptedTerms" :disabled="saving || !rulesReady" class="mt-4 !h-auto [&_.el-checkbox__label]:!whitespace-normal [&_.el-checkbox__label]:!text-xs [&_.el-checkbox__label]:!leading-6">我已阅读并同意上述收益分配、退款垫付及后续收益抵扣规则</el-checkbox>
+        <p v-else class="mt-4 flex items-center gap-1.5 text-xs text-gray-400"><Icon name="lucide:circle-check" class="text-emerald-500" />已确认当前收益规则，修改价格无需重复确认</p>
         <div class="mt-7 flex flex-wrap items-center gap-4 border-t border-gray-100 pt-6">
-          <el-button type="primary" native-type="submit" size="large" class="!min-w-[140px] !rounded-xl !font-medium" :loading="saving" :disabled="saving || !sameUser()">{{ settings?.activated ? '保存价格' : '开通助力' }}</el-button>
-          <NuxtLink v-if="settings?.activated" to="/discover/create" class="inline-flex items-center gap-1 text-sm text-blue-500 hover:text-blue-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400">去发布作品<Icon name="lucide:arrow-up-right" class="text-base" /></NuxtLink>
+          <el-button type="primary" native-type="submit" size="large" class="!min-w-[140px] !rounded-xl !font-medium" :loading="saving" :disabled="saving || !sameUser() || !rulesReady || (requiresTermsAcceptance && !acceptedTerms)">{{ settings?.activated ? '保存价格' : '开通助力' }}</el-button>
+          <NuxtLink v-if="settings?.activated" to="/discover/create" class="group inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-blue-100 bg-blue-50/70 px-5 py-2.5 text-sm font-medium text-blue-500 transition-colors duration-200 hover:border-blue-200 hover:bg-blue-100/70 hover:text-blue-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 motion-reduce:transition-none"><Icon name="lucide:square-pen" class="shrink-0 text-base" />去发布作品<Icon name="lucide:arrow-up-right" class="shrink-0 text-sm transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 motion-reduce:transition-none motion-reduce:transform-none" /></NuxtLink>
           <span v-else class="text-xs text-gray-400">用专属内容，回应每一份支持</span>
         </div>
       </form>
@@ -71,7 +86,6 @@
       </aside>
     </div>
 
-    <SupportIncome />
     <section class="rounded-2xl border border-gray-100 bg-white p-6 sm:p-7">
       <h2 class="flex items-center gap-2 text-sm font-medium text-gray-700"><Icon name="lucide:book-open" class="text-base text-gray-400" /> 开通前，了解这些</h2>
       <div class="mt-5 grid gap-5 md:grid-cols-3 md:gap-7">
@@ -92,6 +106,17 @@ const ownerId = auth.getUser()?.uuid || auth.getUser()?.Uuid || ''
 const settings = ref(null)
 const priceYuan = ref(10)
 const previewPrice = computed(() => Number.isInteger(priceYuan.value) && priceYuan.value >= 5 && priceYuan.value <= 100 ? priceYuan.value : '—')
+const acceptedTerms = ref(false)
+const requiresTermsAcceptance = computed(() => settings.value?.requires_terms_acceptance !== false)
+const rulesReady = computed(() => {
+  const { platform_rate_bps: platform, creator_rate_bps: creator, terms_version: version } = settings.value || {}
+  return Number.isInteger(platform) && platform >= 0 && platform <= 10000 && Number.isInteger(creator) && creator >= 0 && creator + platform === 10000 && !!version
+})
+const formatRate = value => new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value / 100)
+// 使用整数分计算示例，与后端创作者份额向下取整的规则保持一致。
+const exampleCreatorCents = computed(() => rulesReady.value && previewPrice.value !== '—' ? Math.floor(priceYuan.value * 100 * settings.value.creator_rate_bps / 10000) : 0)
+const exampleCreatorAmount = computed(() => (exampleCreatorCents.value / 100).toFixed(2))
+const examplePlatformAmount = computed(() => ((priceYuan.value * 100 - exampleCreatorCents.value) / 100).toFixed(2))
 const supportNotes = [
   { title: '发布时选择观看方式', content: '开通后，图文和视频均可设置为助力专属，让支持者观看你的专属作品。' },
   { title: '作品属性发布后固定', content: '作品发布后，不能在免费与助力专属之间切换，请在发布前确认。' },
@@ -104,6 +129,7 @@ let disposed = false
 const sameUser = () => !!ownerId && !disposed && ownerId === (auth.getUser()?.uuid || auth.getUser()?.Uuid || '')
 const loadSettings = async () => {
   loading.value = true; error.value = ''
+  acceptedTerms.value = false
   try {
     const response = await useApi$('/user/support/creator/info', { body: {}, retry: 0 })
     if (!sameUser()) return
@@ -115,12 +141,15 @@ const loadSettings = async () => {
 const saveSettings = async () => {
   if (saving.value || !sameUser()) return
   if (!Number.isInteger(priceYuan.value) || priceYuan.value < 5 || priceYuan.value > 100) { ElMessage.warning('助力价格必须为5至100整数元'); return }
+  if (!rulesReady.value) { ElMessage.warning('请先重新加载收益规则'); return }
+  if (requiresTermsAcceptance.value && !acceptedTerms.value) { ElMessage.warning('请先阅读并同意收益分配与退款规则'); return }
   saving.value = true
   try {
-    const response = await useApi$('/user/support/creator/save', { body: { price_yuan: priceYuan.value }, retry: 0 })
+    const response = await useApi$('/user/support/creator/save', { body: { price_yuan: priceYuan.value, accepted: acceptedTerms.value, terms_version: settings.value.terms_version, platform_rate_bps: settings.value.platform_rate_bps }, retry: 0 })
     if (!sameUser()) return
     if (response.code !== 200 || !response.data) throw new Error(response.message || '保存助力设置失败')
     settings.value = response.data; priceYuan.value = response.data.price_yuan
+    acceptedTerms.value = false
     ElMessage.success(response.message || '助力设置已保存')
   } catch (err) { if (sameUser()) ElMessage.error(err?.data?.message || err.message || '保存助力设置失败') }
   finally { if (sameUser()) saving.value = false }

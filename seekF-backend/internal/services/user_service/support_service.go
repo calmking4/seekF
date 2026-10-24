@@ -71,7 +71,7 @@ type SupportService interface {
 	// 查询创作者的开通状态、价格和当前用户权益。
 	GetCreator(ctx context.Context, userId, creatorId string) (*userresp.SupportCreatorRespond, error)
 	// 为本人开通助力或修改价格。
-	SaveActivate(ctx context.Context, userId string, priceYuan int) (*userresp.SupportCreatorRespond, error)
+	SaveActivate(ctx context.Context, userId string, input userreq.SaveSupportActivateRequest) (*userresp.SupportCreatorRespond, error)
 	// 创建或复用待支付订单。
 	CreateOrder(ctx context.Context, userId, creatorId, requestKey string) (*userresp.SupportOrderRespond, error)
 	// 查询本人订单的服务端确认结果。
@@ -112,6 +112,16 @@ func (s *SupportServiceImpl) GetCreator(ctx context.Context, userId, creatorId s
 		return nil, fmt.Errorf("查询助力设置失败: %w", err)
 	}
 	result := &userresp.SupportCreatorRespond{CreatorId: creatorId, Nickname: user.Nickname, Avatar: user.Avatar, PriceYuan: constants.SupportDefaultPriceYuan}
+	rate, err := supportPlatformRateBPS()
+	if err != nil {
+		return nil, err
+	}
+	result.PlatformRateBPS = rate
+	result.CreatorRateBPS = constants.SupportRateBase - rate
+	result.TermsVersion = constants.SupportActivationTermsVersion
+	if userId == creatorId {
+		result.RequiresTermsAcceptance = requiresSupportTermsAcceptance(activate, rate)
+	}
 	if activate != nil {
 		result.Activated = true
 		result.PriceYuan = activate.Price.IntPart()
@@ -127,12 +137,12 @@ func (s *SupportServiceImpl) GetCreator(ctx context.Context, userId, creatorId s
 	return result, nil
 }
 
-// SaveActivate 校验整数元价格并锁定本人账号，在同一事务内保存开通配置。
-func (s *SupportServiceImpl) SaveActivate(ctx context.Context, userId string, priceYuan int) (*userresp.SupportCreatorRespond, error) {
+// SaveActivate 锁定本人账号，在同一事务内核对收益规则确认并保存开通配置。
+func (s *SupportServiceImpl) SaveActivate(ctx context.Context, userId string, input userreq.SaveSupportActivateRequest) (*userresp.SupportCreatorRespond, error) {
 	if userId == "" {
 		return nil, fmt.Errorf("请先登录")
 	}
-	if priceYuan < constants.SupportMinPriceYuan || priceYuan > constants.SupportMaxPriceYuan {
+	if input.PriceYuan < constants.SupportMinPriceYuan || input.PriceYuan > constants.SupportMaxPriceYuan {
 		return nil, fmt.Errorf("助力价格必须为5至100整数元")
 	}
 	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -143,12 +153,39 @@ func (s *SupportServiceImpl) SaveActivate(ctx context.Context, userId string, pr
 		if user == nil || user.Status != 0 {
 			return fmt.Errorf("创作者账号不存在或不可用")
 		}
-		return userdao.NewSupportDAO(tx).SaveActivate(&models.SupportActivate{UserId: userId, Price: decimal.NewFromInt(int64(priceYuan))})
+		dao := userdao.NewSupportDAO(tx)
+		activate, err := dao.FindActivate(userId)
+		if err != nil {
+			return fmt.Errorf("查询助力开通状态失败: %w", err)
+		}
+		rate, err := supportPlatformRateBPS()
+		if err != nil {
+			return err
+		}
+		if requiresSupportTermsAcceptance(activate, rate) {
+			if !input.Accepted || input.TermsVersion != constants.SupportActivationTermsVersion || input.PlatformRateBPS == nil || *input.PlatformRateBPS != rate {
+				return fmt.Errorf("请确认当前收益分配与退款规则，如规则已更新请刷新后重新确认")
+			}
+			if activate == nil {
+				activate = &models.SupportActivate{UserId: userId}
+			}
+			now := time.Now()
+			activate.TermsVersion = constants.SupportActivationTermsVersion
+			activate.TermsAcceptedAt = &now
+			activate.TermsPlatformRateBPS = &rate
+		}
+		activate.Price = decimal.NewFromInt(int64(input.PriceYuan))
+		return dao.SaveActivate(activate)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("保存助力设置失败: %w", err)
 	}
 	return s.GetCreator(ctx, userId, userId)
+}
+
+// requiresSupportTermsAcceptance 判断首次开通、历史未确认或规则更新后是否需本人确认。
+func requiresSupportTermsAcceptance(activate *models.SupportActivate, rate int) bool {
+	return activate == nil || activate.TermsAcceptedAt == nil || activate.TermsVersion != constants.SupportActivationTermsVersion || activate.TermsPlatformRateBPS == nil || *activate.TermsPlatformRateBPS != rate
 }
 
 // discoverSupportExpiries 为当前页批量读取助力权益，避免逐帖查询。
@@ -443,7 +480,15 @@ func applySupportTrade(ctx context.Context, environment string, trade *payment.A
 			if err := dao.UpdateOrder(row.Id, map[string]any{"status": constants.SupportOrderPaid, "trade_no": trade.TradeNo, "paid_at": paidAt, "confirmed_at": now, "next_attempt_at": now.Add(constants.SupportRefundAuditInterval), "closed_at": nil, "processing_until": nil, "last_error": ""}); err != nil {
 				return err
 			}
-			return userdao.NewNotificationDAO(tx).CreateNotification(&models.Notification{UserId: row.UserId, ActorId: row.CreatorId, Type: constants.NotificationSupportPaid, Content: "助力付款已确认，30天观看权益已生效。", CreatedAt: now})
+			notifications := userdao.NewNotificationDAO(tx)
+			if err := notifications.CreateNotification(&models.Notification{UserId: row.UserId, ActorId: row.CreatorId, Type: constants.NotificationSupportPaid, Content: "助力付款已确认，30天观看权益已生效。", CreatedAt: now}); err != nil {
+				return fmt.Errorf("保存助力付款通知失败: %w", err)
+			}
+			// 与付款、入账和权益同事务写入；已付款订单的重复回调在上方直接返回。
+			if err := notifications.CreateNotification(supportReceivedNotification(row, now)); err != nil {
+				return fmt.Errorf("保存收到助力通知失败: %w", err)
+			}
+			return nil
 		case "TRADE_CLOSED":
 			if row.Status == constants.SupportOrderPaid {
 				return nil
@@ -455,6 +500,11 @@ func applySupportTrade(ctx context.Context, environment string, trade *payment.A
 			return fmt.Errorf("支付宝交易状态不支持")
 		}
 	})
+}
+
+// supportReceivedNotification 构造面向创作者的到账通知，以订单主键编码关联同一笔助力。
+func supportReceivedNotification(order *models.SupportOrder, now time.Time) *models.Notification {
+	return &models.Notification{UserId: order.CreatorId, ActorId: order.UserId, Type: constants.NotificationSupportReceived, TargetUuid: fmt.Sprintf("O%d", order.Id), Content: "助力金额 ¥" + order.Amount.StringFixed(2), CreatedAt: now}
 }
 
 // reconcileSupportOrder 在事务外先查单再关单，未知或网络失败始终保持待确认并继续补偿。
@@ -917,14 +967,23 @@ func listSupportSettlement(ctx context.Context, userId, kind string, page int) (
 	return map[string]any{"list": result, "total": total}, nil
 }
 
-// setSupportSettlementSnapshot 为新订单计算不可变份额，历史订单不补写快照。
-func setSupportSettlementSnapshot(row *models.SupportOrder) error {
+// supportPlatformRateBPS 统一读取并校验展示和新订单使用的平台抽成比例。
+func supportPlatformRateBPS() (int, error) {
 	rate := constants.SupportPlatformRateBPS
 	if configured := configs.GetConfig().SupportSettlementConfig.PlatformRateBPS; configured != nil {
 		rate = *configured
 	}
 	if rate < 0 || rate > constants.SupportRateBase {
-		return fmt.Errorf("平台抽成比例必须为0至10000基点")
+		return 0, fmt.Errorf("平台抽成比例必须为0至10000基点")
+	}
+	return rate, nil
+}
+
+// setSupportSettlementSnapshot 为新订单计算不可变份额，历史订单不补写快照。
+func setSupportSettlementSnapshot(row *models.SupportOrder) error {
+	rate, err := supportPlatformRateBPS()
+	if err != nil {
+		return err
 	}
 	row.SettlementVersion = constants.SupportSettlementVersion
 	row.PlatformRateBPS = rate
@@ -1146,9 +1205,9 @@ func (s *SupportServiceImpl) GetSettlementAccount(ctx context.Context, userId st
 			return nil, err
 		}
 	}
-	rate := constants.SupportPlatformRateBPS
-	if value := configs.GetConfig().SupportSettlementConfig.PlatformRateBPS; value != nil {
-		rate = *value
+	rate, err := supportPlatformRateBPS()
+	if err != nil {
+		return nil, err
 	}
 	accepted := ""
 	if row.AcceptedAt != nil {

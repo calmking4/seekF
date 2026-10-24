@@ -219,7 +219,7 @@ func (c *SupportController) SaveActivate(ctx *gin.Context) {
 		resp.Error(ctx, "助力价格必须为5至100整数元", http.StatusBadRequest)
 		return
 	}
-	result, err := c.supportService.SaveActivate(ctx.Request.Context(), ctx.GetString("Uuid"), req.PriceYuan)
+	result, err := c.supportService.SaveActivate(ctx.Request.Context(), ctx.GetString("Uuid"), req)
 	if err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return

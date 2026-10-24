@@ -132,3 +132,34 @@ type FeedRespond struct {
 	HasMore      bool       `json:"has_more"`
 	HasFollowing bool       `json:"has_following"`
 }
+
+// ========== 创作者数据中心 ==========
+
+// CreatorAnalyticsMetrics 表示所选期间的七项核心指标，净增粉丝允许负数。
+type CreatorAnalyticsMetrics struct {
+	Clicks       int64 `json:"clicks"`
+	NetFollowers int64 `json:"net_followers"`
+	Likes        int64 `json:"likes"`
+	Collections  int64 `json:"collections"`
+	Supports     int64 `json:"supports"`
+	Comments     int64 `json:"comments"`
+	Shares       int64 `json:"shares"`
+}
+
+// CreatorAnalyticsDay 表示北京时间自然日的点击及元金额。
+type CreatorAnalyticsDay struct {
+	Date    string `json:"date"`
+	Clicks  int64  `json:"clicks"`
+	Revenue string `json:"revenue"`
+}
+
+// CreatorAnalyticsRespond 返回本人数据中心汇总、补零后的趋势及统计时间边界。
+type CreatorAnalyticsRespond struct {
+	Metrics       CreatorAnalyticsMetrics `json:"metrics"`
+	ClickTrend    []CreatorAnalyticsDay   `json:"click_trend"`
+	RevenueTrend  []CreatorAnalyticsDay   `json:"revenue_trend"`
+	Revenue       string                  `json:"revenue"`
+	TrackingSince string                  `json:"tracking_since"`
+	UpdatedAt     string                  `json:"updated_at"`
+	Environment   string                  `json:"environment"`
+}

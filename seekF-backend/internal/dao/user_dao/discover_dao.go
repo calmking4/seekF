@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
 	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -23,6 +25,16 @@ type DiscoverMediaInfo struct {
 
 // DiscoverDAO 发现页帖子、媒体和互动数据访问接口。
 type DiscoverDAO interface {
+	// 幂等保存创作者事件并返回原记录，用于校验请求目标。
+	SaveCreatorAnalyticsEvent(event *models.CreatorAnalyticsEvent) (*models.CreatorAnalyticsEvent, error)
+	// 查询创作者事件采集的启用时间。
+	CreatorAnalyticsTrackingStart() (time.Time, error)
+	// 汇总本人作品在指定期间的核心指标。
+	GetCreatorAnalyticsMetrics(creator, environment string, start, end time.Time) (userresp.CreatorAnalyticsMetrics, error)
+	// 汇总本人作品在指定期间的每日点击量。
+	ListCreatorClickTrend(creator string, start, end time.Time) ([]CreatorDailyCount, error)
+	// 汇总本人在指定期间的每日净收益，金额单位元。
+	ListCreatorRevenueTrend(creator, environment string, start, end time.Time) ([]CreatorDailyRevenue, error)
 	// 锁定收藏目标，包含已软删除帖子，供取消收藏维护计数。
 	FindCollectionPostForUpdate(uuid string) (*models.DiscoverPost, error)
 	// 锁定收藏夹，串行处理重复取消并校验归属。
@@ -840,4 +852,77 @@ func (d *DiscoverDAOImpl) CountCollectionEntries(folderId int64) (int64, error) 
 	var count int64
 	err := d.db.Model(&models.DiscoverCollection{}).Where("folder_id = ?", folderId).Count(&count).Error
 	return count, err
+}
+
+// ========== 创作者数据中心 ==========
+
+// CreatorDailyCount 保存每日点击查询结果，不属于数据库模型。
+type CreatorDailyCount struct {
+	Date  string
+	Count int64
+}
+
+// CreatorDailyRevenue 保存每日创作者净收益查询结果，单位元。
+type CreatorDailyRevenue struct {
+	Date   string
+	Amount decimal.Decimal
+}
+
+// SaveCreatorAnalyticsEvent 幂等保存事件，重复请求返回原记录供Service核对业务目标。
+func (d *DiscoverDAOImpl) SaveCreatorAnalyticsEvent(event *models.CreatorAnalyticsEvent) (*models.CreatorAnalyticsEvent, error) {
+	if err := d.db.Clauses(clause.OnConflict{DoNothing: true}).Create(event).Error; err != nil {
+		return nil, err
+	}
+	var saved models.CreatorAnalyticsEvent
+	err := d.db.Where("actor_id = ? AND request_key = ?", event.ActorId, event.RequestKey).Take(&saved).Error
+	return &saved, err
+}
+
+// CreatorAnalyticsTrackingStart 读取迁移时固定的事件采集启用时间。
+func (d *DiscoverDAOImpl) CreatorAnalyticsTrackingStart() (time.Time, error) {
+	var event models.CreatorAnalyticsEvent
+	err := d.db.Where("kind = ? AND actor_id = ? AND request_key = ?", constants.CreatorAnalyticsStarted, "", "tracking-start").Take(&event).Error
+	return event.CreatedAt, err
+}
+
+// GetCreatorAnalyticsMetrics 查询本人作品在半开日期区间内的有效互动及粉丝净增。
+func (d *DiscoverDAOImpl) GetCreatorAnalyticsMetrics(creator, environment string, start, end time.Time) (userresp.CreatorAnalyticsMetrics, error) {
+	var result userresp.CreatorAnalyticsMetrics
+	queries := []struct {
+		query  *gorm.DB
+		target *int64
+	}{
+		{d.db.Table("discover_click AS a").Joins("JOIN discover_post AS p ON p.uuid = a.post_uuid").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.click_day >= ? AND a.click_day < ?", creator, start.Format("2006-01-02"), end.Format("2006-01-02")), &result.Clicks},
+		{d.db.Table("discover_like AS a").Joins("JOIN discover_post AS p ON p.uuid = a.target_uuid").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.created_at >= ? AND a.created_at < ?", creator, start, end), &result.Likes},
+		{d.db.Table("discover_collection AS a").Joins("JOIN discover_post AS p ON p.uuid = a.target_uuid").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.created_at >= ? AND a.created_at < ?", creator, start, end), &result.Collections},
+		{d.db.Table("discover_comment AS a").Joins("JOIN discover_post AS p ON p.id = a.post_id").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.deleted_at IS NULL AND a.created_at >= ? AND a.created_at < ?", creator, start, end), &result.Comments},
+		{d.db.Model(&models.SupportOrder{}).Where("creator_id = ? AND environment = ? AND status = ? AND refund_status <> ? AND paid_at >= ? AND paid_at < ?", creator, environment, constants.SupportOrderPaid, constants.SupportRefundSucceeded, start, end), &result.Supports},
+	}
+	for _, item := range queries {
+		if err := item.query.Count(item.target).Error; err != nil {
+			return result, err
+		}
+	}
+	if err := d.db.Model(&models.CreatorAnalyticsEvent{}).Where("creator_id = ? AND kind = ? AND created_at >= ? AND created_at < ?", creator, constants.CreatorAnalyticsFollower, start, end).Select("COALESCE(SUM(delta), 0)").Scan(&result.NetFollowers).Error; err != nil {
+		return result, err
+	}
+	err := d.db.Table("creator_analytics_event AS a").Joins("JOIN discover_post AS p ON p.uuid = a.target_uuid").Where("a.creator_id = ? AND a.kind = ? AND p.deleted_at IS NULL AND a.created_at >= ? AND a.created_at < ?", creator, constants.CreatorAnalyticsShare, start, end).Count(&result.Shares).Error
+	return result, err
+}
+
+// ListCreatorClickTrend 按北京时间去重日期汇总本人未删除作品的点击量。
+func (d *DiscoverDAOImpl) ListCreatorClickTrend(creator string, start, end time.Time) ([]CreatorDailyCount, error) {
+	var rows []CreatorDailyCount
+	err := d.db.Table("discover_click AS a").Joins("JOIN discover_post AS p ON p.uuid = a.post_uuid").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.click_day >= ? AND a.click_day < ?", creator, start.Format("2006-01-02"), end.Format("2006-01-02")).Select("DATE_FORMAT(a.click_day, '%Y-%m-%d') AS date, COUNT(*) AS count").Group("a.click_day").Order("a.click_day").Scan(&rows).Error
+	return rows, err
+}
+
+// ListCreatorRevenueTrend 按流水日期汇总入账份额减退款冲销，不将提现或冻结算作收益。
+func (d *DiscoverDAOImpl) ListCreatorRevenueTrend(creator, environment string, start, end time.Time) ([]CreatorDailyRevenue, error) {
+	var rows []CreatorDailyRevenue
+	err := d.db.Model(&models.SupportLedger{}).Where("creator_id = ? AND environment = ? AND kind IN ? AND created_at >= ? AND created_at < ?", creator, environment, []string{constants.SupportLedgerIncome, constants.SupportLedgerRefund}, start, end).Select("DATE_FORMAT(created_at, '%Y-%m-%d') AS date, SUM(CASE WHEN kind = ? THEN amount ELSE -amount END) AS amount", constants.SupportLedgerIncome).Group("DATE_FORMAT(created_at, '%Y-%m-%d')").Order("date").Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("查询收益趋势失败: %w", err)
+	}
+	return rows, nil
 }

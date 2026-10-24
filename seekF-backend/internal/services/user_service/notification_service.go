@@ -92,6 +92,11 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 	for _, n := range notifications {
 		// 评论互动通知记录评论 UUID，解析所属帖子供通知页面打开；旧通知仍可使用帖子 UUID。
 		targetUuid := n.TargetUuid
+		isSupport := n.Type == constants.NotificationSupportPaid || n.Type == constants.NotificationSupportRefund || n.Type == constants.NotificationSupportReceived
+		// 助力通知关联订单或用户，不把订单标识作为帖子查询。
+		if isSupport {
+			targetUuid = ""
+		}
 		var notificationComment *models.DiscoverComment
 		if (n.Type == NotificationTypeCommentPost || n.Type == NotificationTypeReply || n.Type == NotificationTypeLikeComment) && strings.HasPrefix(targetUuid, "C") {
 			notificationComment, err = s.discoverDAO.FindCommentByUuid(targetUuid)
@@ -179,7 +184,7 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 				info.PostTitle, info.PostCover, info.TargetAvailable = post.Title, covers[targetUuid], true
 			}
 		}
-		if n.Type == constants.NotificationSupportPaid || n.Type == constants.NotificationSupportRefund {
+		if isSupport {
 			info.TargetAvailable = true
 		}
 		if n.Type != NotificationTypeFollow && !info.TargetAvailable {
@@ -198,7 +203,7 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 func NotificationCategoryTypes(category string) []int8 {
 	switch category {
 	case "support":
-		return []int8{constants.NotificationSupportPaid, constants.NotificationSupportRefund}
+		return []int8{constants.NotificationSupportPaid, constants.NotificationSupportRefund, constants.NotificationSupportReceived}
 	case "comments":
 		return []int8{NotificationTypeCommentPost, NotificationTypeReply}
 	case "likes":
@@ -210,14 +215,14 @@ func NotificationCategoryTypes(category string) []int8 {
 	}
 }
 
-// GetUnreadCounts 统计评论、赞和收藏、关注各分类的未读数量。
+// GetUnreadCounts 统计助力、评论、赞和收藏、关注各分类的未读数量。
 func (s *NotificationServiceImpl) GetUnreadCounts(ctx context.Context, userId string) (map[string]int64, error) {
 	counts, err := s.notificationDAO.CountUnreadByType(userId)
 	if err != nil {
 		return nil, fmt.Errorf("查询分类未读数失败: %w", err)
 	}
 	return map[string]int64{
-		"support":  counts[constants.NotificationSupportPaid] + counts[constants.NotificationSupportRefund],
+		"support":  counts[constants.NotificationSupportPaid] + counts[constants.NotificationSupportRefund] + counts[constants.NotificationSupportReceived],
 		"comments": counts[NotificationTypeCommentPost] + counts[NotificationTypeReply],
 		"likes":    counts[NotificationTypeLikePost] + counts[NotificationTypeCollectPost] + counts[NotificationTypeLikeComment],
 		"follows":  counts[NotificationTypeFollow],

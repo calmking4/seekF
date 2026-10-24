@@ -289,6 +289,9 @@ const props = defineProps({ item: { type: Object, default: null }, standalone: B
 const emit = defineEmits(['close', 'like-updated', 'collect-updated', 'follow-updated'])
 const auth = useAuthState()
 const route = useRoute()
+const shareApiBase = useRuntimeConfig().public.apiBase
+const { recordClick } = useDiscoverClick()
+let clickRecorded = false
 const show = ref(false)
 const videoRef = ref(null)
 const detail = ref(null)
@@ -434,6 +437,8 @@ const fetchDetail = async () => {
     if (disposed || version !== detailVersion || viewerId !== (auth.getUser()?.uuid || auth.getUser()?.Uuid || '')) return
     if (response.code !== 200 || !response.data) throw new Error(response.message || '动态暂时无法访问')
     detail.value = response.data
+    // 共用详情补齐个人主页、通知及分享链接入口，服务端按天去重。
+    if (!clickRecorded) { clickRecorded = true; void recordClick(props.item.id, 'detail') }
     if (isSupportLocked.value) {
       comments.value = []; commentsHasMore.value = false
       showCommentInput.value = false; commentText.value = ''; replyTarget.value = null
@@ -465,6 +470,7 @@ const fetchDetail = async () => {
 }
 // 切换账号时重新读取当前权限，并立即移除上一账号的媒体地址。
 watch(() => auth.getUser()?.uuid || auth.getUser()?.Uuid || '', () => {
+  clickRecorded = false
   detailVersion++
   detail.value = null
   locatingComment.value = false; clearCommentHighlight(); commentLocationError.value = ''; commentLocationRetry.value = false
@@ -694,13 +700,22 @@ const submitComment = async () => {
   finally { if (!disposed) submitting.value = false }
 }
 const sharePost = async () => {
-  const url = new URL('/discover/post/' + encodeURIComponent(props.item.id), window.location.origin).href
+  const postId = props.item.id
+  const owner = auth.getUser()?.uuid || auth.getUser()?.Uuid || ''
+  const url = new URL('/discover/post/' + encodeURIComponent(postId), window.location.origin).href
+  let shared = false
   try {
     await navigator.clipboard.writeText(url)
+    shared = true
     ElMessage.success('分享链接已复制')
   } catch {
     // HTTP 或浏览器不支持剪贴板时，展示可手动复制的真实链接。
-    try { await ElMessageBox.prompt('请复制下方链接，查看内容需要登录', '分享动态', { inputValue: url, confirmButtonText: '完成', cancelButtonText: '关闭', inputType: 'text' }) } catch { /* 用户关闭分享窗口。 */ }
+    try { await ElMessageBox.prompt('请复制下方链接，查看内容需要登录', '分享动态', { inputValue: url, confirmButtonText: '完成', cancelButtonText: '关闭', inputType: 'text' }); shared = true } catch { /* 用户关闭分享窗口。 */ }
+  }
+  if (shared && owner && owner === (auth.getUser()?.uuid || auth.getUser()?.Uuid || '')) {
+    const requestKey = globalThis.crypto?.randomUUID?.() || 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, char => { const value = Math.floor(Math.random() * 16); return (char === 'x' ? value : (value & 3) | 8).toString(16) })
+    // 埋点失败不影响已复制的链接，同一请求允许安全重试。
+    try { await $fetch('/user/discover/share', { baseURL: shareApiBase, method: 'POST', credentials: 'include', body: { post_uuid: postId, request_key: requestKey }, retry: 0, timeout: 5000 }) } catch (err) { console.error('记录分享统计失败:', err) }
   }
 }
 const handleClose = () => {

@@ -15,5 +15,8 @@ type SupportCreatorRequest struct {
 
 // SaveSupportActivateRequest 开通助力或改价，价格仅接受5至100整数元。
 type SaveSupportActivateRequest struct {
-	PriceYuan int `json:"price_yuan" binding:"required,min=5,max=100"`
+	PriceYuan       int    `json:"price_yuan" binding:"required,min=5,max=100"`
+	Accepted        bool   `json:"accepted"`
+	TermsVersion    string `json:"terms_version" binding:"max=32"`
+	PlatformRateBPS *int   `json:"platform_rate_bps" binding:"omitempty,min=0,max=10000"`
 }

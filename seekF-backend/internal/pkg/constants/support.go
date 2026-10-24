@@ -5,6 +5,8 @@ import "time"
 const (
 	// 创作者收款及退款抵扣约定版本。
 	SupportTermsVersion = "20261020-v1"
+	// 创作者开通助力时确认收益分配与退款规则的版本。
+	SupportActivationTermsVersion = "20261024-v1"
 	// 商家转账的固定产品码与业务场景。
 	SupportTransferProduct = "TRANS_ACCOUNT_NO_PWD"
 	SupportTransferScene   = "DIRECT_TRANSFER"
@@ -39,6 +41,8 @@ const (
 	SupportBillMaxBytes = 20 * 1024 * 1024
 	// 助力全额退款成功通知。
 	NotificationSupportRefund int8 = 8
+	// 创作者收到助力的付款确认通知。
+	NotificationSupportReceived int8 = 9
 	// 已付款订单渠道退款账单核对周期，单位小时。
 	SupportRefundAuditInterval = 24 * time.Hour
 

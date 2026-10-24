@@ -1001,3 +1001,35 @@ func (c *DiscoverController) SetPostVisibility(ctx *gin.Context) {
 	}
 	resp.Success(ctx, "可见性已更新", gin.H{"visibility": *req.Visibility, "version": version})
 }
+
+// ========== 创作者数据中心 ==========
+
+// CreatorAnalytics 按登录身份查询创作者指标，不接受客户端指定作者。
+func (c *DiscoverController) CreatorAnalytics(ctx *gin.Context) {
+	var req userreq.CreatorAnalyticsRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.Error(ctx, "统计时间仅支持近7、30或90天", http.StatusBadRequest)
+		return
+	}
+	result, err := c.discoverService.GetCreatorAnalytics(ctx.Request.Context(), ctx.GetString("Uuid"), req)
+	if err != nil {
+		zlog.Error("查询创作者数据失败，用户=" + ctx.GetString("Uuid") + ": " + err.Error())
+		resp.Error(ctx, "读取数据中心失败，请稍后重试", http.StatusInternalServerError)
+		return
+	}
+	resp.Success(ctx, "查询成功", result)
+}
+
+// RecordShare 保存当前用户成功分享帖子的统计事件。
+func (c *DiscoverController) RecordShare(ctx *gin.Context) {
+	var req userreq.CreatorShareRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.Error(ctx, "分享参数错误", http.StatusBadRequest)
+		return
+	}
+	if err := c.discoverService.RecordCreatorShare(ctx.Request.Context(), ctx.GetString("Uuid"), req); err != nil {
+		respondDiscoverError(ctx, err)
+		return
+	}
+	resp.Success(ctx, "记录成功", nil)
+}

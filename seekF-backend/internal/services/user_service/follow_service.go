@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
+	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/db"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -98,6 +101,10 @@ func (s *FollowServiceImpl) ToggleFollow(ctx context.Context, userId, followUser
 			if err := userdao.NewNotificationDAO(tx).CreateNotification(&models.Notification{UserId: followUserId, ActorId: userId, Type: NotificationTypeFollow, TargetUuid: userId, Content: "关注了你"}); err != nil {
 				return err
 			}
+		}
+		// 与关系、计数同事务保存增减事件，取消关注后仍可还原净增。
+		if _, err := userdao.NewDiscoverDAO(tx).SaveCreatorAnalyticsEvent(&models.CreatorAnalyticsEvent{CreatorId: followUserId, ActorId: userId, Kind: constants.CreatorAnalyticsFollower, Delta: delta, RequestKey: uuid.NewString(), CreatedAt: time.Now()}); err != nil {
+			return fmt.Errorf("保存粉丝变化失败: %w", err)
 		}
 		followed = delta > 0
 		return nil

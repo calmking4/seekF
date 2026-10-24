@@ -48,7 +48,7 @@ type FollowingReadRequest struct {
 // DiscoverClickRequest 只用于用户主动打开详情，不由详情查询自动触发。
 type DiscoverClickRequest struct {
 	PostUuid string `json:"post_uuid" binding:"required,max=20"`
-	Source   string `json:"source" binding:"required,oneof=recommended hot following image video search profile collection liked"`
+	Source   string `json:"source" binding:"required,oneof=recommended hot following image video search profile collection liked detail"`
 }
 
 // DiscoverFeedbackRequest 根据帖子确定目标作者，明确设置不感兴趣状态。
@@ -184,4 +184,18 @@ type SetPostVisibilityRequest struct {
 	PostUuid   string `json:"post_uuid" binding:"required"`
 	Visibility *int8  `json:"visibility" binding:"required"`
 	Version    uint64 `json:"version" binding:"required"`
+}
+
+// ========== 创作者数据中心 ==========
+
+// CreatorAnalyticsRequest 分别选择核心数据与收益的统计天数。
+type CreatorAnalyticsRequest struct {
+	Days        int `json:"days" binding:"required,oneof=7 30 90"`
+	RevenueDays int `json:"revenue_days" binding:"required,oneof=7 30 90"`
+}
+
+// CreatorShareRequest 成功复制帖子链接后的幂等分享请求。
+type CreatorShareRequest struct {
+	PostUuid   string `json:"post_uuid" binding:"required,max=20"`
+	RequestKey string `json:"request_key" binding:"required,uuid"`
 }

@@ -33,3 +33,14 @@ const (
 	// 表示对作者全部帖子不感兴趣，仅影响推荐。
 	DiscoverFeedbackAuthor = "author"
 )
+
+// ========== 创作者数据中心 ==========
+
+const (
+	// 关注关系增减事件，增量为1或-1。
+	CreatorAnalyticsFollower = "follower"
+	// 成功分享事件，增量为1。
+	CreatorAnalyticsShare = "share"
+	// 数据中心埋点启用标记，不参与指标汇总。
+	CreatorAnalyticsStarted = "started"
+)

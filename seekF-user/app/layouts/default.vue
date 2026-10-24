@@ -76,7 +76,7 @@ let stopUnreadMessages = null
 
 // refreshVisibleUnread 页面重新可见或轮询时补偿离线、重连和跨标签页的未读状态。
 const refreshVisibleUnread = () => {
-  if (document.visibilityState === 'visible') refreshUnread()
+  if (document.visibilityState === 'visible') { refreshUnread(); fetchUnreadCount() }
 }
 
 watch(ownerId, () => {
