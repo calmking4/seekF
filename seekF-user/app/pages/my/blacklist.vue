@@ -1,6 +1,6 @@
 <template>
   <div class="mx-auto min-h-screen max-w-3xl bg-white px-6 py-8">
-    <NuxtLink to="/my" class="mb-6 inline-flex items-center gap-2 text-sm text-gray-500 hover:text-blue-500"><Icon name="mdi:arrow-left" />返回我的主页</NuxtLink>
+    <button type="button" class="mb-6 inline-flex items-center gap-2 text-sm text-gray-500 hover:text-blue-500" @click="goBack"><Icon name="mdi:arrow-left" />返回</button>
     <h1 class="text-xl font-semibold text-gray-900">黑名单</h1>
     <p class="mt-3 text-sm leading-6 text-gray-500">拉黑后，首页不再展示对方的帖子，对方无法查看你的帖子或给你发私信。解除拉黑后恢复；若对方也拉黑了你，仍受对方限制。</p>
     <div v-if="loading && !rows.length" class="py-16 text-center text-gray-400" role="status">加载中...</div>
@@ -26,6 +26,7 @@
 
 <script setup>
 import { ElMessage } from 'element-plus'
+const goBack = usePageBack('/my')
 definePageMeta({ keepalive: false })
 useSeoMeta({ title: '黑名单' })
 const rows = ref([])

@@ -370,6 +370,7 @@ import {
 } from '~/composables/useVideoPoster'
 
 const route = useRoute()
+const goBack = usePageBack('/discover/manage')
 const editorAuth = useAuthState()
 const editorUserId = editorAuth.getUser()?.uuid || editorAuth.getUser()?.Uuid || ''
 let editorDisposed = false
@@ -900,10 +901,10 @@ const openDraft = async draft => {
 }
 const deleteDraft = async id => { clearDiscoverDraft(id); draftList.value = listDiscoverDrafts(); draftCount.value = draftList.value.length; if (draftId.value === id) { draftId.value = ''; draftSaveStatus.value = '草稿已删除，当前输入仍保留'; } }
 
-// 返回作品管理，草稿仅通过保存按钮写入。
+// 返回编辑前的页面，草稿仅通过保存按钮写入。
 const returnToManagement = async () => {
   if (hasActiveUpload.value) return
-  await navigateTo('/discover/manage')
+  await goBack()
 }
 
 const handlePublish = async () => {

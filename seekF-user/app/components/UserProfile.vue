@@ -1,7 +1,7 @@
 <template>
   <div ref="profileRoot" class="bg-white" :class="embedded ? 'min-h-full' : 'min-h-screen'">
     <div class="mx-auto max-w-5xl px-6 pt-6 pb-10">
-      <button v-if="!embedded" type="button" class="mb-6 flex items-center gap-2 text-sm text-gray-500 hover:text-blue-500" @click="navigateTo(fromNotification ? '/notification' : '/discover')"><Icon name="mdi:arrow-left" class="text-lg" />{{ fromNotification ? '返回通知' : '返回发现' }}</button>
+      <button v-if="!embedded" type="button" class="mb-6 flex items-center gap-2 text-sm text-gray-500 hover:text-blue-500" @click="goBack"><Icon name="mdi:arrow-left" class="text-lg" />返回</button>
       <div v-if="loading && !profile" class="py-12" aria-label="用户主页加载中"><el-skeleton :rows="4" animated /></div>
       <div v-else-if="!profile" class="py-20 text-center">
         <Icon name="uil:user-exclamation" class="mb-3 text-4xl text-gray-300" />
@@ -82,6 +82,7 @@ const props = defineProps({
   embedded: { type: Boolean, default: false },
 })
 const auth = useAuthState()
+const goBack = usePageBack(() => props.fromNotification ? '/notification' : '/discover')
 const profileRoot = ref(null)
 const userId = computed(() => props.userId)
 const profile = ref(null)

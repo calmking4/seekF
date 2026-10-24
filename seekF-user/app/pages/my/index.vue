@@ -18,7 +18,7 @@
             <div class="flex gap-6 text-sm text-gray-600 mt-1">
               <button type="button" class="transition-colors hover:text-blue-500 focus-visible:outline-blue-400" :disabled="!userInfo.uuid" @click="followListType = 'following'; followListVisible = true"><span class="font-medium">{{ userInfo.followCount || 0 }}</span> 关注</button>
               <button type="button" class="transition-colors hover:text-blue-500 focus-visible:outline-blue-400" :disabled="!userInfo.uuid" @click="followListType = 'followers'; followListVisible = true"><span class="font-medium">{{ userInfo.followerCount || 0 }}</span> 粉丝</button>
-              <span><span class="font-medium">{{ userInfo.likeCount || 0 }}</span> 获赞与收藏</span>
+              <span><span class="font-medium">{{ userInfo.likeCount || 0 }}</span> 获赞</span>
             </div>
           </div>
         </div>
@@ -528,8 +528,7 @@ const loadUserInfo = async () => {
         avatar: data.data.avatar,
         email: data.data.email,  // 添加邮箱
         birthday: data.data.birthday,  // 添加生日
-        signature: data.data.signature,
-        likeCount: data.data.likeCount || 0
+        signature: data.data.signature
       })
     } else {
       console.error('获取用户信息失败:', data?.message || '未知错误')
@@ -572,6 +571,7 @@ const loadOwnPosts = async () => {
     })
     if (requestId !== ownPostsRequestId) return
     if (res.code !== 200 || !res.data) throw new Error(res.message || '加载自己的帖子失败')
+    userInfo.likeCount = res.data.total_likes ?? 0
     const list = res.data.posts || []
     const existing = new Set(ownPosts.value.map(post => post.uuid))
     ownPosts.value.push(...list.filter(post => !existing.has(post.uuid)))
@@ -594,6 +594,9 @@ const handleOwnPostClick = (post) => {
 
 // 同步同一帖子在各标签中的点赞状态，自己的帖子不会因取消点赞而消失。
 const handleOwnPostLikeUpdated = ({ postId, likeCount, isLiked }) => {
+  const ownPost = ownPosts.value.find(post => post.uuid === postId)
+    || [...likedPosts.value, ...folderPosts.value].find(post => post.uuid === postId && post.user_id === userInfo.uuid)
+  if (ownPost) userInfo.likeCount = Math.max(0, userInfo.likeCount + likeCount - (ownPost.like_count || 0))
   const alreadyInLikes = likedPosts.value.some(post => post.uuid === postId)
   for (const list of [ownPosts.value, likedPosts.value, folderPosts.value]) {
     const post = list.find(item => item.uuid === postId)

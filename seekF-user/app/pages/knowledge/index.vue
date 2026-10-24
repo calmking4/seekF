@@ -8,7 +8,7 @@
                         <Icon name="uil:upload-alt" class="button-icon" />
                         上传知识文件
                     </el-button>
-                    <el-button class="header-button back-button" @click="navigateTo('/aichat')">
+                    <el-button class="header-button back-button" @click="goBack">
                         <Icon name="uil:arrow-left" class="button-icon" />
                         返回
                     </el-button>
@@ -85,6 +85,7 @@
 </template>
 
 <script setup>
+const goBack = usePageBack('/aichat')
 // 页面级 SEO
 useSeoMeta({
   title: '知识库管理',

@@ -3,7 +3,7 @@
     <!-- 顶部导航栏 -->
     <header class="sticky top-0 z-20 bg-white shadow-sm px-4 py-3">
       <div class="flex items-center gap-3">
-        <Icon name="mdi:arrow-left" class="text-xl cursor-pointer text-gray-600" @click="navigateTo(`/user/${userId}`)" />
+        <Icon name="mdi:arrow-left" class="text-xl cursor-pointer text-gray-600" @click="goBack" />
         <span class="text-base font-medium text-gray-800">粉丝列表</span>
       </div>
     </header>
@@ -63,6 +63,7 @@ import { ref, onMounted } from 'vue'
 
 const route = useRoute()
 const userId = route.params.id
+const goBack = usePageBack(() => `/user/${encodeURIComponent(userId)}`)
 
 useSeoMeta({
   title: '粉丝列表',

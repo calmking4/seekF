@@ -23,6 +23,7 @@
           <!-- 视频播放 -->
           <div v-if="detail?.media_type === 1 && detail?.urls?.length && detail?.can_play !== false" class="video-wrapper">
             <video
+              ref="videoRef"
               :key="detail.urls[0]"
               :src="detail.urls[0]"
               class="video-player"
@@ -289,6 +290,7 @@ const emit = defineEmits(['close', 'like-updated', 'collect-updated', 'follow-up
 const auth = useAuthState()
 const route = useRoute()
 const show = ref(false)
+const videoRef = ref(null)
 const detail = ref(null)
 const isSupportLocked = computed(() => (detail.value?.support_only ?? props.item?.support_only) === 1 && detail.value?.can_play !== true)
 const detailLoading = ref(false)
@@ -397,6 +399,27 @@ let previousFocus
 let disposed = false
 let closeTimer
 let detailVersion = 0
+
+// 自动播放新打开的视频，浏览器禁止有声播放时尝试静音播放。
+const autoplayVideo = async video => {
+  if (!video || disposed || !show.value || videoRef.value !== video) return
+  try {
+    await video.play()
+  } catch (error) {
+    if (error?.name !== 'NotAllowedError' || disposed || !show.value || videoRef.value !== video) return
+    video.muted = true
+    try {
+      await video.play()
+    } catch { /* 浏览器仍限制自动播放时保留原生播放按钮。 */ }
+  }
+  if (disposed || !show.value || videoRef.value !== video) video.pause()
+}
+
+// 视频节点只在可播放的详情加载后出现，切换或移除时停止旧视频。
+watch(videoRef, (video, previousVideo) => {
+  previousVideo?.pause()
+  void autoplayVideo(video)
+}, { flush: 'post' })
 
 const fetchDetail = async () => {
   if (!props.item?.id || detailLoading.value) return
@@ -683,6 +706,7 @@ const sharePost = async () => {
 const handleClose = () => {
   if (props.standalone || showCollectDialog.value) return
   show.value = false
+  videoRef.value?.pause()
   clearCommentHighlight()
   clearTimeout(closeTimer)
   closeTimer = setTimeout(() => emit('close'), 300)
@@ -721,6 +745,7 @@ onMounted(() => {
   fetchDetail()
 })
 onUnmounted(() => {
+  videoRef.value?.pause()
   clearCommentHighlight()
   disposed = true
   detailVersion++
