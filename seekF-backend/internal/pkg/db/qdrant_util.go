@@ -54,6 +54,15 @@ func GetQdrant() *QdrantUtil {
 	return qdrantClient
 }
 
+// Ping 通过gRPC健康检查确认Qdrant响应，不访问业务集合。
+func (q *QdrantUtil) Ping(ctx context.Context) error {
+	if q == nil || q.client == nil {
+		return fmt.Errorf("Qdrant客户端未初始化")
+	}
+	_, err := q.client.HealthCheck(ctx)
+	return err
+}
+
 // EnsureCollection 确保向量集合存在,不存在则创建（支持Dense和Sparse向量）
 func (q *QdrantUtil) EnsureCollection(ctx context.Context, collectionName string, vectorSize uint64) error {
 	exists, err := q.client.CollectionExists(ctx, collectionName)

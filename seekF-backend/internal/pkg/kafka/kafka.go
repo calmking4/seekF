@@ -28,6 +28,31 @@ type KafkaService struct {
 
 var KafkaServiceInstance = new(KafkaService)
 
+// Ping 读取Kafka节点元数据确认协议响应，不投递或消费业务消息。
+func (k *KafkaService) Ping(ctx context.Context) error {
+	conn, err := kafka.DialContext(ctx, "tcp", configs.GetConfig().KafkaConfig.HostPort)
+	if err != nil {
+		return fmt.Errorf("连接Kafka失败: %w", err)
+	}
+	defer conn.Close()
+	// 元数据读取不接收上下文，通过截止时间和取消回调及时中断连接。
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			return fmt.Errorf("设置Kafka探测截止时间失败: %w", err)
+		}
+	}
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+	brokers, err := conn.Brokers()
+	if err != nil {
+		return fmt.Errorf("读取Kafka节点信息失败: %w", err)
+	}
+	if len(brokers) == 0 {
+		return fmt.Errorf("Kafka未返回可用节点")
+	}
+	return nil
+}
+
 // Init 初始化Kafka聊天、AI评论和发现页事件的Writer/Reader。
 func (k *KafkaService) Init() {
 	if err := k.CreateTopic(); err != nil {

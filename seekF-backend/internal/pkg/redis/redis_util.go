@@ -27,7 +27,17 @@ func init() {
 		Addr:     addr,
 		Password: password,
 		DB:       db,
+		// 让即时探测传入的截止时间约束网络读写，既有后台上下文调用保持原行为。
+		ContextTimeoutEnabled: true,
 	})
+}
+
+// Ping 使用现有连接检查Redis命令响应，不读写业务键。
+func Ping(ctx context.Context) error {
+	if redisClient == nil {
+		return errors.New("Redis客户端未初始化")
+	}
+	return redisClient.Ping(ctx).Err()
 }
 
 // SetKeyEx 设置带过期时间的键值对

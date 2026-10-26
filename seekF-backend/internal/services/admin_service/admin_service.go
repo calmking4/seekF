@@ -2,7 +2,6 @@ package adminservice
 
 import (
 	"context"
-	"net/http"
 	"net/url"
 	"os"
 	"runtime"
@@ -14,6 +13,7 @@ import (
 	admindao "seekF-backend/internal/dao/admin_dao"
 	adminresp "seekF-backend/internal/dto/admin"
 	"seekF-backend/internal/models"
+	dependencyhealth "seekF-backend/internal/pkg/observability/health"
 	"seekF-backend/internal/pkg/websocket"
 )
 
@@ -23,12 +23,11 @@ type AdminService struct {
 	startedAt time.Time
 	mutex     sync.Mutex
 	cache     *adminresp.Overview
-	client    *http.Client
 }
 
-// NewAdminService 创建管理服务，限制探测超时为两秒。
+// NewAdminService 创建管理服务，依赖探测由观测模块统一处理。
 func NewAdminService(dao *admindao.AdminDAO) *AdminService {
-	return &AdminService{dao: dao, startedAt: time.Now(), client: &http.Client{Timeout: 2 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &AdminService{dao: dao, startedAt: time.Now()}
 }
 
 // Identity 读取用户实时权限与账号状态，供控制器校验访问资格。
@@ -51,7 +50,7 @@ func (s *AdminService) Overview(ctx context.Context) (*adminresp.Overview, error
 	return result, nil
 }
 
-// System 返回当前进程状态、MySQL及Prometheus的即时探测结果。
+// System 返回当前进程状态及六项依赖的并行即时探测结果。
 func (s *AdminService) System(ctx context.Context) *adminresp.System {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
@@ -59,31 +58,9 @@ func (s *AdminService) System(ctx context.Context) *adminresp.System {
 	if websocket.ChatServer != nil {
 		result.OnlineUsers = websocket.ChatServer.OnlineCount()
 	}
-	dbCtx, cancel := context.WithTimeout(ctx, time.Second)
-	err := s.dao.Ping(dbCtx)
-	cancel()
-	dbHealth := adminresp.Health{Name: "MySQL", Status: "up", Detail: "数据库连接正常"}
-	if err != nil {
-		dbHealth.Status = "down"
-		dbHealth.Detail = "数据库连接失败"
+	for _, status := range dependencyhealth.Check(ctx, s.dao.Ping) {
+		result.Services = append(result.Services, adminresp.Health{Name: status.Name, Status: status.Status, Detail: status.Detail})
 	}
-	result.Services = append(result.Services, dbHealth)
-	prom := adminresp.Health{Name: "Prometheus", Status: "down", Detail: "采集服务无法访问，请检查后端配置"}
-	base := publicURL("ADMIN_PROMETHEUS_URL", "http://localhost:9090")
-	if base != "" {
-		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/-/ready", nil)
-		if reqErr == nil {
-			response, requestErr := s.client.Do(req)
-			if requestErr == nil {
-				response.Body.Close()
-				if response.StatusCode == http.StatusOK {
-					prom.Status = "up"
-					prom.Detail = "采集服务已就绪；请在 Prometheus Targets 确认后端采集状态"
-				}
-			}
-		}
-	}
-	result.Services = append(result.Services, prom)
 	return result
 }
 
