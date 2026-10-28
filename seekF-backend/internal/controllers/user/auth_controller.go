@@ -2,11 +2,14 @@ package user
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"seekF-backend/internal/configs"
 	userreq "seekF-backend/internal/dto/user/user_req"
+	"seekF-backend/internal/pkg/auth"
+	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/resp"
 	"seekF-backend/internal/pkg/zlog"
 	userservice "seekF-backend/internal/services/user_service"
@@ -36,6 +39,9 @@ func (c *AuthController) Register(ctx *gin.Context) {
 
 	err := c.authService.Register(&req)
 	if err != nil {
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			ctx.Set(constants.AuthCredentialFailed, true)
+		}
 		zlog.Info("注册服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
@@ -55,6 +61,9 @@ func (c *AuthController) Login(ctx *gin.Context) {
 
 	result, err := c.authService.Login(&req)
 	if err != nil {
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			ctx.Set(constants.AuthCredentialFailed, true)
+		}
 		zlog.Info("登录服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
@@ -237,6 +246,9 @@ func (c *AuthController) LoginByCode(ctx *gin.Context) {
 	// 调用service层执行验证码登录
 	result, err := c.authService.LoginByCode(req.Telephone, req.Email, req.Code)
 	if err != nil {
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			ctx.Set(constants.AuthCredentialFailed, true)
+		}
 		zlog.Info("验证码登录服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return

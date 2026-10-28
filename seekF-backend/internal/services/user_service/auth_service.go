@@ -98,10 +98,10 @@ func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
 		return fmt.Errorf("获取验证码失败：%v", err)
 	}
 	if storedCode == "" {
-		return fmt.Errorf("验证码不存在或已过期")
+		return fmt.Errorf("%w：验证码不存在或已过期", auth.ErrInvalidCredentials)
 	}
 	if storedCode != req.Code {
-		return fmt.Errorf("验证码错误")
+		return fmt.Errorf("%w：验证码错误", auth.ErrInvalidCredentials)
 	}
 
 	// 验证成功，删除验证码
@@ -184,13 +184,13 @@ func (s *AuthServiceImpl) Login(req *LoginRequest) (*LoginRespond, error) {
 	}
 
 	if user == nil {
-		return nil, fmt.Errorf("该用户不存在")
+		return nil, fmt.Errorf("%w：该用户不存在", auth.ErrInvalidCredentials)
 	}
 
 	// 验证密码
 	err = verifyPassword(user.Password, req.Password)
 	if err != nil {
-		return nil, fmt.Errorf("密码错误")
+		return nil, fmt.Errorf("%w：密码错误", auth.ErrInvalidCredentials)
 	}
 
 	cfg := configs.GetConfig()
@@ -293,11 +293,11 @@ func (s *AuthServiceImpl) LoginByCode(telephone, emailAddr, code string) (*Login
 	}
 
 	if storedCode == "" {
-		return nil, fmt.Errorf("验证码不存在或已过期")
+		return nil, fmt.Errorf("%w：验证码不存在或已过期", auth.ErrInvalidCredentials)
 	}
 
 	if storedCode != code {
-		return nil, fmt.Errorf("验证码错误")
+		return nil, fmt.Errorf("%w：验证码错误", auth.ErrInvalidCredentials)
 	}
 
 	// 验证码验证成功，删除验证码

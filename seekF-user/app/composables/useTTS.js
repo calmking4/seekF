@@ -83,7 +83,12 @@ export const useTTS = () => {
                 signal: abortController.signal
             })
 
-            if (!response.ok) throw new Error('语音合成请求失败')
+            if (!response.ok) {
+                const result = await response.json().catch(() => ({}))
+                const error = new Error(result.message || '语音合成请求失败')
+                error.status = response.status
+                throw error
+            }
 
             const reader = response.body.getReader()
             // 累积缓冲区
@@ -138,7 +143,7 @@ export const useTTS = () => {
         } catch (err) {
             if (err.name !== 'AbortError') {
                 console.error('TTS failed:', err)
-                ElMessage.error('语音合成失败')
+                ElMessage.error([429, 503].includes(err.status) ? err.message : '语音合成失败')
             }
         } finally {
             destroyAudio()

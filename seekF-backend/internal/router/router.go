@@ -4,6 +4,7 @@ import (
 	"seekF-backend/internal/controllers/admin"
 	"seekF-backend/internal/controllers/user"
 	"seekF-backend/internal/middlewares"
+	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/observability"
 	businessmetrics "seekF-backend/internal/pkg/observability/metrics"
 	"seekF-backend/internal/pkg/websocket"
@@ -46,6 +47,7 @@ func SetupRouter(
 		businessmetrics.NewDiscoverDistributionCollector(),
 	)
 	r := gin.New()
+
 	// 指标包围Recovery，确保异常恢复后的500响应也被记录。
 	r.Use(gin.Logger(), middlewares.HTTPMetricsMiddleware(httpMetrics), gin.Recovery())
 	r.GET("/metrics", gin.WrapH(metrics.Handler()))
@@ -61,7 +63,7 @@ func SetupRouter(
 
 	// 管理端接口。
 	adminGroup := r.Group("/admin")
-	adminGroup.POST("/login", adminController.Login)
+	adminGroup.POST("/login", middlewares.AuthRequest(constants.AuthPassword), adminController.Login)
 	adminGroup.POST("/logout", adminController.Logout)
 
 	adminGroup.Use(adminController.RequireAdmin())
@@ -82,10 +84,10 @@ func SetupRouter(
 	userGroup := r.Group("/user")
 	{
 		// 无需认证的接口
-		userGroup.POST("/register", authController.Register)
-		userGroup.POST("/login", authController.Login)
-		userGroup.POST("/sendVerifyCode", authController.SendVerifyCode)
-		userGroup.POST("/loginByCode", authController.LoginByCode)
+		userGroup.POST("/register", middlewares.AuthRequest(constants.AuthCode), authController.Register)
+		userGroup.POST("/login", middlewares.AuthRequest(constants.AuthPassword), authController.Login)
+		userGroup.POST("/sendVerifyCode", middlewares.AuthRequest(constants.AuthSend), authController.SendVerifyCode)
+		userGroup.POST("/loginByCode", middlewares.AuthRequest(constants.AuthCode), authController.LoginByCode)
 		userGroup.GET("/github/login", authController.GithubLogin)
 		userGroup.GET("/github/callback", authController.GithubCallback)
 		userGroup.GET("/gitee/login", authController.GiteeLogin)
@@ -138,18 +140,18 @@ func SetupRouter(
 			protectedGroup.POST("/aichat/createSession", aichatController.CreateSession)
 			protectedGroup.POST("/aichat/getSessionList", aichatController.GetSessionList)
 			protectedGroup.POST("/aichat/getMessageHistory", aichatController.GetMessageHistory)
-			protectedGroup.POST("/aichat/sendMessage", aichatController.SendMessage)
+			protectedGroup.POST("/aichat/sendMessage", middlewares.AIRequest(true), aichatController.SendMessage)
 			protectedGroup.POST("/aichat/deleteSession", aichatController.DeleteSession)
-			protectedGroup.POST("/aichat/tts", aichatController.TextToSpeech)
-			protectedGroup.POST("/aichat/asr", aichatController.SpeechToText)
+			protectedGroup.POST("/aichat/tts", middlewares.AIRequest(true), aichatController.TextToSpeech)
+			protectedGroup.POST("/aichat/asr", middlewares.AIRequest(true), aichatController.SpeechToText)
 			// Knowledge Base
-			protectedGroup.POST("/knowledge/add", knowledgeController.AddDocument)
+			protectedGroup.POST("/knowledge/add", middlewares.AIRequest(true), knowledgeController.AddDocument)
 			protectedGroup.POST("/knowledge/list", knowledgeController.ListDocuments)
 			protectedGroup.POST("/knowledge/remove", knowledgeController.RemoveDocument)
 			protectedGroup.POST("/knowledge/content", knowledgeController.GetDocumentContent)
 			// Discover
 			protectedGroup.POST("/discover/create", discoverController.CreatePost)
-			protectedGroup.POST("/discover/ai-suggestions", discoverController.SuggestCreation)
+			protectedGroup.POST("/discover/ai-suggestions", middlewares.AIRequest(true), discoverController.SuggestCreation)
 			protectedGroup.POST("/discover/update", discoverController.UpdatePost)
 			protectedGroup.POST("/discover/works", discoverController.ListOwnWorks)
 			protectedGroup.POST("/discover/visibility", discoverController.SetPostVisibility)
@@ -171,7 +173,7 @@ func SetupRouter(
 			protectedGroup.POST("/discover/comment/replies", discoverController.ListCommentReplies)
 			protectedGroup.POST("/discover/comment/add", discoverController.AddComment)
 			protectedGroup.POST("/discover/comment/list", discoverController.ListComments)
-			protectedGroup.POST("/discover/comment/ai", discoverController.AddAIComment)
+			protectedGroup.POST("/discover/comment/ai", middlewares.AIRequest(false), discoverController.AddAIComment)
 			// 收藏夹
 			protectedGroup.POST("/discover/folder/create", discoverController.CreateFolder)
 			protectedGroup.POST("/discover/folder/update", discoverController.UpdateFolder)

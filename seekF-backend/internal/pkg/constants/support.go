@@ -2,31 +2,52 @@ package constants
 
 import "time"
 
+// 创作者助力规则确认版本。
 const (
 	// 创作者收款及退款抵扣约定版本。
 	SupportTermsVersion = "20261020-v1"
 	// 创作者开通助力时确认收益分配与退款规则的版本。
 	SupportActivationTermsVersion = "20261024-v1"
+)
+
+// 支付宝商家转账参数。
+const (
 	// 商家转账的固定产品码与业务场景。
 	SupportTransferProduct = "TRANS_ACCOUNT_NO_PWD"
 	SupportTransferScene   = "DIRECT_TRANSFER"
+)
+
+// 提现流水事件类型。
+const (
 	// 新建提现的流水冻结事件。
 	SupportLedgerWithdrawFreeze = "withdraw_freeze"
 	// 渠道确认成功的提现流水事件。
 	SupportLedgerWithdrawSuccess = "withdraw_success"
 	// 渠道确认失败的提现流水事件。
 	SupportLedgerWithdrawFail = "withdraw_fail"
+)
+
+// 提现单处理状态。
+const (
 	// 提现单状态：待提交、处理中（含结果未知）、成功、明确失败。
 	SupportWithdrawPending    int8 = 0
 	SupportWithdrawProcessing int8 = 1
 	SupportWithdrawSucceeded  int8 = 2
 	SupportWithdrawFailed     int8 = 3
+)
+
+// 收益分配版本与抽成比例。
+const (
 	// 即时收益分配规则版本，0保留为历史不入账订单。
 	SupportSettlementVersion = 1
 	// 默认平台抽成，单位基点，1000表示10%。
 	SupportPlatformRateBPS = 1000
 	// 百分之百对应的基点数。
 	SupportRateBase = 10000
+)
+
+// 收益入账与退款抵扣流水事件。
+const (
 	// 收益入账与后续抵扣事件。
 	SupportLedgerIncome = "income"
 	// 退款申请冻结事件，预留不足部分由后续收益补齐。
@@ -37,17 +58,26 @@ const (
 	SupportLedgerRelease = "refund_release"
 	// 全额退款冲销事件。
 	SupportLedgerRefund = "refund"
+)
+
+// 渠道退款账单大小限制。
+const (
 	// 渠道账单压缩包及解压明细大小上限，单位字节。
 	SupportBillMaxBytes = 20 * 1024 * 1024
+)
+
+// 助力支付与退款通知类型。
+const (
+	// 助力付款确认通知，可在我的助力中查看。
+	NotificationSupportPaid int8 = 7
 	// 助力全额退款成功通知。
 	NotificationSupportRefund int8 = 8
 	// 创作者收到助力的付款确认通知。
 	NotificationSupportReceived int8 = 9
-	// 已付款订单渠道退款账单核对周期，单位小时。
-	SupportRefundAuditInterval = 24 * time.Hour
+)
 
-	// 助力付款确认通知，可在我的助力中查看。
-	NotificationSupportPaid int8 = 7
+// 订单补偿任务的扫描、批量、租约与超时。
+const (
 	// 持久化订单补偿扫描与失败重试间隔，单位分钟。
 	SupportOrderScanInterval = time.Minute
 	// 单批领取订单上限，单位笔。
@@ -56,30 +86,56 @@ const (
 	SupportOrderLease = 2 * time.Minute
 	// 每笔订单渠道补偿的总超时，单位秒。
 	SupportOrderAttemptTimeout = 45 * time.Second
+)
+
+// 助力订单及权益分页。
+const (
 	// 本人订单及权益的分页大小，单位条。
 	SupportOrderPageSize = 20
+)
+
+// 助力定价范围与默认价格。
+const (
 	// 每期助力价格下限，单位元。
 	SupportMinPriceYuan = 5
 	// 每期助力价格上限，单位元，只允许整数元。
 	SupportMaxPriceYuan = 100
 	// 默认助力价格，单位元。
 	SupportDefaultPriceYuan int64 = 10
+)
+
+// 助力权益时长与作品访问类型。
+const (
 	// 每期权益时长，单位小时，固定30天。
 	SupportDurationHours = 720
-	// 待支付订单有效期，单位分钟。
-	SupportOrderTimeout = 15 * time.Minute
-	// 支付成功后的退款申请期限，单位小时。
-	SupportRefundWindow = 168 * time.Hour
 	// 免费作品，适用于图文和视频。
 	SupportPostFree int8 = 0
 	// 助力专属作品，适用于图文和视频。
 	SupportPostExclusive int8 = 1
+)
+
+// 助力订单有效期与支付状态。
+const (
+	// 待支付订单有效期，单位分钟。
+	SupportOrderTimeout = 15 * time.Minute
 	// 订单等待付款。
 	SupportOrderPending int8 = 0
 	// 订单已付款。
 	SupportOrderPaid int8 = 1
 	// 订单已关闭。
 	SupportOrderClosed int8 = 2
+)
+
+// 退款申请窗口与渠道核对周期。
+const (
+	// 支付成功后的退款申请期限，单位小时。
+	SupportRefundWindow = 168 * time.Hour
+	// 已付款订单渠道退款账单核对周期，单位小时。
+	SupportRefundAuditInterval = 24 * time.Hour
+)
+
+// 助力退款处理状态。
+const (
 	// 尚未申请退款。
 	SupportRefundNone int8 = 0
 	// 退款等待管理员审核。

@@ -255,3 +255,8 @@ func DeleteAllRedisKeys() error {
 	}
 	return nil
 }
+
+// EvalRateLimit 原子执行限流脚本，返回需等待的毫秒数，零表示允许。
+func EvalRateLimit(ctx context.Context, script string, keys []string, args ...any) (int64, error) {
+	return redisClient.Eval(ctx, script, keys, args...).Int64()
+}

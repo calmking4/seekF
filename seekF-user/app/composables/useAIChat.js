@@ -106,9 +106,12 @@ export const useAIChat = () => {
             body: formData,
             credentials: 'include',
             signal: controller.signal
-        }).then(response => {
+        }).then(async response => {
             if (!response.ok) {
-                throw new Error('请求失败')
+                const result = await response.json().catch(() => ({}))
+                const error = new Error(result.message || '请求失败')
+                error.status = response.status
+                throw error
             }
             
             const reader = response.body.getReader()
@@ -172,7 +175,7 @@ export const useAIChat = () => {
         }).catch(err => {
             if (err.name !== 'AbortError') {
                 console.error('SSE 连接错误:', err)
-                onError?.('AI 响应中断')
+                onError?.([429, 503].includes(err.status) ? err.message : 'AI 响应中断')
             }
         })
 

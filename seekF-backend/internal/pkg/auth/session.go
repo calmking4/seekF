@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"seekF-backend/internal/configs"
 	"seekF-backend/internal/pkg/redis"
@@ -11,6 +12,9 @@ import (
 )
 
 const SessionPrefix = "auth:session:"
+
+// ErrInvalidCredentials 表示账号、密码或验证码校验失败，不包含基础设施错误。
+var ErrInvalidCredentials = errors.New("认证失败")
 
 type Session struct {
 	Id       uint64 `json:"id"`

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"seekF-backend/internal/pkg/constants"
 	"strings"
 	"time"
 
@@ -42,6 +43,9 @@ func (a *AdminController) Login(c *gin.Context) {
 	}
 	result, err := a.auth.Login(&req)
 	if err != nil {
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			c.Set(constants.AuthCredentialFailed, true)
+		}
 		resp.Error(c, "账号或密码错误", 401)
 		return
 	}

@@ -1127,6 +1127,7 @@ func (s *DiscoverServiceImpl) AddAIComment(ctx context.Context, userId, postUuid
 
 	// 3. 发送Kafka任务
 	aipkg.SendAICommentTask(aipkg.AICommentPayload{
+		RequestUserID:  userId,
 		PostUuid:       postUuid,
 		Content:        aiQuestion,
 		ParentUuid:     aiParentUuid,

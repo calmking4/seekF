@@ -14,6 +14,7 @@ import (
 	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/db"
 	mykafka "seekF-backend/internal/pkg/kafka"
+	"seekF-backend/internal/pkg/ratelimit"
 	"seekF-backend/internal/pkg/upload/oss"
 	"seekF-backend/internal/pkg/zlog"
 
@@ -24,6 +25,7 @@ import (
 
 // AICommentPayload AI评论回复Kafka载荷
 type AICommentPayload struct {
+	RequestUserID  string `json:"request_user_id,omitempty"`
 	PostUuid       string `json:"post_uuid"`
 	Content        string `json:"content"`
 	ParentUuid     string `json:"parent_uuid"`
@@ -197,6 +199,16 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload, commentUU
 		userMsg,
 	}
 
+	// 入队只检查请求频率，真正调用模型时才与HTTP请求共用并发名额。
+	userID := payload.RequestUserID
+	if userID == "" {
+		userID = constants.LegacyAICommentUser
+	}
+	release, err := ratelimit.AcquireAI(ctx, userID)
+	if err != nil {
+		return err
+	}
+	defer release()
 	result, err := chatModel.Generate(ctx, messages)
 	if err != nil {
 		return fmt.Errorf("生成AI评论失败，帖子=%s: %w", payload.PostUuid, err)
