@@ -152,6 +152,8 @@ type DiscoverDAO interface {
 	FindCommentById(commentId int64) (*models.DiscoverComment, error)
 	// 按 UUID 查询评论，不存在时返回空。
 	FindCommentByUuid(uuid string) (*models.DiscoverComment, error)
+	// 检查包含软删除记录的评论是否存在。
+	HasCommentIncludingDeleted(uuid string) (bool, error)
 	// 查询并锁定评论，须使用事务连接调用。
 	FindCommentByUuidForUpdate(uuid string) (*models.DiscoverComment, error)
 	// 按时间及 ID 稳定分页读取全部评论。
@@ -925,4 +927,11 @@ func (d *DiscoverDAOImpl) ListCreatorRevenueTrend(creator, environment string, s
 		return nil, fmt.Errorf("查询收益趋势失败: %w", err)
 	}
 	return rows, nil
+}
+
+// HasCommentIncludingDeleted 检查稳定评论ID，防止重放任务恢复已删除的AI回复。
+func (d *DiscoverDAOImpl) HasCommentIncludingDeleted(uuid string) (bool, error) {
+	var count int64
+	err := d.db.Unscoped().Model(&models.DiscoverComment{}).Where("uuid = ?", uuid).Count(&count).Error
+	return count > 0, err
 }

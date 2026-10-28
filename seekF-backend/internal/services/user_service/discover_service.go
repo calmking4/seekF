@@ -28,6 +28,7 @@ import (
 	redispkg "seekF-backend/internal/pkg/redis"
 	"seekF-backend/internal/pkg/upload/oss"
 	"seekF-backend/internal/pkg/util"
+	"seekF-backend/internal/pkg/workerpool"
 	"seekF-backend/internal/pkg/zlog"
 
 	"github.com/google/uuid"
@@ -87,6 +88,7 @@ type DiscoverService interface {
 }
 
 type DiscoverServiceImpl struct {
+	viewTasks       chan int64
 	discoverDAO     userdao.DiscoverDAO
 	userInfoDAO     userdao.UserInfoDAO
 	followDAO       userdao.FollowDAO
@@ -197,12 +199,18 @@ type FolderDetailInfo struct {
 
 // NewDiscoverService 构造发现页业务服务并注入数据访问依赖。
 func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.UserInfoDAO, followDAO userdao.FollowDAO, notificationDAO userdao.NotificationDAO) DiscoverService {
-	return &DiscoverServiceImpl{
+	s := &DiscoverServiceImpl{
 		discoverDAO:     discoverDAO,
 		userInfoDAO:     userInfoDAO,
 		followDAO:       followDAO,
 		notificationDAO: notificationDAO,
 	}
+	s.viewTasks = workerpool.NewQueue(constants.DiscoverViewWorkers, constants.DiscoverViewQueueSize, constants.DiscoverViewTimeout, func(ctx context.Context, postID int64) {
+		if err := userdao.NewDiscoverDAO(db.GormDB.WithContext(ctx)).IncrementViewCount(postID); err != nil {
+			zlog.Error(fmt.Sprintf("增加帖子浏览量失败，帖子ID=%d: %s", postID, err.Error()))
+		}
+	})
+	return s
 }
 
 // CreatePost 在事务中校验资源归属并幂等发布作品。
@@ -771,12 +779,12 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 		return &PostDetailInfo{Uuid: post.Uuid, UserId: post.UserId, SupportOnly: post.SupportOnly, CanPlay: false, LockReason: lockReason, SupportExpiresAt: expiresAt}, nil
 	}
 
-	// 异步增加浏览量
-	go func() {
-		if err := s.discoverDAO.IncrementViewCount(post.Id); err != nil {
-			zlog.Error("增加帖子浏览量失败: " + err.Error())
-		}
-	}()
+	// 队列满时等待空位，请求取消后停止提交，避免无限创建协程或静默丢弃计数。
+	select {
+	case s.viewTasks <- post.Id:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 
 	mediaList, err := s.discoverDAO.FindMediaByPostId(post.Id)
 	if err != nil {

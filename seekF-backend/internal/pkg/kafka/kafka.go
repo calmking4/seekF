@@ -113,10 +113,11 @@ func (k *KafkaService) Init() {
 		RequiredAcks:           kafka.RequireOne,
 		AllowAutoTopicCreation: false,
 	}
+	// AI评论采用并行批次，处理完成后同步提交位点，避免异步提交越过失败任务。
 	k.AICommentReader = kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        []string{kafkaConfig.HostPort},
 		Topic:          kafkaConfig.AICommentTopic,
-		CommitInterval: kafkaConfig.Timeout * time.Second,
+		CommitInterval: 0,
 		GroupID:        "ai_comment",
 		StartOffset:    kafka.LastOffset,
 	})

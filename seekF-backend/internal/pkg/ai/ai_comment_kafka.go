@@ -2,9 +2,11 @@ package ai
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	userdao "seekF-backend/internal/dao/user_dao"
@@ -13,7 +15,6 @@ import (
 	"seekF-backend/internal/pkg/db"
 	mykafka "seekF-backend/internal/pkg/kafka"
 	"seekF-backend/internal/pkg/upload/oss"
-	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 
 	"github.com/cloudwego/eino/schema"
@@ -37,6 +38,7 @@ type aiCommentConsumer struct {
 }
 
 var aiCommentCons *aiCommentConsumer
+var aiCommentStart sync.Once
 
 // InitAICommentConsumer 初始化AI评论消费者
 func InitAICommentConsumer(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.UserInfoDAO) {
@@ -71,36 +73,64 @@ func StartAICommentConsumer() {
 		return
 	}
 
-	go func() {
-		for {
-			msg, err := mykafka.KafkaServiceInstance.AICommentReader.ReadMessage(context.Background())
-			if err != nil {
-				zlog.Error("从Kafka读取AI评论任务失败: " + err.Error())
-				time.Sleep(time.Second)
-				continue
-			}
+	aiCommentStart.Do(func() { go aiCommentCons.runCommentPool() })
+}
 
-			var payload AICommentPayload
-			if err := json.Unmarshal(msg.Value, &payload); err != nil {
-				zlog.Error("反序列化AI评论负载失败: " + err.Error())
-				continue
-			}
+// runCommentPool 启动AI评论专用协程池，进程内只启动一次。
+func (c *aiCommentConsumer) runCommentPool() {
+	consumeAICommentBatches(context.Background(), mykafka.KafkaServiceInstance.AICommentReader, c.processCommentMessage)
+}
 
-			aiCommentCons.processAIComment(payload)
+// processCommentMessage 失败重试，并以Kafka位置生成稳定评论ID支持重放去重。
+func (c *aiCommentConsumer) processCommentMessage(message kafka.Message) {
+	var payload AICommentPayload
+	if err := json.Unmarshal(message.Value, &payload); err != nil {
+		zlog.Error("反序列化AI评论负载失败: " + err.Error())
+		return
+	}
+	if payload.PostUuid == "" || strings.TrimSpace(payload.Content) == "" {
+		zlog.Error("AI评论任务缺少帖子标识或提问内容")
+		return
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", message.Topic, message.Partition, message.Offset)))
+	commentUUID := fmt.Sprintf("C%x", sum[:])[:20]
+	delay := time.Second
+	for {
+		if err := c.processAIComment(payload, commentUUID); err == nil {
+			return
+		} else {
+			zlog.Error(fmt.Sprintf("处理AI评论任务失败，帖子=%s，评论=%s: %s", payload.PostUuid, commentUUID, err.Error()))
+			time.Sleep(delay)
+			if delay < 30*time.Second {
+				delay *= 2
+				if delay > 30*time.Second {
+					delay = 30 * time.Second
+				}
+			}
 		}
-	}()
+	}
 }
 
 // processAIComment 处理AI评论回复
-func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
+func (c *aiCommentConsumer) processAIComment(payload AICommentPayload, commentUUID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	exists, err := c.discoverDAO.HasCommentIncludingDeleted(commentUUID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+
 	// 1. 查帖子详情
 	post, err := c.discoverDAO.FindPostByUuid(payload.PostUuid)
-	if err != nil || post == nil {
-		zlog.Error("AI评论: 查找帖子失败: " + payload.PostUuid)
-		return
+	if err != nil {
+		return err
+	}
+	if post == nil {
+		return nil
 	}
 
 	// 2. 获取帖子标签
@@ -112,8 +142,7 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 	// 3. 获取帖子图片URL（仅取图片类型，type=0）
 	mediaList, err := c.discoverDAO.FindMediaByPostId(post.Id)
 	if err != nil {
-		zlog.Error("AI评论: 查询图片失败，帖子=" + payload.PostUuid + ": " + err.Error())
-		return
+		return fmt.Errorf("查询AI评论图片失败，帖子=%s: %w", payload.PostUuid, err)
 	}
 	var imageUrls []string
 	for _, m := range mediaList {
@@ -125,7 +154,7 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 				imageURL, err = oss.SignResourceURL(ctx, key)
 				if err != nil {
 					zlog.Error("AI评论: 准备图片失败，帖子=" + payload.PostUuid + ": " + err.Error())
-					return
+					return err
 				}
 			}
 			imageUrls = append(imageUrls, imageURL)
@@ -160,7 +189,7 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 	chatModel := GetModelPool().GetModel("glm-4v")
 	if chatModel == nil {
 		zlog.Error("AI评论: glm-4v模型不可用")
-		return
+		return fmt.Errorf("AI评论处理失败，帖子=%s", payload.PostUuid)
 	}
 
 	messages := []*schema.Message{
@@ -170,18 +199,17 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 
 	result, err := chatModel.Generate(ctx, messages)
 	if err != nil {
-		zlog.Error("AI评论: 生成失败: " + err.Error())
-		return
+		return fmt.Errorf("生成AI评论失败，帖子=%s: %w", payload.PostUuid, err)
 	}
 	if result == nil {
 		zlog.Error("AI评论: 未返回生成结果，帖子=" + payload.PostUuid)
-		return
+		return fmt.Errorf("AI评论处理失败，帖子=%s", payload.PostUuid)
 	}
 
 	aiReply := strings.TrimSpace(result.Content)
 	if aiReply == "" {
 		zlog.Error("AI评论: 空回复")
-		return
+		return fmt.Errorf("AI评论处理失败，帖子=%s", payload.PostUuid)
 	}
 
 	// 截断超过500字的回复（数据库字段限制）
@@ -190,7 +218,6 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 	}
 
 	// 7. 保存AI评论
-	commentUUID := "C" + util.GetNowAndLenRandomString(11)
 	comment := &models.DiscoverComment{
 		Uuid:          commentUUID,
 		PostId:        post.Id,
@@ -200,8 +227,23 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 		Content:       aiReply,
 	}
 
-	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
+	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
+		// 锁定帖子后复核评论ID，评论写入与计数更新使用同一事务。
+		current, err := txDiscoverDAO.FindPostByUuidForUpdate(payload.PostUuid)
+		if err != nil {
+			return err
+		}
+		if current == nil {
+			return nil
+		}
+		exists, err := txDiscoverDAO.HasCommentIncludingDeleted(commentUUID)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
 
 		if err := txDiscoverDAO.CreateComment(comment); err != nil {
 			zlog.Error("AI评论: 保存评论失败: " + err.Error())
@@ -211,9 +253,12 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload) {
 		return txDiscoverDAO.IncrementCommentCount(post.Id)
 	})
 	if err != nil {
-		return
+		return fmt.Errorf("保存AI评论失败，帖子=%s: %w", payload.PostUuid, err)
 	}
-	zlog.Info(fmt.Sprintf("AI评论已保存，帖子: %s, 评论: %s", payload.PostUuid, commentUUID))
+	if comment.Id != 0 {
+		zlog.Info(fmt.Sprintf("AI评论已保存，帖子: %s, 评论: %s", payload.PostUuid, commentUUID))
+	}
+	return nil
 }
 
 // buildAIPostContext 构造含帖子文本上下文的system prompt（图片通过多模态消息传递，不在此处列出URL）
