@@ -12,6 +12,10 @@ import (
 
 // MessageDAO 消息DAO接口
 type MessageDAO interface {
+	// 查询新增消息及指定已加载消息的当前可见状态，供网页恢复漏推。
+	GetPrivateMessageUpdates(userId, peerId string, afterId int64, knownIds []string) ([]models.Message, []models.Message, error)
+	// 查询指定编号的消息，调用方在发送事务中已锁定所属用户。
+	GetMessageByUuid(uuid string) (models.Message, error)
 	// 记录当前参与者的个人删除时间，不影响对方。
 	DeleteMessageForUser(userId, messageId string, isSender bool) error
 	// 锁定指定消息，供撤回事务校验。
@@ -64,6 +68,30 @@ func (d *MessageDAOImpl) SearchPrivateMessages(userId, sessionId, keyword string
 // MessageDAOImpl 消息DAO实现
 type MessageDAOImpl struct {
 	db *gorm.DB
+}
+
+// GetMessageByUuid 查询已有消息，避免对不存在的随机编号加间隙锁。
+func (d *MessageDAOImpl) GetMessageByUuid(uuid string) (models.Message, error) {
+	var message models.Message
+	err := d.db.Where("uuid = ?", uuid).First(&message).Error
+	return message, err
+}
+
+// GetPrivateMessageUpdates 从同一业务连接读取可见消息，个人删除后的编号不会返回。
+func (d *MessageDAOImpl) GetPrivateMessageUpdates(userId, peerId string, afterId int64, knownIds []string) ([]models.Message, []models.Message, error) {
+	query := d.db.Model(&models.Message{}).
+		Where("(send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?)", userId, peerId, peerId, userId).
+		Where("(send_id = ? AND send_deleted_at IS NULL) OR (receive_id = ? AND receive_deleted_at IS NULL)", userId, userId)
+	var added, updated []models.Message
+	if err := query.Session(&gorm.Session{}).Where("id > ?", afterId).Order("id ASC").Limit(101).Find(&added).Error; err != nil {
+		return nil, nil, err
+	}
+	if len(knownIds) > 0 {
+		if err := query.Session(&gorm.Session{}).Where("uuid IN ?", knownIds).Find(&updated).Error; err != nil {
+			return nil, nil, err
+		}
+	}
+	return added, updated, nil
 }
 
 // NewMessageDAO 创建消息DAO实例

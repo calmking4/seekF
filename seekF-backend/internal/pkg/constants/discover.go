@@ -64,3 +64,45 @@ const (
 	// 数据中心埋点启用标记，不参与指标汇总。
 	CreatorAnalyticsStarted = "started"
 )
+
+// 发现页后台事件处理目标。
+const (
+	// 搜索同步目标，兼容历史事件默认值。
+	DiscoverTargetSearch int8 = 0
+	// 关注收件箱分发目标。
+	DiscoverTargetFeed int8 = 1
+)
+
+// 关注流默认分发策略。
+const (
+	// 未配置时的大粉丝作者阈值，单位人。
+	DiscoverDistributionThreshold = 500
+	// 未配置时收件箱候选保留窗口，单位天。
+	DiscoverDistributionDays = 30
+)
+
+// 关注收件箱维护批量。
+const (
+	// 每轮存储维护最多清理的候选数量，单位行，与发帖分发无关。
+	DiscoverInboxCleanupLimit = 200
+)
+
+// 帖子浏览量更新协程池。
+const (
+	// 浏览量更新的共用工作协程数量。
+	DiscoverViewWorkers = 4
+	// 浏览量更新队列的最大等待任务数。
+	DiscoverViewQueueSize = 256
+	// 单次浏览量更新超时。
+	DiscoverViewTimeout = 5 * time.Second
+)
+
+// 发现页后台事件状态。
+const (
+	// 事件尚待投递Kafka。
+	DiscoverEventPending int8 = 0
+	// 事件已投递Kafka，尚待搜索同步或关注分发完成。
+	DiscoverEventPublished int8 = 1
+	// 事件处理已完成，重复消费直接跳过。
+	DiscoverEventCompleted int8 = 2
+)

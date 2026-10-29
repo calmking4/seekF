@@ -88,7 +88,6 @@ type KafkaConfig struct {
 	MessageMode       string        `toml:"messageMode"`
 	HostPort          string        `toml:"hostPort"`
 	LoginTopic        string        `toml:"loginTopic"`
-	ChatTopic         string        `toml:"chatTopic"`
 	AIChatTopic       string        `toml:"aiChatTopic"`
 	AICommentTopic    string        `toml:"aiCommentTopic"`
 	DiscoverTopic     string        `toml:"discoverTopic"`

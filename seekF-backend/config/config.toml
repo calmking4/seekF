@@ -70,7 +70,6 @@ discoverFeedTopic = "discover_feed_events"
 discoverTopic = "discover_post_events"
 hostPort = "127.0.0.1:9092" # "127.0.0.1:9092,127.0.0.1:9093,127.0.0.1:9094" 多个kafka服务器
 loginTopic = "login"
-chatTopic = "chat_message"
 aiChatTopic = "ai_chat_message"
 aiCommentTopic = "ai_comment_reply"
 logoutTopic = "logout"

@@ -2,13 +2,18 @@ package userservice
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	userdao "seekF-backend/internal/dao/user_dao"
+	userreq "seekF-backend/internal/dto/user/user_req"
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
@@ -33,8 +38,8 @@ type SessionService interface {
 	GetUnreadSessions(userId string) (*userresp.SessionUnreadRespond, error)
 	// 校验实际入站消息后单调推进已读边界。
 	ReadSession(ctx context.Context, userId string, sessionId string, messageId int64) error
-	// 锁定双方用户并复核拉黑状态后保存私信。
-	SavePrivateMessage(ctx context.Context, message *models.Message) error
+	// 锁定双方用户并在同一事务中去重、保存消息及更新双方会话。
+	SendPrivateMessage(ctx context.Context, userId string, req userreq.ChatMessageRequest) (*PrivateMessageResult, error)
 	OpenSession(sendId string, receiveId string) (string, error)
 	OpenSessionWithInfo(sendId string, receiveId string) (*OpenSessionResult, error)
 	CreateSession(sendId string, receiveId string) (string, error)
@@ -88,32 +93,134 @@ func (s *SessionServiceImpl) ReadSession(ctx context.Context, userId string, ses
 	})
 }
 
-// SavePrivateMessage 与拉黑操作采用相同用户锁顺序，防止校验后并发拉黑仍写入新私信。
-func (s *SessionServiceImpl) SavePrivateMessage(ctx context.Context, message *models.Message) error {
-	if message == nil || !strings.HasPrefix(message.SendId, "U") || !strings.HasPrefix(message.ReceiveId, "U") || message.SendId == message.ReceiveId {
-		return fmt.Errorf("私信目标无效")
+// PrivateMessageResult 保存发送事务结果，不对应数据库表。
+type PrivateMessageResult struct {
+	Message           models.Message
+	ReceiverSessionId string
+	Duplicate         bool
+}
+
+// SendPrivateMessage 复用消息唯一索引去重，提交后由连接层直接推送，不依赖Kafka或ES。
+func (s *SessionServiceImpl) SendPrivateMessage(ctx context.Context, userId string, req userreq.ChatMessageRequest) (*PrivateMessageResult, error) {
+	if !strings.HasPrefix(userId, "U") || !strings.HasPrefix(req.ReceiveId, "U") || userId == req.ReceiveId {
+		return nil, fmt.Errorf("私信目标无效")
 	}
-	return db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if req.Type != 0 && req.Type != 2 {
+		return nil, fmt.Errorf("私聊仅支持文字和文件消息")
+	}
+	if len(req.ClientMessageId) > constants.PrivateChatRequestIDLimit {
+		return nil, fmt.Errorf("消息请求编号过长")
+	}
+	if req.Type == 0 {
+		if strings.TrimSpace(req.Content) == "" || utf8.RuneCountInString(req.Content) > constants.PrivateChatContentLimit {
+			return nil, fmt.Errorf("私信内容不能为空且不能超过%d个字符", constants.PrivateChatContentLimit)
+		}
+		req.Url, req.FileName, req.FileSize, req.FileType = "", "", "0B", ""
+	} else {
+		parsed, err := url.Parse(req.Url)
+		if err != nil || len(req.Url) > 255 || !(strings.HasPrefix(req.Url, "/static/") || (parsed.Host != "" && (parsed.Scheme == "https" || parsed.Scheme == "http"))) {
+			return nil, fmt.Errorf("文件地址无效")
+		}
+		if utf8.RuneCountInString(req.FileName) > 50 || len(req.FileType) > 10 || len(req.FileSize) > 20 {
+			return nil, fmt.Errorf("文件描述超过长度限制")
+		}
+		req.Content = ""
+	}
+	uuid := "M" + util.GetNowAndLenRandomString(11)
+	if req.ClientMessageId != "" {
+		// 认证用户和请求编号共同决定既有20字节UUID，重试复用唯一索引，无需改表。
+		sum := sha256.Sum256([]byte(userId + ":" + req.ClientMessageId))
+		uuid = "M" + hex.EncodeToString(sum[:])[:19]
+	}
+	result := &PrivateMessageResult{}
+	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		users := userdao.NewUserInfoDAO(tx)
-		ids := []string{message.SendId, message.ReceiveId}
+		ids := []string{userId, req.ReceiveId}
 		sort.Strings(ids)
+		profiles := make(map[string]*models.UserInfo, 2)
 		for _, id := range ids {
 			user, err := users.FindUserByUuidForUpdate(id)
 			if err != nil {
 				return fmt.Errorf("查询私信用户失败: %w", err)
 			}
-			if user == nil || user.Status == userstatusenum.DISABLE {
-				return fmt.Errorf("私信用户不存在或已禁用")
+			if user == nil {
+				return fmt.Errorf("私信用户不存在")
+			}
+			profiles[id] = user
+		}
+		messages := userdao.NewMessageDAO(tx)
+		existing, err := messages.GetMessageByUuid(uuid)
+		if err == nil {
+			if existing.SendId != userId || existing.ReceiveId != req.ReceiveId {
+				return fmt.Errorf("消息请求编号冲突")
+			}
+			if existing.Type != constants.MessageRecalled && existing.SendDeletedAt == nil &&
+				(existing.Type != req.Type || existing.Content != req.Content || existing.Url != req.Url || existing.FileName != req.FileName || existing.FileSize != req.FileSize || existing.FileType != req.FileType) {
+				return fmt.Errorf("相同消息请求编号不能发送不同内容")
+			}
+			result.Message, result.Duplicate = existing, true
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("查询重复私信失败: %w", err)
+		}
+		// 已成功请求可查询原结果；新发送仍需在锁内复核禁用与拉黑。
+		for _, profile := range profiles {
+			if profile.Status == userstatusenum.DISABLE {
+				return fmt.Errorf("私信用户已禁用")
 			}
 		}
-		if err := checkUserBlock(tx, message.SendId, message.ReceiveId); err != nil {
+		if err := checkUserBlock(tx, userId, req.ReceiveId); err != nil {
 			return err
 		}
-		if err := userdao.NewMessageDAO(tx).CreateMessage(message); err != nil {
+		sessions := userdao.NewSessionDAO(tx)
+		owned, err := sessions.GetOwnedSessionForUpdate(userId, req.SessionId)
+		if err != nil {
+			return fmt.Errorf("查询本人私聊会话失败: %w", err)
+		}
+		if owned.ReceiveId != req.ReceiveId {
+			return fmt.Errorf("无权向该会话发送私信")
+		}
+		receiver, err := ensurePrivateSession(sessions, req.ReceiveId, userId)
+		if err != nil {
+			return fmt.Errorf("创建或恢复接收方会话失败: %w", err)
+		}
+		sender := profiles[userId]
+		message := models.Message{
+			Uuid: uuid, SessionId: owned.Uuid, Type: req.Type, Content: req.Content, Url: req.Url,
+			SendId: userId, SendName: sender.Nickname, SendAvatar: sender.Avatar, ReceiveId: req.ReceiveId,
+			FileName: req.FileName, FileSize: req.FileSize, FileType: req.FileType, Status: 1, CreatedAt: time.Now(),
+		}
+		if err := messages.CreateMessage(&message); err != nil {
 			return fmt.Errorf("保存私信失败: %w", err)
 		}
+		if err := sessions.RefreshPrivateMessagePreview(userId, req.ReceiveId); err != nil {
+			return fmt.Errorf("更新私聊摘要失败: %w", err)
+		}
+		result.Message, result.ReceiverSessionId = message, receiver.Uuid
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ensurePrivateSession 在双方用户已锁定的事务内创建或恢复会话，避免并发打开与发送重复建会话。
+func ensurePrivateSession(dao userdao.SessionDAO, userId, peerId string) (models.Session, error) {
+	session, err := dao.GetSessionBySendAndReceiveId(userId, peerId)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return session, err
+	}
+	session, err = dao.GetDeletedSessionBySendAndReceiveId(userId, peerId)
+	if err == nil {
+		return session, dao.RestoreSession(session.Uuid)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return session, err
+	}
+	session = models.Session{Uuid: "S" + util.GetNowAndLenRandomString(11), SendId: userId, ReceiveId: peerId, CreatedAt: time.Now()}
+	return session, dao.CreateSession(&session)
 }
 
 type SessionServiceImpl struct {
@@ -135,38 +242,33 @@ func NewSessionService(
 	}
 }
 
-// OpenSession 打开会话
+// OpenSession 锁定双方用户后创建或恢复私聊会话，与发送和拉黑保持同一锁顺序。
 func (s *SessionServiceImpl) OpenSession(sendId string, receiveId string) (string, error) {
-	if _, err := s.CheckOpenSessionAllowed(sendId, receiveId); err != nil {
-		return "", err
+	if !strings.HasPrefix(sendId, "U") || !strings.HasPrefix(receiveId, "U") || sendId == receiveId {
+		return "", fmt.Errorf("私聊目标无效")
 	}
-	// 先查询是否存在正常会话
-	session, err := s.sessionDAO.GetSessionBySendAndReceiveId(sendId, receiveId)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// 会话不存在，查找是否有已删除的会话
-			deletedSession, err := s.sessionDAO.GetDeletedSessionBySendAndReceiveId(sendId, receiveId)
+	var session models.Session
+	err := db.GormDB.Transaction(func(tx *gorm.DB) error {
+		users := userdao.NewUserInfoDAO(tx)
+		ids := []string{sendId, receiveId}
+		sort.Strings(ids)
+		for _, id := range ids {
+			user, err := users.FindUserByUuidForUpdate(id)
 			if err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					// 没有已删除的会话，创建新会话
-					return s.CreateSession(sendId, receiveId)
-				}
-				zlog.Error(err.Error())
-				return "", fmt.Errorf("系统错误")
+				return fmt.Errorf("查询私聊用户失败: %w", err)
 			}
-			// 恢复已删除的会话
-			if err := s.sessionDAO.RestoreSession(deletedSession.Uuid); err != nil {
-				zlog.Error(err.Error())
-				return "", fmt.Errorf("系统错误")
+			if user == nil || user.Status == userstatusenum.DISABLE {
+				return fmt.Errorf("私聊用户不存在或已禁用")
 			}
-			// 清除缓存
-			myredis.DelKeysWithPattern(constants.SessionListKeyPrefix + sendId)
-			return deletedSession.Uuid, nil
 		}
-		zlog.Error(err.Error())
-		return "", fmt.Errorf("系统错误")
-	}
-	return session.Uuid, nil
+		if err := checkUserBlock(tx, sendId, receiveId); err != nil {
+			return err
+		}
+		var err error
+		session, err = ensurePrivateSession(userdao.NewSessionDAO(tx), sendId, receiveId)
+		return err
+	})
+	return session.Uuid, err
 }
 
 // OpenSessionWithInfo 打开用户私聊并返回会话编号。
@@ -181,32 +283,9 @@ func (s *SessionServiceImpl) OpenSessionWithInfo(sendId string, receiveId string
 	}, nil
 }
 
-// CreateSession 创建会话
+// CreateSession 复用加锁后的打开流程，避免为同一用户对重复创建会话。
 func (s *SessionServiceImpl) CreateSession(sendId string, receiveId string) (string, error) {
-	if _, err := s.CheckOpenSessionAllowed(sendId, receiveId); err != nil {
-		return "", err
-	}
-
-	// 创建会话
-	session := models.Session{
-		Uuid:      fmt.Sprintf("S%s", util.GetNowAndLenRandomString(11)),
-		SendId:    sendId,
-		ReceiveId: receiveId,
-		CreatedAt: time.Now(),
-	}
-
-	// 直接保存会话到数据库
-	if err := s.sessionDAO.CreateSession(&session); err != nil {
-		zlog.Error(err.Error())
-		return "", fmt.Errorf("系统错误")
-	}
-
-	// 清除用户会话列表缓存
-	if err := myredis.DelKeysWithPattern(constants.SessionListKeyPrefix + sendId); err != nil {
-		zlog.Error(err.Error())
-	}
-
-	return session.Uuid, nil
+	return s.OpenSession(sendId, receiveId)
 }
 
 // SetPinned 锁定本人有效私聊后幂等更新置顶状态，重复置顶保留原时间。

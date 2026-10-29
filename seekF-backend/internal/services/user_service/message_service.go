@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,8 @@ import (
 
 // MessageService 消息服务接口
 type MessageService interface {
+	// 查询新增私信及已加载消息的当前状态，不推进阅读进度。
+	RefreshPrivateMessages(ctx context.Context, userId, peerId, afterId string, knownIds []string) ([]userresp.GetMessageListRespond, []userresp.GetMessageListRespond, bool, error)
 	// 仅从本人私聊记录中删除指定消息。
 	DeleteMessage(ctx context.Context, userId, messageId string) error
 	// 撤回本人在时限内发送的私聊消息。
@@ -91,6 +94,53 @@ func (s *MessageServiceImpl) GetUserMessageList(userOneId string, userTwoId stri
 	}
 
 	return rspList, total, nil
+}
+
+// privateMessageRespond 序列化数据库当前状态，不使用ES或历史通知中的旧正文。
+func privateMessageRespond(message models.Message) userresp.GetMessageListRespond {
+	return userresp.GetMessageListRespond{
+		Id: message.Id, Uuid: message.Uuid, SessionId: message.SessionId, SendId: message.SendId,
+		SendName: message.SendName, SendAvatar: message.SendAvatar, ReceiveId: message.ReceiveId,
+		Type: message.Type, Content: message.Content, Url: message.Url, FileType: message.FileType,
+		FileName: message.FileName, FileSize: message.FileSize, CreatedAt: message.CreatedAt.Format("2006-01-02 15:04:05"),
+	}
+}
+
+// RefreshPrivateMessages 使用数据库快照刷新当前会话，最多返回100条新增消息和100条已知消息。
+func (s *MessageServiceImpl) RefreshPrivateMessages(ctx context.Context, userId, peerId, afterId string, knownIds []string) ([]userresp.GetMessageListRespond, []userresp.GetMessageListRespond, bool, error) {
+	id, err := strconv.ParseInt(afterId, 10, 64)
+	if err != nil || id < 0 || len(knownIds) > 100 || !strings.HasPrefix(userId, "U") || !strings.HasPrefix(peerId, "U") || userId == peerId {
+		return nil, nil, false, fmt.Errorf("私聊刷新参数无效")
+	}
+	added := make([]userresp.GetMessageListRespond, 0)
+	updated := make([]userresp.GetMessageListRespond, 0)
+	var hasMore bool
+	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		session, err := userdao.NewSessionDAO(tx).GetSessionBySendAndReceiveId(userId, peerId)
+		if err != nil {
+			return fmt.Errorf("查询本人私聊会话失败: %w", err)
+		}
+		messages, current, err := userdao.NewMessageDAO(tx).GetPrivateMessageUpdates(userId, peerId, id, knownIds)
+		if err != nil {
+			return fmt.Errorf("刷新私聊消息失败: %w", err)
+		}
+		hasMore = len(messages) > 100
+		if hasMore {
+			messages = messages[:100]
+		}
+		for _, message := range messages {
+			item := privateMessageRespond(message)
+			item.SessionId = session.Uuid
+			added = append(added, item)
+		}
+		for _, message := range current {
+			item := privateMessageRespond(message)
+			item.SessionId = session.Uuid
+			updated = append(updated, item)
+		}
+		return nil
+	})
+	return added, updated, hasMore, err
 }
 
 // SearchMessages 搜索本人有效私聊中的双向文字消息，并返回本人会话编号。

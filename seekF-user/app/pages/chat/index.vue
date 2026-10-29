@@ -142,6 +142,9 @@
 
                   <!-- 自己消息：气泡在左，头像在右 -->
                   <template v-else>
+                    <button v-if="messageSendFailures[msg.clientMessageId]" type="button" class="flex h-6 w-6 shrink-0 self-center items-center justify-center rounded-full text-red-500 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500 disabled:cursor-not-allowed" :title="messageSendFailures[msg.clientMessageId]" :aria-label="`${messageSendFailures[msg.clientMessageId]}，点击重新发送`" :disabled="!messageSocketConnected" @click="retryMessage(msg)">
+                      <svg viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5" aria-hidden="true"><path fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V8a1 1 0 0 1 1-1Zm0 9a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z" clip-rule="evenodd" /></svg>
+                    </button>
                     <div class="bubble bubble-right outline-none focus-visible:ring-2 focus-visible:ring-gray-400" tabindex="0" aria-haspopup="menu" @contextmenu.prevent.stop="openMessageMenu($event, msg)" @keydown="handleMessageMenuKey($event, msg)">
                       <div v-if="msg.isImage || isImageUrl(msg.content)">
                         <img :src="msg.content" class="max-w-full rounded cursor-pointer hover:opacity-90" style="max-height: 200px;" @load="restoreHistoryPosition" @error="restoreHistoryPosition" @click="previewImage(msg.content)" />
@@ -200,7 +203,7 @@
             <div class="mt-3 flex shrink-0 items-center justify-end">
               <button
                 class="send-btn"
-                :disabled="(!inputMessage.trim() && pendingImages.length === 0) || !ws.isConnected"
+                :disabled="(!inputMessage.trim() && pendingImages.length === 0) || !messageSocketConnected"
                 @click="sendMessage"
               >
                 <Icon name="uil:message" class="text-base" />
@@ -242,6 +245,8 @@ const route = useRoute()
 const router = useRouter()
 
 const ws = useWebSocket()
+const messageSendFailures = ws.sendFailures
+const messageSocketConnected = ws.isConnected
 const { ownerId: unreadOwnerId, unreadFor, unreadRevision, refreshUnread, removeUnreadSession, markRead } = useChatUnread()
 const chatPageActive = ref(true)
 
@@ -414,6 +419,25 @@ const deleteMessage = async message => {
 
 const historyCursor = ref('')
 const messageList = ref([])
+
+// restoreLocalMessages 恢复当前会话的未确认气泡，失败请求保留到用户手动重试。
+const restoreLocalMessages = receiveId => {
+  for (const request of ws.getPendingMessages(receiveId)) {
+    if (messageList.value.some(message => message.clientMessageId === request.client_msg_id)) continue
+    const tempId = 'temp_' + request.client_msg_id
+    messageList.value.push({
+      clientMessageId: request.client_msg_id, messageId: tempId, renderKey: tempId,
+      content: request.type === 2 ? request.url : request.content,
+      senderName: '我', avatar: currentUserAvatar.value, sendTime: request.created_at,
+      isSelf: true, isImage: request.type === 2 && isImageUrl(request.url), animateEntrance: false
+    })
+  }
+}
+
+// retryMessage 点击失败图标时复用原请求，不新增气泡或改变原有动画。
+const retryMessage = message => {
+  if (!ws.retryPrivateMessage(message.clientMessageId)) ElMessage.error('消息未能重新发送，请确认连接已恢复后重试')
+}
 const locatingMessage = ref(false)
 const locatedMessage = ref('')
 const messageHighlightVisible = ref(false)
@@ -513,6 +537,9 @@ const blockStatusLoading = ref(false)
 const blockSaving = ref(false)
 let blockStatusRequest = 0
 let chatDisposed = false
+let recoveryCursor = '0'
+let recoveryRunning = false
+let recoveryTimer
 
 // 切换会话及拉黑状态变化时重新查询，丢弃旧用户的状态响应。
 const refreshChatBlockStatus = async () => {
@@ -772,6 +799,7 @@ const clearCurrentChat = () => {
   clearHistoryAnchor()
   messageRequestVersion++
   messageList.value = []
+  recoveryCursor = '0'
   historyCursor.value = ''
   currentPage.value = 1
   hasMore.value = false
@@ -891,6 +919,8 @@ const selectSession = async (index) => {
   loadingMore.value = false
   messageList.value = []
   historyCursor.value = ''
+  recoveryCursor = '0'
+  restoreLocalMessages(session.id)
 
   try {
     const loaded = await loadMessageList(session.id)
@@ -934,6 +964,8 @@ const loadMessageList = async (receiveId, page = 1) => {
     if (chatDisposed || version !== messageRequestVersion) return
     if (data?.code === 200) {
       const list = data.data?.list || []
+      const confirmed = await ws.reconcilePrivateMessages(list)
+      if (chatDisposed || version !== messageRequestVersion) return
       if (list.length) historyCursor.value = list[list.length - 1].uuid
       totalMessages.value = data.data?.total || 0
 
@@ -942,8 +974,11 @@ const loadMessageList = async (receiveId, page = 1) => {
         const isFileMsg = msg.type === 2
         const isRecalled = msg.type === 9 || recalledMessages.has(recallKey(msg.uuid))
         const messageContent = isRecalled ? '' : isFileMsg ? (msg.url || msg.content) : msg.content
+        const temporary = confirmed[msg.uuid] && messageList.value.find(message => message.clientMessageId === confirmed[msg.uuid])
         return {
           messageId: msg.uuid || msg.messageId,
+          clientMessageId: confirmed[msg.uuid],
+          renderKey: temporary?.renderKey,
           isRecalled,
           readId: msg.id || '0',
           content: messageContent,
@@ -956,16 +991,22 @@ const loadMessageList = async (receiveId, page = 1) => {
       })
 
       if (page === 1) {
-        messageList.value = messages.reverse()
+        recoveryCursor = messages.reduce((max, message) => BigInt(message.readId) > BigInt(max) ? message.readId : max, '0')
+        // 保留查询期间到达的新消息与待确认消息，不让历史响应覆盖实时结果。
+        const confirmedRequests = new Set(Object.values(confirmed))
+        const incoming = messageList.value.filter(message => message.messageId?.startsWith('temp_') ? !confirmedRequests.has(message.clientMessageId) : BigInt(message.readId || '0') > BigInt(recoveryCursor))
+        messageList.value = [...messages.reverse(), ...incoming]
       } else {
         // 在真正前插前记录最新阅读位置，请求期间用户可以继续滚动。
         historyAnchor = captureChatHistoryAnchor(historyWrap)
         preservingHistory = true
+        const confirmedRequests = new Set(Object.values(confirmed))
+        messageList.value = messageList.value.filter(message => !message.messageId?.startsWith('temp_') || !confirmedRequests.has(message.clientMessageId))
         const existing = new Set(messageList.value.map(message => message.messageId))
         messageList.value = [...messages.reverse().filter(message => !existing.has(message.messageId)), ...messageList.value]
       }
 
-      hasMore.value = list.length > 0 && messageList.value.length < totalMessages.value
+      hasMore.value = list.length > 0 && messageList.value.filter(message => !message.messageId?.startsWith('temp_')).length < totalMessages.value
       nextTick(markCurrentChatRead)
       return true
     }
@@ -1016,6 +1057,7 @@ const sendMessage = async () => {
 
   const session = currentChat.value
   if (!session) return
+  const owner = currentUserId.value
 
   // 发送待发送的图片
   if (hasImages) {
@@ -1030,6 +1072,7 @@ const sendMessage = async () => {
 
   // 发送文本消息
   if (hasText) {
+    if (owner !== currentUserId.value || currentChat.value?.sessionId !== session.sessionId) return
     const success = ws.sendTextMessage(
       session.sessionId,
       inputMessage.value.trim(),
@@ -1037,8 +1080,9 @@ const sendMessage = async () => {
     )
 
     if (success) {
-      const tempId = 'temp_' + Date.now()
+      const tempId = 'temp_' + success
       messageList.value.push({
+        clientMessageId: success,
         messageId: tempId,
         renderKey: tempId,
         animateEntrance: true,
@@ -1056,7 +1100,7 @@ const sendMessage = async () => {
       inputMessage.value = ''
 
       scrollToBottom(true)
-    }
+    } else ElMessage.error('消息未能发送，请确认连接和待处理消息数量后重试')
   }
 }
 
@@ -1161,6 +1205,7 @@ const uploadAndSendImage = async (file) => {
     })
 
     if (data?.code === 200) {
+      if (currentChat.value?.sessionId !== session.sessionId) return
       const imageUrl = typeof data.data === 'object' ? data.data.url : data.data
 
       // 发送图片消息
@@ -1175,8 +1220,9 @@ const uploadAndSendImage = async (file) => {
 
       if (success) {
         // 添加临时消息到列表
-        const tempId = 'temp_' + Date.now()
+        const tempId = 'temp_' + success
         messageList.value.push({
+          clientMessageId: success,
           messageId: tempId,
           renderKey: tempId,
           animateEntrance: true,
@@ -1194,8 +1240,7 @@ const uploadAndSendImage = async (file) => {
         reorderSessions()
 
         scrollToBottom(true)
-        ElMessage.success('图片发送成功')
-      }
+      } else ElMessage.error('图片消息未能发送，请确认连接和待处理消息数量后重试')
     } else {
       ElMessage.error(data?.message || '图片上传失败')
     }
@@ -1241,10 +1286,18 @@ const handleWebSocketMessage = (data) => {
     console.log('数据不是对象，跳过')
     return
   }
+  if (data?.type === 'connection_restored') {
+    if (currentChat.value) restoreLocalMessages(currentChat.value.id)
+    void recoverChat()
+    return
+  }
+  if (data?.client_msg_id && ['message_deleted', 'message_recalled'].includes(data.type)) {
+    messageList.value = messageList.value.filter(message => message.clientMessageId !== data.client_msg_id)
+  }
   if (data?.type === 'message_deleted') { applyMessageDelete(data); return }
   if (data?.type === 'message_recalled') { applyMessageRecall(data); return }
   if (data?.type === 'error') {
-    ElMessage.error(data.message || '私聊消息发送失败')
+    if (!data.client_msg_id) ElMessage.error(data.message || '私聊消息发送失败')
     return
   }
   
@@ -1263,7 +1316,12 @@ const handleWebSocketMessage = (data) => {
   const peerId = isSelf ? data.receive_id : data.send_id
   const isCurrentSession = currentSession?.id === peerId
 
-  if (isCurrentSession && messageList.value.some(message => message.messageId === data.uuid)) return
+  if (isCurrentSession && messageList.value.some(message => message.messageId === data.uuid)) {
+    // 补拉可能先于发送确认到达，仍需消除同请求的临时节点。
+    if (data.client_msg_id) messageList.value = messageList.value.filter(message => message.clientMessageId !== data.client_msg_id || message.messageId === data.uuid)
+    return
+  }
+  sessionListVersion++
 
   if (isCurrentSession) {
     // 文件消息使用 url 作为内容，文本消息使用 content
@@ -1271,6 +1329,7 @@ const handleWebSocketMessage = (data) => {
     const messageContent = isRecalled ? '' : data.type === 2 ? data.url : data.content
     const realMessage = {
       messageId: data.uuid,
+      clientMessageId: data.client_msg_id,
       isRecalled,
       readId: data.id || '0',
       animateEntrance: true,
@@ -1283,7 +1342,7 @@ const handleWebSocketMessage = (data) => {
     }
 
     if (isSelf) {
-      const tempIndex = messageList.value.findIndex(m => m.messageId?.startsWith('temp_') && m.content === (data.type === 2 ? data.url : data.content))
+      const tempIndex = messageList.value.findIndex(m => m.messageId?.startsWith('temp_') && data.client_msg_id && m.clientMessageId === data.client_msg_id)
       if (tempIndex !== -1) {
         // 服务端回显沿用本地节点且不重复滚动，避免打断正在进行的入场和滚动。
         messageList.value[tempIndex] = { ...realMessage, renderKey: messageList.value[tempIndex].renderKey || messageList.value[tempIndex].messageId }
@@ -1342,11 +1401,12 @@ watch(() => route.query.userId, (userId) => {
 onMounted(async () => {
   recallClock = setInterval(() => { recallNow.value = Date.now() }, 1000)
   document.addEventListener('visibilitychange', handleChatVisibility)
+  ws.onMessage(handleWebSocketMessage)
   await getCurrentUserInfo()
   await loadSessionList()
   await openPrivateChat(route.query.userId)
 
-  ws.onMessage(handleWebSocketMessage)
+  recoveryTimer = setInterval(() => { void recoverChat() }, 15000)
 })
 
 // markCurrentChatRead 仅在聊天页可见且消息已经加载时确认实际入站消息的最大边界。
@@ -1356,16 +1416,73 @@ const markCurrentChatRead = () => {
   markRead(currentChat.value.sessionId, boundary)
 }
 
-// handleChatVisibility 窗口恢复可见后确认已展示的消息。
+// recoverChat 重新查询MySQL中的新增消息及已加载消息状态，不重建列表或改变阅读位置。
+const recoverChat = async () => {
+  if (recoveryRunning || chatDisposed || !chatPageActive.value || document.visibilityState !== 'visible' || route.path !== '/chat' || initializingBottom.value || loadingMore.value || preservingHistory || locatingMessage.value) return
+  const owner = currentUserId.value
+  if (!owner || owner !== unreadOwnerId.value) return
+  recoveryRunning = true
+  const version = messageRequestVersion
+  const peer = currentChat.value?.id
+  try {
+    await Promise.all([loadSessionList(), refreshUnread()])
+    if (!peer || chatDisposed || owner !== currentUserId.value || owner !== unreadOwnerId.value || version !== messageRequestVersion || currentChat.value?.id !== peer) return
+    const knownIds = messageList.value.filter(message => message.messageId?.startsWith('M')).map(message => message.messageId)
+    let offset = 0
+    let more = true
+    do {
+      const known = knownIds.slice(offset, offset + 100)
+      const res = await useApi$('/user/message/getUserMessageList', { body: { user_one_id: owner, user_two_id: peer, refresh: true, after_id: recoveryCursor, known_ids: known } })
+      if (chatDisposed || owner !== currentUserId.value || owner !== unreadOwnerId.value || version !== messageRequestVersion || currentChat.value?.id !== peer) return
+      if (res.code !== 200) throw new Error(res.message || '恢复聊天记录失败')
+      const confirmed = await ws.reconcilePrivateMessages([...(res.data.list || []), ...(res.data.updated || [])])
+      if (chatDisposed || owner !== currentUserId.value || owner !== unreadOwnerId.value || version !== messageRequestVersion || currentChat.value?.id !== peer) return
+      for (const [uuid, requestId] of Object.entries(confirmed)) {
+        if (messageList.value.some(message => message.messageId === uuid)) {
+          messageList.value = messageList.value.filter(message => !message.messageId?.startsWith('temp_') || message.clientMessageId !== requestId)
+        }
+      }
+      const current = new Map((res.data.updated || []).map(message => [message.uuid, message]))
+      for (const id of known) {
+        const saved = current.get(id)
+        if (!saved && !deletedMessages.has(recallKey(id))) applyMessageDelete({ uuid: id, user_id: owner })
+        else if (saved.type === 9 && !recalledMessages.has(recallKey(id))) applyMessageRecall(saved)
+      }
+      for (const saved of res.data.list || []) {
+        const requestId = confirmed[saved.uuid]
+        const temporary = requestId ? messageList.value.find(message => message.messageId?.startsWith('temp_') && message.clientMessageId === requestId) : null
+        if (temporary && !messageList.value.some(message => message.messageId === saved.uuid) && !deletedMessages.has(recallKey(saved.uuid))) {
+          Object.assign(temporary, { messageId: saved.uuid, readId: saved.id, isRecalled: saved.type === 9 || recalledMessages.has(recallKey(saved.uuid)), content: saved.type === 9 ? '' : saved.type === 2 ? saved.url : saved.content, sendTime: saved.created_at, isImage: saved.type === 2 && isImageUrl(saved.url) })
+        } else if (temporary) {
+          messageList.value = messageList.value.filter(message => message !== temporary)
+        }
+        if (!messageList.value.some(message => message.messageId === saved.uuid) && !deletedMessages.has(recallKey(saved.uuid))) {
+          messageList.value.push({ messageId: saved.uuid, readId: saved.id, isRecalled: saved.type === 9 || recalledMessages.has(recallKey(saved.uuid)), content: saved.type === 9 ? '' : saved.type === 2 ? saved.url : saved.content, senderName: saved.send_name, avatar: saved.send_avatar, sendTime: saved.created_at, isSelf: saved.send_id === owner, isImage: saved.type === 2 && isImageUrl(saved.url), animateEntrance: false })
+        }
+        if (BigInt(saved.id) > BigInt(recoveryCursor)) recoveryCursor = saved.id
+      }
+      // 直接推送与补拉交错到达时仍按数据库消息编号排列，保留原renderKey。
+      const saved = messageList.value.filter(message => !message.messageId?.startsWith('temp_'))
+      saved.sort((a, b) => BigInt(a.readId || '0') < BigInt(b.readId || '0') ? -1 : BigInt(a.readId || '0') > BigInt(b.readId || '0') ? 1 : 0)
+      messageList.value = [...saved, ...messageList.value.filter(message => message.messageId?.startsWith('temp_'))]
+      more = !!res.data.has_more
+      offset += 100
+    } while (more || offset < knownIds.length)
+    nextTick(markCurrentChatRead)
+  } catch (error) {
+    if (!chatDisposed && owner === currentUserId.value) console.error('恢复私聊记录失败:', error)
+  } finally { recoveryRunning = false }
+}
+
+// handleChatVisibility 窗口恢复可见时先补齐数据库状态，再确认已展示的消息。
 const handleChatVisibility = () => {
-  if (document.visibilityState === 'visible') nextTick(markCurrentChatRead)
+  if (document.visibilityState === 'visible') void recoverChat()
 }
 
 watch(unreadRevision, () => nextTick(markCurrentChatRead))
 onActivated(() => {
   chatPageActive.value = true
-  refreshUnread()
-  nextTick(markCurrentChatRead)
+  void recoverChat()
 })
 onDeactivated(() => { flushMessageExits(); messageMenuRef.value?.close(); chatPageActive.value = false; clearInitialBottom(); clearMessageHighlight() })
 
@@ -1373,6 +1490,7 @@ onUnmounted(() => {
   flushMessageExits()
   messageMenuRef.value?.close()
   clearInterval(recallClock)
+  clearInterval(recoveryTimer)
   clearMessageHighlight()
   clearInitialBottom()
   clearHistoryAnchor()

@@ -47,6 +47,15 @@ func (c *MessageController) GetUserMessageList(ctx *gin.Context) {
 	if peerId == currentUser {
 		peerId = req.UserOneId
 	}
+	if req.Refresh {
+		added, updated, more, err := c.messageService.RefreshPrivateMessages(ctx.Request.Context(), currentUser, peerId, req.AfterId, req.KnownIds)
+		if err != nil {
+			resp.Error(ctx, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp.Success(ctx, "刷新聊天记录成功", gin.H{"list": added, "updated": updated, "has_more": more})
+		return
+	}
 	messageList, total, err := c.messageService.GetUserMessageList(currentUser, peerId, req.Page, req.PageSize, req.BeforeMessageId)
 	if err != nil {
 		zlog.Info("获取用户消息列表服务错误: " + err.Error())

@@ -17,12 +17,10 @@ func main() {
 
 	// 以下为全局单例初始化，不适合 Wire 管理
 
-	// 初始化Kafka并启动WebSocket服务器
+	// 初始化其他业务Kafka与直接推送的WebSocket服务器
 	kafka.KafkaServiceInstance.Init()
 	websocket.ChatServer = websocket.NewServer(
 		app.SessionService,
-		app.MessageDAO,
-		app.SessionDAO,
 	)
 	go websocket.ChatServer.Start()
 
