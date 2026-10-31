@@ -335,7 +335,7 @@ func (s *DiscoverServiceImpl) listTimeFeed(ctx context.Context, userId string, i
 		posts, err = s.discoverDAO.ListRecommendationFeed(ctx, userId, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
 	} else if following && configs.GetConfig().DiscoverFeedConfig.Enabled {
 		started := time.Now()
-		posts, err = s.discoverDAO.ListHybridFeed(ctx, userId, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
+		posts, err = s.discoverDAO.ListHybridFeed(ctx, userId, input.MediaType, discoverDistributionFrom(configs.GetConfig().DiscoverFeedConfig), boundary.CreatedAt, boundary.Id, input.PageSize+1)
 		mode := "hybrid"
 		if err != nil {
 			zlog.Warn("关注混合流查询失败，回退读时查询，userId=" + userId + ": " + err.Error())
@@ -2170,7 +2170,7 @@ func (s *DiscoverServiceImpl) SetPostVisibility(ctx context.Context, userId stri
 			if err := dao.SavePost(post); err != nil {
 				return err
 			}
-			if err := userdao.NewDiscoverOutboxDAO(tx).Create(post, false); err != nil {
+			if err := userdao.NewDiscoverOutboxDAO(tx).Create(post, post.Status == constants.DiscoverPostPublished && post.Visibility == 0); err != nil {
 				return err
 			}
 		}

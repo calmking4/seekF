@@ -51,8 +51,8 @@ type DiscoverDAO interface {
 	ListFollowingAuthorFeed(ctx context.Context, userId, author string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
 	// 清理过期或当前已不可见的收件箱候选。
 	CleanupFeedInbox(ctx context.Context, from time.Time, limit int) error
-	// 合并收件箱与拉取候选并补查未覆盖内容。
-	ListHybridFeed(ctx context.Context, userId string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
+	// 有界合并收件箱、拉模式作品、未完成分发及窗口外历史，排除关注前作品。
+	ListHybridFeed(ctx context.Context, userId string, mediaType *int8, from, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
 	// 幂等保存当天首次点击，返回是否实际新增。
 	SaveClick(click *models.DiscoverClick) (bool, error)
 	// 设置帖子或作者不感兴趣状态。
@@ -258,8 +258,7 @@ func (d *DiscoverDAOImpl) ListFeed(ctx context.Context, userId string, following
 	posts := make([]models.DiscoverPost, 0)
 	query := WithoutHiddenAuthors(d.db.WithContext(ctx), userId, "discover_post").Where("status = 0 AND visibility = 0")
 	if following {
-		follows := d.db.WithContext(ctx).Model(&models.UserFollow{}).Select("follow_user_id").Where("user_id = ?", userId)
-		query = query.Where("user_id IN (?)", follows)
+		query = query.Where("EXISTS (SELECT 1 FROM user_follow f WHERE f.user_id=? AND f.follow_user_id=discover_post.user_id)", userId)
 	}
 	if mediaType != nil {
 		query = query.Where("media_type = ?", *mediaType)

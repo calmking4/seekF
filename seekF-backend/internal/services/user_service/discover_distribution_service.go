@@ -25,7 +25,7 @@ func discoverDistributionFrom(cfg configs.DiscoverFeedConfig) time.Time {
 	return time.Now().AddDate(0, 0, -days).Truncate(time.Second)
 }
 
-// discoverDistributionThreshold 返回推拉阈值，默认500人，不额外维护作者策略。
+// discoverDistributionThreshold 返回单篇作品推送人数的上限，默认500人。
 func discoverDistributionThreshold(cfg configs.DiscoverFeedConfig) int64 {
 	threshold := cfg.FollowerThreshold
 	if threshold < 1 {
@@ -50,29 +50,31 @@ func (s *discoverEventConsumer) processFeedOnce(ctx context.Context, id int64, c
 			return nil
 		}
 		dao := userdao.NewDiscoverDistributionDAO(tx)
-		post, err := outbox.CurrentPost(event.PostUuid)
+		post, err := outbox.CurrentPostForUpdate(event.PostUuid)
 		if err != nil {
 			return err
 		}
-		if post == nil || post.DeletedAt.Valid || post.Status != 0 || post.Visibility != 0 || post.CreatedAt.Before(discoverDistributionFrom(cfg)) {
+		if post != nil && event.PostVersion != post.Version {
+			// 旧任务不覆盖新发布的收件箱，最新公开版本有自己的分发任务。
+		} else if post == nil || post.DeletedAt.Valid || post.Status != constants.DiscoverPostPublished || post.Visibility != 0 || post.CreatedAt.Before(discoverDistributionFrom(cfg)) || post.FeedMode == constants.DiscoverFeedPull {
 			if err := dao.DeletePostInbox(event.PostUuid); err != nil {
 				return err
 			}
-		} else if event.PostVersion == 1 {
-			author, err := userdao.NewUserInfoDAO(tx).FindUserByUuid(post.UserId)
+		} else {
+			threshold := discoverDistributionThreshold(cfg)
+			fans, err := dao.ListFans(post.UserId, post.CreatedAt, int(threshold))
 			if err != nil {
 				return err
 			}
-			threshold := discoverDistributionThreshold(cfg)
-			if author != nil && author.Uuid != "" && author.FollowerCount < threshold {
-				fans, err := dao.ListFans(post.UserId, post.CreatedAt, int(threshold))
-				if err != nil {
+			if int64(len(fans)) >= threshold {
+				// 仅处理发布时符合时间条件的关注关系；异常达到上限时转拉，不能截断粉丝后报分发完成。
+				if err := dao.SetPostFeedMode(post.Id, constants.DiscoverFeedPull); err != nil {
 					return err
 				}
-				// 计数落后于实际关系时也不向大作者扩散，全部候选仍可读时获取。
-				if int64(len(fans)) >= threshold {
-					fans = nil
+				if err := dao.DeletePostInbox(post.Uuid); err != nil {
+					return err
 				}
+			} else {
 				rows := make([]models.DiscoverFeedInbox, 0, len(fans))
 				for _, fan := range fans {
 					rows = append(rows, models.DiscoverFeedInbox{UserId: fan.UserId, PostUuid: post.Uuid, PostCreatedAt: post.CreatedAt})
@@ -123,7 +125,7 @@ func (s *discoverEventConsumer) processFeedEvent(ctx context.Context, id int64) 
 // MaintainDistribution 仅清理过期及当前不可见候选，不再回填任何历史帖子。
 func (s *discoverEventConsumer) MaintainDistribution(ctx context.Context) error {
 	cfg := configs.GetConfig().DiscoverFeedConfig
-	return s.posts.CleanupFeedInbox(ctx, discoverDistributionFrom(cfg), constants.DiscoverInboxCleanupLimit)
+	return s.posts.CleanupFeedInbox(ctx, discoverDistributionFrom(cfg).Add(-constants.DiscoverInboxCleanupGrace), constants.DiscoverInboxCleanupLimit)
 }
 
 // StartDiscoverFeedConsumer 启动关注消费者，完整分发事务提交后显式提交Kafka位点。

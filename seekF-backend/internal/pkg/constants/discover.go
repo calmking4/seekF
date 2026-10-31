@@ -79,12 +79,24 @@ const (
 	DiscoverDistributionThreshold = 500
 	// 未配置时收件箱候选保留窗口，单位天。
 	DiscoverDistributionDays = 30
+	// 新关注作者的推送作品可通过读取补充的时长，单位小时。
+	DiscoverRecentFollowWindow = 24 * time.Hour
+)
+
+// 作品发布时确定的关注流分发方式。
+const (
+	// 普通作者作品写入粉丝收件箱。
+	DiscoverFeedPush int8 = 0
+	// 大作者及迁移前历史作品在读取时拉取。
+	DiscoverFeedPull int8 = 1
 )
 
 // 关注收件箱维护批量。
 const (
-	// 每轮存储维护最多清理的候选数量，单位行，与发帖分发无关。
+	// 每条清理语句最多删除的候选数量，单位行，与发帖分发无关。
 	DiscoverInboxCleanupLimit = 200
+	// 清理比读取窗口额外保留1小时，避免并发请求与清理计算时间边界不同而漏读。
+	DiscoverInboxCleanupGrace = time.Hour
 )
 
 // 帖子浏览量更新协程池。

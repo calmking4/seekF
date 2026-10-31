@@ -79,6 +79,16 @@ func (d *DiscoverOutboxDAO) CurrentPost(uuid string) (*models.DiscoverPost, erro
 	return &post, err
 }
 
+// CurrentPostForUpdate 锁定包含软删除状态的作品，防止旧分发任务与重新审核同时修改收件箱。
+func (d *DiscoverOutboxDAO) CurrentPostForUpdate(uuid string) (*models.DiscoverPost, error) {
+	var post models.DiscoverPost
+	err := d.db.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid=?", uuid).First(&post).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &post, err
+}
+
 // HasIncomplete 检查索引是否还有未完成同步，搜索期间有积压则使用当前数据库。
 func (d *DiscoverOutboxDAO) HasIncomplete() (bool, error) {
 	var events []models.DiscoverOutbox
