@@ -1,6 +1,7 @@
 package userservice
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	userdao "seekF-backend/internal/dao/user_dao"
@@ -9,8 +10,10 @@ import (
 )
 
 type UserInfoService interface {
-	GetUserInfo(req *userreq.GetUserInfoRequest) (*userresp.GetUserInfoRespond, error)
-	UpdateUserInfo(req *userreq.UpdateUserInfoRequest) error
+	// 查询用户公开资料，不存在时返回业务错误。
+	GetUserInfo(ctx context.Context, req *userreq.GetUserInfoRequest) (*userresp.GetUserInfoRespond, error)
+	// 校验并更新当前用户的个人资料。
+	UpdateUserInfo(ctx context.Context, req *userreq.UpdateUserInfoRequest) error
 }
 
 type UserInfoServiceImpl struct {
@@ -24,8 +27,8 @@ func NewUserInfoService(userInfoDAO userdao.UserInfoDAO) UserInfoService {
 }
 
 // GetUserInfo 获取用户信息
-func (s *UserInfoServiceImpl) GetUserInfo(req *userreq.GetUserInfoRequest) (*userresp.GetUserInfoRespond, error) {
-	user, err := s.userInfoDAO.FindUserByUuid(req.Uuid)
+func (s *UserInfoServiceImpl) GetUserInfo(ctx context.Context, req *userreq.GetUserInfoRequest) (*userresp.GetUserInfoRespond, error) {
+	user, err := s.userInfoDAO.FindUserByUuid(ctx, req.Uuid)
 	if err != nil {
 		return nil, fmt.Errorf("获取用户信息失败：%v", err)
 	}
@@ -57,9 +60,9 @@ func (s *UserInfoServiceImpl) GetUserInfo(req *userreq.GetUserInfoRequest) (*use
 }
 
 // UpdateUserInfo 更新用户信息
-func (s *UserInfoServiceImpl) UpdateUserInfo(req *userreq.UpdateUserInfoRequest) error {
+func (s *UserInfoServiceImpl) UpdateUserInfo(ctx context.Context, req *userreq.UpdateUserInfoRequest) error {
 	// 根据UUID查找用户
-	user, err := s.userInfoDAO.FindUserByUuid(req.Uuid)
+	user, err := s.userInfoDAO.FindUserByUuid(ctx, req.Uuid)
 	if err != nil {
 		return fmt.Errorf("查找用户失败：%v", err)
 	}
@@ -71,7 +74,7 @@ func (s *UserInfoServiceImpl) UpdateUserInfo(req *userreq.UpdateUserInfoRequest)
 	// 更新用户信息
 	if req.Email != "" {
 		// 检查邮箱是否已被其他用户使用
-		existingUser, err := s.userInfoDAO.FindUserByEmail(req.Email)
+		existingUser, err := s.userInfoDAO.FindUserByEmail(ctx, req.Email)
 		if err != nil {
 			return fmt.Errorf("检查邮箱失败：%v", err)
 		}
@@ -82,7 +85,7 @@ func (s *UserInfoServiceImpl) UpdateUserInfo(req *userreq.UpdateUserInfoRequest)
 	}
 	if req.Nickname != "" {
 		// 检查昵称是否已被其他用户使用
-		existingUser, err := s.userInfoDAO.FindUserByNickname(req.Nickname)
+		existingUser, err := s.userInfoDAO.FindUserByNickname(ctx, req.Nickname)
 		if err != nil {
 			return fmt.Errorf("检查昵称失败：%v", err)
 		}
@@ -102,7 +105,7 @@ func (s *UserInfoServiceImpl) UpdateUserInfo(req *userreq.UpdateUserInfoRequest)
 	}
 
 	// 保存更新
-	err = s.userInfoDAO.UpdateUserInfo(user)
+	err = s.userInfoDAO.UpdateUserInfo(ctx, user)
 	if err != nil {
 		return fmt.Errorf("更新用户信息失败：%v", err)
 	}

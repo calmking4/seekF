@@ -92,9 +92,9 @@ func (s *discoverEventConsumer) PublishDue(ctx context.Context) error {
 	var events []models.DiscoverOutbox
 	var err error
 	if s.target == constants.DiscoverTargetFeed {
-		events, err = userdao.NewDiscoverDistributionDAO(s.database.WithContext(ctx)).ListDue(50)
+		events, err = userdao.NewDiscoverDistributionDAO(s.database.WithContext(ctx)).ListDue(ctx, 50)
 	} else {
-		events, err = userdao.NewDiscoverOutboxDAO(s.database.WithContext(ctx)).ListDue(50)
+		events, err = userdao.NewDiscoverOutboxDAO(s.database.WithContext(ctx)).ListDue(ctx, 50)
 	}
 	if err != nil {
 		return fmt.Errorf("读取待投递发现页事件失败: %w", err)
@@ -115,7 +115,7 @@ func (s *discoverEventConsumer) publishEvent(ctx context.Context, id int64) erro
 	var sendErr error
 	err := s.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewDiscoverOutboxDAO(tx)
-		event, err := dao.LockEvent(id, true)
+		event, err := dao.LockEvent(ctx, id, true)
 		if err != nil {
 			return err
 		}
@@ -148,7 +148,7 @@ func (s *discoverEventConsumer) publishEvent(ctx context.Context, id int64) erro
 			// 已投递但五分钟仍未完成时再次投递，补偿消费中断及消息保留期等故障。
 			event.NextAttemptAt = now.Add(5 * time.Minute)
 		}
-		return dao.Save(event)
+		return dao.Save(attempt, event)
 	})
 	if err != nil {
 		return fmt.Errorf("保存发现页投递状态失败，eventId=%d: %w", id, err)
@@ -163,7 +163,7 @@ func (s *discoverEventConsumer) ProcessEvent(ctx context.Context, id int64) erro
 	}
 	err := s.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewDiscoverOutboxDAO(tx)
-		event, err := dao.LockEvent(id, false)
+		event, err := dao.LockEvent(ctx, id, false)
 		if err != nil {
 			return err
 		}
@@ -176,7 +176,7 @@ func (s *discoverEventConsumer) ProcessEvent(ctx context.Context, id int64) erro
 		if event.Status == constants.DiscoverEventCompleted {
 			return nil
 		}
-		post, err := dao.CurrentPost(event.PostUuid)
+		post, err := dao.CurrentPost(ctx, event.PostUuid)
 		if err != nil {
 			return fmt.Errorf("读取当前作品失败: %w", err)
 		}
@@ -195,12 +195,12 @@ func (s *discoverEventConsumer) ProcessEvent(ctx context.Context, id int64) erro
 		event.Status = constants.DiscoverEventCompleted
 		event.ProcessedAt = &now
 		event.LastError = ""
-		return dao.Save(event)
+		return dao.Save(attempt, event)
 	})
 	if err != nil && !errors.Is(err, ErrDiscoverEventInvalid) && ctx.Err() == nil {
 		failureErr := s.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			dao := userdao.NewDiscoverOutboxDAO(tx)
-			event, lockErr := dao.LockEvent(id, false)
+			event, lockErr := dao.LockEvent(ctx, id, false)
 			if lockErr != nil {
 				return lockErr
 			}
@@ -208,7 +208,7 @@ func (s *discoverEventConsumer) ProcessEvent(ctx context.Context, id int64) erro
 				return nil
 			}
 			setDiscoverEventFailure(event, err)
-			return dao.Save(event)
+			return dao.Save(ctx, event)
 		})
 		if failureErr != nil {
 			return fmt.Errorf("处理事件失败且记录重试失败，eventId=%d: %w", id, errors.Join(err, failureErr))

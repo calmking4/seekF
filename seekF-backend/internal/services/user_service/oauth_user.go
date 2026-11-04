@@ -1,6 +1,7 @@
 package userservice
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -15,17 +16,17 @@ import (
 // oauthUserDAO 提供第三方首次登录所需的昵称查询和用户创建能力。
 type oauthUserDAO interface {
 	// 查询昵称对应的用户。
-	FindUserByNickname(string) (*models.UserInfo, error)
+	FindUserByNickname(context.Context, string) (*models.UserInfo, error)
 	// 创建用户，由数据库唯一约束保证并发安全。
-	CreateUser(*models.UserInfo) error
+	CreateUser(context.Context, *models.UserInfo) error
 }
 
 // createOAuthUser 创建第三方用户，重名时依次追加数字，并用第三方身份处理并发登录。
-func createOAuthUser(dao oauthUserDAO, user *models.UserInfo, findIdentity func() (*models.UserInfo, error)) (*models.UserInfo, error) {
+func createOAuthUser(ctx context.Context, dao oauthUserDAO, user *models.UserInfo, findIdentity func() (*models.UserInfo, error)) (*models.UserInfo, error) {
 	base := strings.TrimSpace(user.Nickname)
 	for attempt := 0; attempt < constants.OAuthNicknameMaxAttempts; attempt++ {
 		user.Nickname = oauthNickname(base, attempt)
-		existing, err := dao.FindUserByNickname(user.Nickname)
+		existing, err := dao.FindUserByNickname(ctx, user.Nickname)
 		if err != nil {
 			return nil, fmt.Errorf("查询第三方用户昵称失败：%w", err)
 		}
@@ -34,7 +35,7 @@ func createOAuthUser(dao oauthUserDAO, user *models.UserInfo, findIdentity func(
 		}
 		// 预查询不能避免并发抢占，最终以数据库唯一约束为准。
 		user.Id = 0
-		err = dao.CreateUser(user)
+		err = dao.CreateUser(ctx, user)
 		if err == nil {
 			return user, nil
 		}

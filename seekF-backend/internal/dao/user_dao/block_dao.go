@@ -11,7 +11,22 @@ import (
 )
 
 // BlockDAO 保存和查询用户拉黑关系，事务由服务层管理。
-type BlockDAO struct{ db *gorm.DB }
+type BlockDAO interface {
+
+	// 批量查询哪些候选作者拉黑了当前用户，供列表输出占位内容。
+	BlockedByAuthors(ctx context.Context, viewer string, authors []string) (map[string]bool, error)
+	// 查询双方各自设置的拉黑状态。
+	Status(ctx context.Context, userId, target string) (bool, bool, error)
+	// 幂等写入或删除本人设置的拉黑关系。
+	Set(ctx context.Context, userId, target string, blocked bool) error
+	// 按拉黑时间倒序读取本人黑名单及真实总数。
+	List(ctx context.Context, userId string, page, pageSize int) ([]BlockUserInfo, int64, error)
+}
+
+// BlockDAOImpl 实现对应业务的数据访问。
+type BlockDAOImpl struct {
+	db *gorm.DB
+}
 
 // BlockUserInfo 黑名单分页查询结果，不对应数据库表。
 type BlockUserInfo struct {
@@ -22,21 +37,18 @@ type BlockUserInfo struct {
 }
 
 // NewBlockDAO 构造使用指定连接的拉黑数据访问器。
-func NewBlockDAO(database *gorm.DB) *BlockDAO { return &BlockDAO{db: database} }
-
-// WithContext 派生保留当前数据库连接及请求取消信号的数据访问器。
-func (d *BlockDAO) WithContext(ctx context.Context) *BlockDAO {
-	return NewBlockDAO(d.db.WithContext(ctx))
+func NewBlockDAO(database *gorm.DB) BlockDAO {
+	return &BlockDAOImpl{db: database}
 }
 
 // BlockedByAuthors 批量查询哪些候选作者拉黑了当前用户，供列表输出占位内容。
-func (d *BlockDAO) BlockedByAuthors(viewer string, authors []string) (map[string]bool, error) {
+func (d *BlockDAOImpl) BlockedByAuthors(ctx context.Context, viewer string, authors []string) (map[string]bool, error) {
 	result := make(map[string]bool)
 	if len(authors) == 0 {
 		return result, nil
 	}
 	var ids []string
-	if err := d.db.Model(&models.UserBlock{}).Where("blocked_user_id = ? AND user_id IN ?", viewer, authors).Pluck("user_id", &ids).Error; err != nil {
+	if err := d.db.WithContext(ctx).Model(&models.UserBlock{}).Where("blocked_user_id = ? AND user_id IN ?", viewer, authors).Pluck("user_id", &ids).Error; err != nil {
 		return nil, err
 	}
 	for _, id := range ids {
@@ -53,9 +65,9 @@ func WithoutHiddenAuthors(query *gorm.DB, viewer, alias string) *gorm.DB {
 }
 
 // Status 查询双方各自设置的拉黑状态。
-func (d *BlockDAO) Status(userId, target string) (bool, bool, error) {
+func (d *BlockDAOImpl) Status(ctx context.Context, userId, target string) (bool, bool, error) {
 	var rows []models.UserBlock
-	err := d.db.Where("(user_id = ? AND blocked_user_id = ?) OR (user_id = ? AND blocked_user_id = ?)", userId, target, target, userId).Find(&rows).Error
+	err := d.db.WithContext(ctx).Where("(user_id = ? AND blocked_user_id = ?) OR (user_id = ? AND blocked_user_id = ?)", userId, target, target, userId).Find(&rows).Error
 	var blocked, blockedBy bool
 	for _, row := range rows {
 		if row.UserId == userId {
@@ -68,16 +80,16 @@ func (d *BlockDAO) Status(userId, target string) (bool, bool, error) {
 }
 
 // Set 幂等写入或删除本人设置的拉黑关系。
-func (d *BlockDAO) Set(userId, target string, blocked bool) error {
+func (d *BlockDAOImpl) Set(ctx context.Context, userId, target string, blocked bool) error {
 	if blocked {
-		return d.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&models.UserBlock{UserId: userId, BlockedUserId: target, CreatedAt: time.Now()}).Error
+		return d.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&models.UserBlock{UserId: userId, BlockedUserId: target, CreatedAt: time.Now()}).Error
 	}
-	return d.db.Where("user_id = ? AND blocked_user_id = ?", userId, target).Delete(&models.UserBlock{}).Error
+	return d.db.WithContext(ctx).Where("user_id = ? AND blocked_user_id = ?", userId, target).Delete(&models.UserBlock{}).Error
 }
 
 // List 按拉黑时间倒序读取本人黑名单及真实总数。
-func (d *BlockDAO) List(userId string, page, pageSize int) ([]BlockUserInfo, int64, error) {
-	query := d.db.Table("user_block b").Joins("LEFT JOIN user_info u ON u.uuid COLLATE utf8mb4_unicode_ci = b.blocked_user_id AND u.deleted_at IS NULL").Where("b.user_id = ?", userId)
+func (d *BlockDAOImpl) List(ctx context.Context, userId string, page, pageSize int) ([]BlockUserInfo, int64, error) {
+	query := d.db.WithContext(ctx).Table("user_block b").Joins("LEFT JOIN user_info u ON u.uuid COLLATE utf8mb4_unicode_ci = b.blocked_user_id AND u.deleted_at IS NULL").Where("b.user_id = ?", userId)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

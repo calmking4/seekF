@@ -27,11 +27,12 @@ type MessageService interface {
 	DeleteMessage(ctx context.Context, userId, messageId string) error
 	// 撤回本人在时限内发送的私聊消息。
 	RecallMessage(ctx context.Context, userId, messageId string) (models.Message, error)
-	GetUserMessageList(userOneId string, userTwoId string, page int, pageSize int, beforeMessageId ...string) ([]userresp.GetMessageListRespond, int64, error)
+	// 分页查询当前用户可见的私聊记录。
+	GetUserMessageList(ctx context.Context, userOneId string, userTwoId string, page int, pageSize int, beforeMessageId ...string) ([]userresp.GetMessageListRespond, int64, error)
 	// 搜索当前用户的私聊消息（双向文字匹配）。
-	SearchMessages(userId string, sessionId string, keyword string, page int, pageSize int) ([]userresp.GetMessageListRespond, int64, error)
+	SearchMessages(ctx context.Context, userId string, sessionId string, keyword string, page int, pageSize int) ([]userresp.GetMessageListRespond, int64, error)
 	// 查询当前用户的跨私聊会话消息联想。
-	SearchMessageSuggestions(userId string, keyword string, pageSize int) ([]userresp.SearchMessageSuggestionResp, error)
+	SearchMessageSuggestions(ctx context.Context, userId string, keyword string, pageSize int) ([]userresp.SearchMessageSuggestionResp, error)
 }
 
 // MessageServiceImpl 消息服务实现
@@ -49,7 +50,7 @@ func NewMessageService(messageDAO userdao.MessageDAO, sessionDAO userdao.Session
 }
 
 // GetUserMessageList 获取用户聊天记录（分页）
-func (s *MessageServiceImpl) GetUserMessageList(userOneId string, userTwoId string, page int, pageSize int, beforeMessageId ...string) ([]userresp.GetMessageListRespond, int64, error) {
+func (s *MessageServiceImpl) GetUserMessageList(ctx context.Context, userOneId string, userTwoId string, page int, pageSize int, beforeMessageId ...string) ([]userresp.GetMessageListRespond, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -59,14 +60,14 @@ func (s *MessageServiceImpl) GetUserMessageList(userOneId string, userTwoId stri
 	offset := (page - 1) * pageSize
 
 	// 获取消息总数
-	total, err := s.messageDAO.CountMessagesBetweenUsers(userOneId, userTwoId)
+	total, err := s.messageDAO.CountMessagesBetweenUsers(ctx, userOneId, userTwoId)
 	if err != nil {
 		zlog.Error(err.Error())
 		return nil, 0, fmt.Errorf("系统错误")
 	}
 
 	// 从数据库获取消息列表（倒序）
-	messageList, err := s.messageDAO.GetMessagesBetweenUsers(userOneId, userTwoId, pageSize, offset, beforeMessageId...)
+	messageList, err := s.messageDAO.GetMessagesBetweenUsers(ctx, userOneId, userTwoId, pageSize, offset, beforeMessageId...)
 	if err != nil {
 		zlog.Error(err.Error())
 		return nil, 0, fmt.Errorf("系统错误")
@@ -116,11 +117,11 @@ func (s *MessageServiceImpl) RefreshPrivateMessages(ctx context.Context, userId,
 	updated := make([]userresp.GetMessageListRespond, 0)
 	var hasMore bool
 	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		session, err := userdao.NewSessionDAO(tx).GetSessionBySendAndReceiveId(userId, peerId)
+		session, err := userdao.NewSessionDAO(tx).GetSessionBySendAndReceiveId(ctx, userId, peerId)
 		if err != nil {
 			return fmt.Errorf("查询本人私聊会话失败: %w", err)
 		}
-		messages, current, err := userdao.NewMessageDAO(tx).GetPrivateMessageUpdates(userId, peerId, id, knownIds)
+		messages, current, err := userdao.NewMessageDAO(tx).GetPrivateMessageUpdates(ctx, userId, peerId, id, knownIds)
 		if err != nil {
 			return fmt.Errorf("刷新私聊消息失败: %w", err)
 		}
@@ -144,7 +145,7 @@ func (s *MessageServiceImpl) RefreshPrivateMessages(ctx context.Context, userId,
 }
 
 // SearchMessages 搜索本人有效私聊中的双向文字消息，并返回本人会话编号。
-func (s *MessageServiceImpl) SearchMessages(userId string, sessionId string, keyword string, page int, pageSize int) ([]userresp.GetMessageListRespond, int64, error) {
+func (s *MessageServiceImpl) SearchMessages(ctx context.Context, userId string, sessionId string, keyword string, page int, pageSize int) ([]userresp.GetMessageListRespond, int64, error) {
 	keyword = strings.TrimSpace(keyword)
 	if userId == "" {
 		return nil, 0, fmt.Errorf("无法获取用户信息")
@@ -156,7 +157,7 @@ func (s *MessageServiceImpl) SearchMessages(userId string, sessionId string, key
 		return nil, 0, fmt.Errorf("搜索关键词不能超过200个字符")
 	}
 	if sessionId != "" {
-		session, err := s.sessionDAO.GetSessionByUuid(sessionId)
+		session, err := s.sessionDAO.GetSessionByUuid(ctx, sessionId)
 		if err != nil {
 			return nil, 0, fmt.Errorf("查询私聊会话失败: %w", err)
 		}
@@ -173,7 +174,7 @@ func (s *MessageServiceImpl) SearchMessages(userId string, sessionId string, key
 	if pageSize > 50 {
 		pageSize = 50
 	}
-	rows, total, err := s.messageDAO.SearchPrivateMessages(userId, sessionId, keyword, page, pageSize)
+	rows, total, err := s.messageDAO.SearchPrivateMessages(ctx, userId, sessionId, keyword, page, pageSize)
 	if err != nil {
 		return nil, 0, fmt.Errorf("搜索聊天记录失败: %w", err)
 	}
@@ -190,14 +191,14 @@ func (s *MessageServiceImpl) SearchMessages(userId string, sessionId string, key
 }
 
 // SearchMessageSuggestions 复用双向私聊搜索生成联想，结果携带定位消息所需的编号。
-func (s *MessageServiceImpl) SearchMessageSuggestions(userId string, keyword string, pageSize int) ([]userresp.SearchMessageSuggestionResp, error) {
+func (s *MessageServiceImpl) SearchMessageSuggestions(ctx context.Context, userId string, keyword string, pageSize int) ([]userresp.SearchMessageSuggestionResp, error) {
 	if pageSize < 1 {
 		pageSize = 5
 	}
 	if pageSize > 10 {
 		pageSize = 10
 	}
-	messages, _, err := s.SearchMessages(userId, "", keyword, 1, pageSize)
+	messages, _, err := s.SearchMessages(ctx, userId, "", keyword, 1, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +221,7 @@ func (s *MessageServiceImpl) RecallMessage(ctx context.Context, userId, messageI
 	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		messages := userdao.NewMessageDAO(tx)
 		var err error
-		message, err = messages.GetMessageForUpdate(messageId)
+		message, err = messages.GetMessageForUpdate(ctx, messageId)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("消息不存在")
 		}
@@ -239,10 +240,10 @@ func (s *MessageServiceImpl) RecallMessage(ctx context.Context, userId, messageI
 		if time.Since(message.CreatedAt) > constants.MessageRecallLimit {
 			return fmt.Errorf("只能撤回两分钟内的消息")
 		}
-		if err := messages.RecallMessage(messageId); err != nil {
+		if err := messages.RecallMessage(ctx, messageId); err != nil {
 			return fmt.Errorf("撤回消息失败: %w", err)
 		}
-		if err := userdao.NewSessionDAO(tx).RefreshPrivateMessagePreview(message.SendId, message.ReceiveId); err != nil {
+		if err := userdao.NewSessionDAO(tx).RefreshPrivateMessagePreview(ctx, message.SendId, message.ReceiveId); err != nil {
 			return fmt.Errorf("更新撤回消息摘要失败: %w", err)
 		}
 		message.Type = constants.MessageRecalled
@@ -259,7 +260,7 @@ func (s *MessageServiceImpl) DeleteMessage(ctx context.Context, userId, messageI
 	}
 	return db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		messages := userdao.NewMessageDAO(tx)
-		message, err := messages.GetMessageForUpdate(messageId)
+		message, err := messages.GetMessageForUpdate(ctx, messageId)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("消息不存在")
 		}
@@ -269,10 +270,10 @@ func (s *MessageServiceImpl) DeleteMessage(ctx context.Context, userId, messageI
 		if !strings.HasPrefix(message.SendId, "U") || !strings.HasPrefix(message.ReceiveId, "U") || (message.SendId != userId && message.ReceiveId != userId) {
 			return fmt.Errorf("只能删除自己参与的私聊消息")
 		}
-		if err := messages.DeleteMessageForUser(userId, messageId, message.SendId == userId); err != nil {
+		if err := messages.DeleteMessageForUser(ctx, userId, messageId, message.SendId == userId); err != nil {
 			return fmt.Errorf("删除私聊消息失败: %w", err)
 		}
-		if err := userdao.NewSessionDAO(tx).RefreshPrivateMessagePreview(message.SendId, message.ReceiveId); err != nil {
+		if err := userdao.NewSessionDAO(tx).RefreshPrivateMessagePreview(ctx, message.SendId, message.ReceiveId); err != nil {
 			return fmt.Errorf("更新删除消息摘要失败: %w", err)
 		}
 		return nil

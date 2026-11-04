@@ -37,7 +37,7 @@ func (c *AuthController) Register(ctx *gin.Context) {
 		return
 	}
 
-	err := c.authService.Register(&req)
+	err := c.authService.Register(ctx.Request.Context(), &req)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
 			ctx.Set(constants.AuthCredentialFailed, true)
@@ -59,7 +59,7 @@ func (c *AuthController) Login(ctx *gin.Context) {
 		return
 	}
 
-	result, err := c.authService.Login(&req)
+	result, err := c.authService.Login(ctx.Request.Context(), &req)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
 			ctx.Set(constants.AuthCredentialFailed, true)
@@ -111,7 +111,7 @@ func (c *AuthController) GithubCallback(ctx *gin.Context) {
 	code := strings.TrimSpace(ctx.Query("code"))
 	state := strings.TrimSpace(ctx.Query("state"))
 
-	result, err := c.authService.LoginByGithub(code, state)
+	result, err := c.authService.LoginByGithub(ctx.Request.Context(), code, state)
 	if err != nil {
 		zlog.Error("GitHub 登录失败: " + err.Error())
 		redirectWithError(err.Error())
@@ -165,7 +165,7 @@ func (c *AuthController) GiteeCallback(ctx *gin.Context) {
 	code := strings.TrimSpace(ctx.Query("code"))
 	state := strings.TrimSpace(ctx.Query("state"))
 
-	result, err := c.authService.LoginByGitee(code, state)
+	result, err := c.authService.LoginByGitee(ctx.Request.Context(), code, state)
 	if err != nil {
 		zlog.Error("Gitee 登录失败: " + err.Error())
 		redirectWithError(err.Error())
@@ -244,7 +244,7 @@ func (c *AuthController) LoginByCode(ctx *gin.Context) {
 	}
 
 	// 调用service层执行验证码登录
-	result, err := c.authService.LoginByCode(req.Telephone, req.Email, req.Code)
+	result, err := c.authService.LoginByCode(ctx.Request.Context(), req.Telephone, req.Email, req.Code)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
 			ctx.Set(constants.AuthCredentialFailed, true)

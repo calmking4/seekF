@@ -17,7 +17,9 @@ import (
 
 // ESDiscoverDAO 同步当前作品状态并返回搜索候选ID，业务内容与权限必须回数据库核对。
 type ESDiscoverDAO interface {
+	// 使用作品版本写入索引，隐藏或删除作品保留无正文的墓碑以阻止旧消息复活。
 	SyncPost(context.Context, *models.DiscoverPost) error
+	// 获取有界的全文候选集合，超过10000条或不完整响应时回退MySQL。
 	SearchPostIDs(context.Context, string) ([]string, error)
 }
 

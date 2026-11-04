@@ -29,7 +29,7 @@ func (c *UserInfoController) GetUserInfo(ctx *gin.Context) {
 		return
 	}
 
-	result, err := c.userInfoService.GetUserInfo(&req)
+	result, err := c.userInfoService.GetUserInfo(ctx.Request.Context(), &req)
 	if err != nil {
 		zlog.Info("获取用户信息服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
@@ -54,7 +54,7 @@ func (c *UserInfoController) GetMyInfo(ctx *gin.Context) {
 		Uuid: currentUserUuid.(string),
 	}
 
-	result, err := c.userInfoService.GetUserInfo(req)
+	result, err := c.userInfoService.GetUserInfo(ctx.Request.Context(), req)
 	if err != nil {
 		zlog.Info("获取我的信息服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
@@ -88,7 +88,7 @@ func (c *UserInfoController) UpdateUserInfo(ctx *gin.Context) {
 		return
 	}
 
-	err := c.userInfoService.UpdateUserInfo(&req)
+	err := c.userInfoService.UpdateUserInfo(ctx.Request.Context(), &req)
 	if err != nil {
 		zlog.Info("更新用户信息服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)

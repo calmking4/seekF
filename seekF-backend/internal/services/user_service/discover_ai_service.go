@@ -37,7 +37,9 @@ func (s *DiscoverServiceImpl) SuggestDiscoverCreation(ctx context.Context, userI
 	files := userdao.NewFileDAO(db.GormDB.WithContext(ctx))
 	for _, value := range input.Urls {
 		fileURL := normalizeDiscoverMediaURL(value)
-		asset, err := files.FindAsset(fileURL)
+		asset, err := files.FindAsset(ctx,
+
+			fileURL)
 		if err != nil {
 			return nil, fmt.Errorf("查询图片失败: %w", err)
 		}

@@ -29,8 +29,8 @@ func initApp(db *gorm.DB) App {
 	authController := user.NewAuthController(authService)
 	userInfoService := userservice.NewUserInfoService(userInfoDAO)
 	userInfoController := user.NewUserInfoController(userInfoService)
-	blockDAO := userdao.NewBlockDAO(db)
 	sessionDAO := userdao.NewSessionDAO(db)
+	blockDAO := userdao.NewBlockDAO(db)
 	sessionService := userservice.NewSessionService(sessionDAO, userInfoDAO, blockDAO)
 	sessionController := user.NewSessionController(sessionService)
 	messageDAO := userdao.NewMessageDAO(db)
@@ -46,9 +46,13 @@ func initApp(db *gorm.DB) App {
 	aiChatController := user.NewAIChatController(aiChatService, fileService)
 	knowledgeController := user.NewKnowledgeController(knowledgeService)
 	discoverDAO := userdao.NewDiscoverDAO(db)
+	discoverDistributionDAO := userdao.NewDiscoverDistributionDAO(db)
+	followingReadDAO := userdao.NewFollowingReadDAO(db)
+	discoverRankingDAO := userdao.NewDiscoverRankingDAO(db)
+	discoverOutboxDAO := userdao.NewDiscoverOutboxDAO(db)
 	followDAO := userdao.NewFollowDAO(db)
 	notificationDAO := userdao.NewNotificationDAO(db)
-	discoverService := userservice.NewDiscoverService(discoverDAO, userInfoDAO, followDAO, notificationDAO)
+	discoverService := userservice.NewDiscoverService(discoverDAO, discoverDistributionDAO, followingReadDAO, discoverRankingDAO, discoverOutboxDAO, blockDAO, userInfoDAO, followDAO, notificationDAO)
 	discoverController := user.NewDiscoverController(discoverService)
 	followService := userservice.NewFollowService(followDAO, userInfoDAO, notificationDAO)
 	followController := user.NewFollowController(followService)
@@ -58,7 +62,8 @@ func initApp(db *gorm.DB) App {
 	adminService := adminservice.NewAdminService(adminDAO)
 	adminController := admin.NewAdminController(adminService, authService)
 	supportDAO := userdao.NewSupportDAO(db)
-	supportService := userservice.NewSupportService(supportDAO, userInfoDAO)
+	supportSettlementDAO := userdao.NewSupportSettlementDAO(db)
+	supportService := userservice.NewSupportService(supportDAO, supportSettlementDAO, userInfoDAO)
 	supportController := user.NewSupportController(supportService)
 	blockService := userservice.NewBlockService(blockDAO)
 	blockController := user.NewBlockController(blockService)
@@ -79,7 +84,7 @@ func initApp(db *gorm.DB) App {
 // wire.go:
 
 // DAO ProviderSet — 所有数据访问层依赖
-var daoProviderSet = wire.NewSet(admindao.NewAdminDAO, userdao.NewUserInfoDAO, userdao.NewSessionDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO, userdao.NewESDiscoverDAO, userdao.NewFollowDAO, userdao.NewNotificationDAO, userdao.NewSupportDAO, userdao.NewBlockDAO)
+var daoProviderSet = wire.NewSet(admindao.NewAdminDAO, userdao.NewUserInfoDAO, userdao.NewSessionDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO, userdao.NewDiscoverDistributionDAO, userdao.NewFollowingReadDAO, userdao.NewDiscoverRankingDAO, userdao.NewDiscoverOutboxDAO, userdao.NewESDiscoverDAO, userdao.NewFollowDAO, userdao.NewNotificationDAO, userdao.NewSupportDAO, userdao.NewSupportSettlementDAO, userdao.NewBlockDAO)
 
 // ServiceProviderSet — 所有业务逻辑层依赖
 var serviceProviderSet = wire.NewSet(adminservice.NewAdminService, userservice.NewAuthService, userservice.NewUserInfoService, userservice.NewSessionService, userservice.NewMessageService, userservice.NewFileService, userservice.NewAIChatService, userservice.NewKnowledgeService, userservice.NewDiscoverService, userservice.NewFollowService, userservice.NewNotificationService, userservice.NewSupportService, userservice.NewBlockService)

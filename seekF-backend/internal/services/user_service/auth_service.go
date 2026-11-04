@@ -57,15 +57,15 @@ type UserInfoResponse struct {
 }
 
 type AuthService interface {
-	Register(req *RegisterRequest) error
-	Login(req *LoginRequest) (*LoginRespond, error)
+	Register(ctx context.Context, req *RegisterRequest) error
+	Login(ctx context.Context, req *LoginRequest) (*LoginRespond, error)
 	Logout(tokenString string) error
 	SendVerifyCode(telephone, email string) error
-	LoginByCode(telephone, email, code string) (*LoginRespond, error)
+	LoginByCode(ctx context.Context, telephone, email, code string) (*LoginRespond, error)
 	GithubAuthURL() (string, error)
-	LoginByGithub(code, state string) (*LoginRespond, error)
+	LoginByGithub(ctx context.Context, code, state string) (*LoginRespond, error)
 	GiteeAuthURL() (string, error)
-	LoginByGitee(code, state string) (*LoginRespond, error)
+	LoginByGitee(ctx context.Context, code, state string) (*LoginRespond, error)
 }
 
 type AuthServiceImpl struct {
@@ -79,7 +79,7 @@ func NewAuthService(userInfoDAO userdao.UserInfoDAO) AuthService {
 }
 
 // Register 用户注册（支持手机号和邮箱）
-func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
+func (s *AuthServiceImpl) Register(ctx context.Context, req *RegisterRequest) error {
 	// 校验：手机号和邮箱至少填一个
 	if strings.TrimSpace(req.Telephone) == "" && strings.TrimSpace(req.Email) == "" {
 		return fmt.Errorf("手机号和邮箱不能同时为空")
@@ -110,7 +110,7 @@ func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
 	}
 
 	// 检查用户名是否已存在
-	existingUser, err := s.userInfoDAO.FindUserByNickname(req.Nickname)
+	existingUser, err := s.userInfoDAO.FindUserByNickname(ctx, req.Nickname)
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
 
 	if isEmail(req.Email) {
 		// 邮箱注册：检查邮箱是否已存在
-		existingUser, err := s.userInfoDAO.FindUserByEmail(req.Email)
+		existingUser, err := s.userInfoDAO.FindUserByEmail(ctx, req.Email)
 		if err != nil {
 			return err
 		}
@@ -146,7 +146,7 @@ func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
 		user.Telephone = ""
 	} else {
 		// 手机号注册：检查手机号是否已存在
-		existingUser, err := s.userInfoDAO.FindUserByTelephone(req.Telephone)
+		existingUser, err := s.userInfoDAO.FindUserByTelephone(ctx, req.Telephone)
 		if err != nil {
 			return err
 		}
@@ -156,7 +156,7 @@ func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
 		user.Telephone = req.Telephone
 	}
 
-	err = s.userInfoDAO.CreateUser(user)
+	err = s.userInfoDAO.CreateUser(ctx, user)
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func (s *AuthServiceImpl) Register(req *RegisterRequest) error {
 }
 
 // Login 用户登录（支持手机号和邮箱）
-func (s *AuthServiceImpl) Login(req *LoginRequest) (*LoginRespond, error) {
+func (s *AuthServiceImpl) Login(ctx context.Context, req *LoginRequest) (*LoginRespond, error) {
 	if strings.TrimSpace(req.Telephone) == "" && strings.TrimSpace(req.Email) == "" {
 		return nil, fmt.Errorf("手机号和邮箱不能同时为空")
 	}
@@ -175,9 +175,9 @@ func (s *AuthServiceImpl) Login(req *LoginRequest) (*LoginRespond, error) {
 	var err error
 
 	if isEmail(req.Email) {
-		user, err = s.userInfoDAO.FindUserByEmail(req.Email)
+		user, err = s.userInfoDAO.FindUserByEmail(ctx, req.Email)
 	} else {
-		user, err = s.userInfoDAO.FindUserByTelephone(req.Telephone)
+		user, err = s.userInfoDAO.FindUserByTelephone(ctx, req.Telephone)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("登录失败：%v", err)
@@ -271,7 +271,7 @@ func (s *AuthServiceImpl) SendVerifyCode(telephone, emailAddr string) error {
 }
 
 // LoginByCode 验证码登录（支持手机号和邮箱）
-func (s *AuthServiceImpl) LoginByCode(telephone, emailAddr, code string) (*LoginRespond, error) {
+func (s *AuthServiceImpl) LoginByCode(ctx context.Context, telephone, emailAddr, code string) (*LoginRespond, error) {
 	// 判断是邮箱还是手机号
 	var key string
 	var isEmailLogin bool
@@ -309,9 +309,9 @@ func (s *AuthServiceImpl) LoginByCode(telephone, emailAddr, code string) (*Login
 	// 根据手机号或邮箱查找用户
 	var user *models.UserInfo
 	if isEmailLogin {
-		user, err = s.userInfoDAO.FindUserByEmail(emailAddr)
+		user, err = s.userInfoDAO.FindUserByEmail(ctx, emailAddr)
 	} else {
-		user, err = s.userInfoDAO.FindUserByTelephone(telephone)
+		user, err = s.userInfoDAO.FindUserByTelephone(ctx, telephone)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("登录失败：%v", err)
@@ -341,7 +341,7 @@ func (s *AuthServiceImpl) LoginByCode(telephone, emailAddr, code string) (*Login
 			user.Telephone = telephone
 		}
 
-		err = s.userInfoDAO.CreateUser(user)
+		err = s.userInfoDAO.CreateUser(ctx, user)
 		if err != nil {
 			return nil, fmt.Errorf("自动注册失败：%v", err)
 		}
@@ -383,7 +383,7 @@ func (s *AuthServiceImpl) GithubAuthURL() (string, error) {
 }
 
 // LoginByGithub GitHub OAuth 登录
-func (s *AuthServiceImpl) LoginByGithub(code, state string) (*LoginRespond, error) {
+func (s *AuthServiceImpl) LoginByGithub(ctx context.Context, code, state string) (*LoginRespond, error) {
 	if strings.TrimSpace(code) == "" {
 		return nil, fmt.Errorf("授权码不能为空")
 	}
@@ -403,12 +403,12 @@ func (s *AuthServiceImpl) LoginByGithub(code, state string) (*LoginRespond, erro
 		return nil, fmt.Errorf("清理 OAuth 状态码失败：%v", err)
 	}
 
-	githubUser, err := oauth.ExchangeAndGetUser(context.Background(), code)
+	githubUser, err := oauth.ExchangeAndGetUser(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("GitHub 登录失败：%v", err)
 	}
 
-	user, err := s.userInfoDAO.FindUserByGithubId(githubUser.ID)
+	user, err := s.userInfoDAO.FindUserByGithubId(ctx, githubUser.ID)
 	if err != nil {
 		return nil, fmt.Errorf("查询用户失败：%v", err)
 	}
@@ -432,8 +432,8 @@ func (s *AuthServiceImpl) LoginByGithub(code, state string) (*LoginRespond, erro
 			Birthday: sql.NullString{Valid: false},
 		}
 
-		user, err = createOAuthUser(s.userInfoDAO, user, func() (*models.UserInfo, error) {
-			return s.userInfoDAO.FindUserByGithubId(githubUser.ID)
+		user, err = createOAuthUser(ctx, s.userInfoDAO, user, func() (*models.UserInfo, error) {
+			return s.userInfoDAO.FindUserByGithubId(ctx, githubUser.ID)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("创建 GitHub 用户失败：%v", err)
@@ -445,7 +445,7 @@ func (s *AuthServiceImpl) LoginByGithub(code, state string) (*LoginRespond, erro
 			updated = true
 		}
 		if updated {
-			if err := s.userInfoDAO.UpdateUserInfo(user); err != nil {
+			if err := s.userInfoDAO.UpdateUserInfo(ctx, user); err != nil {
 				return nil, fmt.Errorf("更新 GitHub 用户信息失败：%v", err)
 			}
 		}
@@ -483,7 +483,7 @@ func (s *AuthServiceImpl) GiteeAuthURL() (string, error) {
 }
 
 // LoginByGitee Gitee OAuth 登录
-func (s *AuthServiceImpl) LoginByGitee(code, state string) (*LoginRespond, error) {
+func (s *AuthServiceImpl) LoginByGitee(ctx context.Context, code, state string) (*LoginRespond, error) {
 	if strings.TrimSpace(code) == "" {
 		return nil, fmt.Errorf("授权码不能为空")
 	}
@@ -503,12 +503,12 @@ func (s *AuthServiceImpl) LoginByGitee(code, state string) (*LoginRespond, error
 		return nil, fmt.Errorf("清理 OAuth 状态码失败：%v", err)
 	}
 
-	giteeUser, err := oauth.ExchangeAndGetGiteeUser(context.Background(), code)
+	giteeUser, err := oauth.ExchangeAndGetGiteeUser(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("Gitee 登录失败：%v", err)
 	}
 
-	user, err := s.userInfoDAO.FindUserByGiteeId(giteeUser.ID)
+	user, err := s.userInfoDAO.FindUserByGiteeId(ctx, giteeUser.ID)
 	if err != nil {
 		return nil, fmt.Errorf("查询用户失败：%v", err)
 	}
@@ -532,8 +532,8 @@ func (s *AuthServiceImpl) LoginByGitee(code, state string) (*LoginRespond, error
 			Birthday: sql.NullString{Valid: false},
 		}
 
-		user, err = createOAuthUser(s.userInfoDAO, user, func() (*models.UserInfo, error) {
-			return s.userInfoDAO.FindUserByGiteeId(giteeUser.ID)
+		user, err = createOAuthUser(ctx, s.userInfoDAO, user, func() (*models.UserInfo, error) {
+			return s.userInfoDAO.FindUserByGiteeId(ctx, giteeUser.ID)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("创建 Gitee 用户失败：%v", err)
@@ -545,7 +545,7 @@ func (s *AuthServiceImpl) LoginByGitee(code, state string) (*LoginRespond, error
 			updated = true
 		}
 		if updated {
-			if err := s.userInfoDAO.UpdateUserInfo(user); err != nil {
+			if err := s.userInfoDAO.UpdateUserInfo(ctx, user); err != nil {
 				return nil, fmt.Errorf("更新 Gitee 用户信息失败：%v", err)
 			}
 		}

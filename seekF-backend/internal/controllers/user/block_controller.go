@@ -11,10 +11,10 @@ import (
 )
 
 // BlockController 提供用户拉黑和黑名单管理接口。
-type BlockController struct{ service *userservice.BlockService }
+type BlockController struct{ service userservice.BlockService }
 
 // NewBlockController 构造黑名单控制器。
-func NewBlockController(service *userservice.BlockService) *BlockController {
+func NewBlockController(service userservice.BlockService) *BlockController {
 	return &BlockController{service: service}
 }
 

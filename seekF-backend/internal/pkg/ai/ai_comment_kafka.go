@@ -118,7 +118,7 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload, commentUU
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	exists, err := c.discoverDAO.HasCommentIncludingDeleted(commentUUID)
+	exists, err := c.discoverDAO.HasCommentIncludingDeleted(ctx, commentUUID)
 	if err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload, commentUU
 	}
 
 	// 1. 查帖子详情
-	post, err := c.discoverDAO.FindPostByUuid(payload.PostUuid)
+	post, err := c.discoverDAO.FindPostByUuid(ctx, payload.PostUuid)
 	if err != nil {
 		return err
 	}
@@ -142,7 +142,7 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload, commentUU
 	}
 
 	// 3. 获取帖子图片URL（仅取图片类型，type=0）
-	mediaList, err := c.discoverDAO.FindMediaByPostId(post.Id)
+	mediaList, err := c.discoverDAO.FindMediaByPostId(ctx, post.Id)
 	if err != nil {
 		return fmt.Errorf("查询AI评论图片失败，帖子=%s: %w", payload.PostUuid, err)
 	}
@@ -242,14 +242,14 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload, commentUU
 	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
 		// 锁定帖子后复核评论ID，评论写入与计数更新使用同一事务。
-		current, err := txDiscoverDAO.FindPostByUuidForUpdate(payload.PostUuid)
+		current, err := txDiscoverDAO.FindPostByUuidForUpdate(ctx, payload.PostUuid)
 		if err != nil {
 			return err
 		}
 		if current == nil {
 			return nil
 		}
-		exists, err := txDiscoverDAO.HasCommentIncludingDeleted(commentUUID)
+		exists, err := txDiscoverDAO.HasCommentIncludingDeleted(ctx, commentUUID)
 		if err != nil {
 			return err
 		}
@@ -257,12 +257,12 @@ func (c *aiCommentConsumer) processAIComment(payload AICommentPayload, commentUU
 			return nil
 		}
 
-		if err := txDiscoverDAO.CreateComment(comment); err != nil {
+		if err := txDiscoverDAO.CreateComment(ctx, comment); err != nil {
 			zlog.Error("AI评论: 保存评论失败: " + err.Error())
 			return err
 		}
 
-		return txDiscoverDAO.IncrementCommentCount(post.Id)
+		return txDiscoverDAO.IncrementCommentCount(ctx, post.Id)
 	})
 	if err != nil {
 		return fmt.Errorf("保存AI评论失败，帖子=%s: %w", payload.PostUuid, err)

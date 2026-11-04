@@ -64,7 +64,7 @@ func (s *FollowServiceImpl) ToggleFollow(ctx context.Context, userId, followUser
 		ids := []string{userId, followUserId}
 		sort.Strings(ids)
 		for _, id := range ids {
-			user, err := users.FindUserByUuidForUpdate(id)
+			user, err := users.FindUserByUuidForUpdate(ctx, id)
 			if err != nil {
 				return err
 			}
@@ -73,38 +73,38 @@ func (s *FollowServiceImpl) ToggleFollow(ctx context.Context, userId, followUser
 			}
 		}
 		follows := userdao.NewFollowDAO(tx)
-		existing, err := follows.FindFollowForUpdate(userId, followUserId)
+		existing, err := follows.FindFollowForUpdate(ctx, userId, followUserId)
 		if err != nil {
 			return err
 		}
 		delta := int64(1)
 		if existing != nil {
 			delta = -1
-			if err := follows.DeleteFollow(userId, followUserId); err != nil {
+			if err := follows.DeleteFollow(ctx, userId, followUserId); err != nil {
 				return err
 			}
 		} else {
-			latest, err := userdao.NewFollowingReadDAO(tx).LatestPostID(followUserId)
+			latest, err := userdao.NewFollowingReadDAO(tx).LatestPostID(ctx, followUserId)
 			if err != nil {
 				return err
 			}
-			if err := follows.CreateFollow(&models.UserFollow{UserId: userId, FollowUserId: followUserId, LastSeenPostId: latest}); err != nil {
+			if err := follows.CreateFollow(ctx, &models.UserFollow{UserId: userId, FollowUserId: followUserId, LastSeenPostId: latest}); err != nil {
 				return err
 			}
 		}
-		if err := users.UpdateFollowCounts(userId, delta, 0); err != nil {
+		if err := users.UpdateFollowCounts(ctx, userId, delta, 0); err != nil {
 			return err
 		}
-		if err := users.UpdateFollowCounts(followUserId, 0, delta); err != nil {
+		if err := users.UpdateFollowCounts(ctx, followUserId, 0, delta); err != nil {
 			return err
 		}
 		if delta > 0 {
-			if err := userdao.NewNotificationDAO(tx).CreateNotification(&models.Notification{UserId: followUserId, ActorId: userId, Type: NotificationTypeFollow, TargetUuid: userId, Content: "关注了你"}); err != nil {
+			if err := userdao.NewNotificationDAO(tx).CreateNotification(ctx, &models.Notification{UserId: followUserId, ActorId: userId, Type: NotificationTypeFollow, TargetUuid: userId, Content: "关注了你"}); err != nil {
 				return err
 			}
 		}
 		// 与关系、计数同事务保存增减事件，取消关注后仍可还原净增。
-		if _, err := userdao.NewDiscoverDAO(tx).SaveCreatorAnalyticsEvent(&models.CreatorAnalyticsEvent{CreatorId: followUserId, ActorId: userId, Kind: constants.CreatorAnalyticsFollower, Delta: delta, RequestKey: uuid.NewString(), CreatedAt: time.Now()}); err != nil {
+		if _, err := userdao.NewDiscoverDAO(tx).SaveCreatorAnalyticsEvent(ctx, &models.CreatorAnalyticsEvent{CreatorId: followUserId, ActorId: userId, Kind: constants.CreatorAnalyticsFollower, Delta: delta, RequestKey: uuid.NewString(), CreatedAt: time.Now()}); err != nil {
 			return fmt.Errorf("保存粉丝变化失败: %w", err)
 		}
 		followed = delta > 0
@@ -124,7 +124,7 @@ func (s *FollowServiceImpl) ToggleFollow(ctx context.Context, userId, followUser
 
 // GetFollowCounts 读取用户资料中同事务维护的关注和粉丝计数。
 func (s *FollowServiceImpl) GetFollowCounts(ctx context.Context, userId string) (int64, int64, error) {
-	user, err := s.userInfoDAO.FindUserByUuid(userId)
+	user, err := s.userInfoDAO.FindUserByUuid(ctx, userId)
 	if err != nil {
 		return 0, 0, fmt.Errorf("查询关注粉丝数失败: %w", err)
 	}
@@ -136,19 +136,19 @@ func (s *FollowServiceImpl) GetFollowCounts(ctx context.Context, userId string) 
 
 // ListFollowing 分页装配关注用户的公开信息。
 func (s *FollowServiceImpl) ListFollowing(ctx context.Context, userId string, page, pageSize int) ([]FollowUserInfo, int64, error) {
-	follows, err := s.followDAO.ListFollowing(userId, page, pageSize)
+	follows, err := s.followDAO.ListFollowing(ctx, userId, page, pageSize)
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询关注列表失败: %v", err)
 	}
 
-	total, err := s.followDAO.CountFollowing(userId)
+	total, err := s.followDAO.CountFollowing(ctx, userId)
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询关注总数失败: %v", err)
 	}
 
 	var result []FollowUserInfo
 	for _, f := range follows {
-		user, _ := s.userInfoDAO.FindUserByUuid(f.FollowUserId)
+		user, _ := s.userInfoDAO.FindUserByUuid(ctx, f.FollowUserId)
 		if user == nil {
 			continue
 		}
@@ -166,19 +166,19 @@ func (s *FollowServiceImpl) ListFollowing(ctx context.Context, userId string, pa
 
 // ListFollowers 分页装配粉丝的公开信息。
 func (s *FollowServiceImpl) ListFollowers(ctx context.Context, userId string, page, pageSize int) ([]FollowUserInfo, int64, error) {
-	follows, err := s.followDAO.ListFollowers(userId, page, pageSize)
+	follows, err := s.followDAO.ListFollowers(ctx, userId, page, pageSize)
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询粉丝列表失败: %v", err)
 	}
 
-	total, err := s.followDAO.CountFollowers(userId)
+	total, err := s.followDAO.CountFollowers(ctx, userId)
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询粉丝总数失败: %v", err)
 	}
 
 	var result []FollowUserInfo
 	for _, f := range follows {
-		user, _ := s.userInfoDAO.FindUserByUuid(f.UserId)
+		user, _ := s.userInfoDAO.FindUserByUuid(ctx, f.UserId)
 		if user == nil {
 			continue
 		}
@@ -196,7 +196,7 @@ func (s *FollowServiceImpl) ListFollowers(ctx context.Context, userId string, pa
 
 // IsFollowing 查询当前账号是否关注目标用户。
 func (s *FollowServiceImpl) IsFollowing(ctx context.Context, userId, targetUserId string) (bool, error) {
-	existing, err := s.followDAO.FindFollow(userId, targetUserId)
+	existing, err := s.followDAO.FindFollow(ctx, userId, targetUserId)
 	if err != nil {
 		return false, fmt.Errorf("查询关注状态失败: %v", err)
 	}

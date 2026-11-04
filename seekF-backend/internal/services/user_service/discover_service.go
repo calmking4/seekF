@@ -88,11 +88,16 @@ type DiscoverService interface {
 }
 
 type DiscoverServiceImpl struct {
-	viewTasks       chan int64
-	discoverDAO     userdao.DiscoverDAO
-	userInfoDAO     userdao.UserInfoDAO
-	followDAO       userdao.FollowDAO
-	notificationDAO userdao.NotificationDAO
+	viewTasks        chan int64
+	discoverDAO      userdao.DiscoverDAO
+	distributionDAO  userdao.DiscoverDistributionDAO
+	followingReadDAO userdao.FollowingReadDAO
+	rankingDAO       userdao.DiscoverRankingDAO
+	outboxDAO        userdao.DiscoverOutboxDAO
+	blockDAO         userdao.BlockDAO
+	userInfoDAO      userdao.UserInfoDAO
+	followDAO        userdao.FollowDAO
+	notificationDAO  userdao.NotificationDAO
 }
 
 // MediaSize 媒体宽高，单位像素，零表示未知。
@@ -198,15 +203,30 @@ type FolderDetailInfo struct {
 }
 
 // NewDiscoverService 构造发现页业务服务并注入数据访问依赖。
-func NewDiscoverService(discoverDAO userdao.DiscoverDAO, userInfoDAO userdao.UserInfoDAO, followDAO userdao.FollowDAO, notificationDAO userdao.NotificationDAO) DiscoverService {
+func NewDiscoverService(
+	discoverDAO userdao.DiscoverDAO,
+	distributionDAO userdao.DiscoverDistributionDAO,
+	followingReadDAO userdao.FollowingReadDAO,
+	rankingDAO userdao.DiscoverRankingDAO,
+	outboxDAO userdao.DiscoverOutboxDAO,
+	blockDAO userdao.BlockDAO,
+	userInfoDAO userdao.UserInfoDAO,
+	followDAO userdao.FollowDAO,
+	notificationDAO userdao.NotificationDAO,
+) DiscoverService {
 	s := &DiscoverServiceImpl{
-		discoverDAO:     discoverDAO,
-		userInfoDAO:     userInfoDAO,
-		followDAO:       followDAO,
-		notificationDAO: notificationDAO,
+		discoverDAO:      discoverDAO,
+		distributionDAO:  distributionDAO,
+		followingReadDAO: followingReadDAO,
+		rankingDAO:       rankingDAO,
+		outboxDAO:        outboxDAO,
+		blockDAO:         blockDAO,
+		userInfoDAO:      userInfoDAO,
+		followDAO:        followDAO,
+		notificationDAO:  notificationDAO,
 	}
 	s.viewTasks = workerpool.NewQueue(constants.DiscoverViewWorkers, constants.DiscoverViewQueueSize, constants.DiscoverViewTimeout, func(ctx context.Context, postID int64) {
-		if err := userdao.NewDiscoverDAO(db.GormDB.WithContext(ctx)).IncrementViewCount(postID); err != nil {
+		if err := userdao.NewDiscoverDAO(db.GormDB.WithContext(ctx)).IncrementViewCount(ctx, postID); err != nil {
 			zlog.Error(fmt.Sprintf("增加帖子浏览量失败，帖子ID=%d: %s", postID, err.Error()))
 		}
 	})
@@ -330,9 +350,9 @@ func (s *DiscoverServiceImpl) listTimeFeed(ctx context.Context, userId string, i
 	var posts []models.DiscoverPost
 	var err error
 	if following && input.AuthorUuid != "" {
-		posts, err = s.discoverDAO.ListFollowingAuthorFeed(ctx, userId, input.AuthorUuid, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
+		posts, err = s.followingReadDAO.ListFollowingAuthorFeed(ctx, userId, input.AuthorUuid, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
 	} else if input.Source == "recommended" {
-		posts, err = s.discoverDAO.ListRecommendationFeed(ctx, userId, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
+		posts, err = s.rankingDAO.ListRecommendationFeed(ctx, userId, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
 	} else if following {
 		started := time.Now()
 		var mode string
@@ -397,18 +417,18 @@ func (s *DiscoverServiceImpl) RecordDiscoverClick(ctx context.Context, userId st
 	created := false
 	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewDiscoverDAO(tx)
-		post, err := dao.FindPostByUuidForUpdate(input.PostUuid)
+		post, err := dao.FindPostByUuidForUpdate(ctx, input.PostUuid)
 		if err != nil {
 			return fmt.Errorf("读取点击帖子失败: %w", err)
 		}
-		if !canViewUnblockedDiscoverPost(tx, post, userId) || post.Visibility != 0 {
+		if !canViewUnblockedDiscoverPost(ctx, tx, post, userId) || post.Visibility != 0 {
 			return fmt.Errorf("帖子不存在或不可见")
 		}
 		if post.UserId == userId {
 			return nil
 		}
 		now := time.Now()
-		created, err = dao.SaveClick(&models.DiscoverClick{UserId: userId, PostUuid: post.Uuid, Source: input.Source, ClickDay: now.In(time.FixedZone("北京时间", 8*3600)).Format("2006-01-02"), CreatedAt: now})
+		created, err = userdao.NewDiscoverRankingDAO(tx).SaveClick(ctx, &models.DiscoverClick{UserId: userId, PostUuid: post.Uuid, Source: input.Source, ClickDay: now.In(time.FixedZone("北京时间", 8*3600)).Format("2006-01-02"), CreatedAt: now})
 		if err != nil {
 			return fmt.Errorf("保存帖子点击失败: %w", err)
 		}
@@ -431,11 +451,11 @@ func (s *DiscoverServiceImpl) SetDiscoverFeedback(ctx context.Context, userId st
 	authorId := ""
 	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewDiscoverDAO(tx)
-		post, err := dao.FindPostByUuidForUpdate(input.PostUuid)
+		post, err := dao.FindPostByUuidForUpdate(ctx, input.PostUuid)
 		if err != nil {
 			return fmt.Errorf("读取反馈帖子失败: %w", err)
 		}
-		if !canViewUnblockedDiscoverPost(tx, post, userId) || post.Visibility != 0 {
+		if !canViewUnblockedDiscoverPost(ctx, tx, post, userId) || post.Visibility != 0 {
 			return fmt.Errorf("帖子不存在或不可见")
 		}
 		if post.UserId == userId {
@@ -446,7 +466,7 @@ func (s *DiscoverServiceImpl) SetDiscoverFeedback(ctx context.Context, userId st
 		if input.TargetType == constants.DiscoverFeedbackAuthor {
 			target = authorId
 		}
-		if err := dao.SetFeedback(&models.DiscoverFeedback{UserId: userId, TargetType: input.TargetType, TargetUuid: target, CreatedAt: time.Now()}, *input.Active); err != nil {
+		if err := userdao.NewDiscoverRankingDAO(tx).SetFeedback(ctx, &models.DiscoverFeedback{UserId: userId, TargetType: input.TargetType, TargetUuid: target, CreatedAt: time.Now()}, *input.Active); err != nil {
 			return fmt.Errorf("保存不感兴趣状态失败: %w", err)
 		}
 		return nil
@@ -526,7 +546,7 @@ func (s *DiscoverServiceImpl) rankedFeedPage(ctx context.Context, userId string,
 scanCandidates:
 	for position < len(ids) {
 		end := min(position+40, len(ids))
-		batch, err := s.discoverDAO.FindRankingPosts(ctx, userId, ids[position:end], input.MediaType, input.Source == "recommended")
+		batch, err := s.rankingDAO.FindRankingPosts(ctx, userId, ids[position:end], input.MediaType, input.Source == "recommended")
 		if err != nil {
 			return nil, fmt.Errorf("核查推荐帖子当前状态失败: %w", err)
 		}
@@ -578,7 +598,7 @@ func (s *DiscoverServiceImpl) createHotRanking(ctx context.Context, mediaType *i
 			return ids, key, err
 		}
 	}
-	candidates, err := s.discoverDAO.ListRankingCandidates(ctx, "", "hot", nil, mediaType, bucket)
+	candidates, err := s.rankingDAO.ListRankingCandidates(ctx, "", "hot", nil, mediaType, bucket)
 	if err != nil {
 		return nil, "", err
 	}
@@ -597,11 +617,11 @@ func (s *DiscoverServiceImpl) createHotRanking(ctx context.Context, mediaType *i
 // createRanking 合并近期、热门、兴趣和关注候选，生成当前账号的推荐顺序。
 func (s *DiscoverServiceImpl) createRanking(ctx context.Context, userId string, mediaType *int8) ([]string, error) {
 	now := time.Now()
-	history, err := s.discoverDAO.ListInterestHistory(ctx, userId, now)
+	history, err := s.rankingDAO.ListInterestHistory(ctx, userId, now)
 	if err != nil {
 		return nil, err
 	}
-	authors, err := s.discoverDAO.ListFollowedAuthorIds(ctx, userId)
+	authors, err := s.rankingDAO.ListFollowedAuthorIds(ctx, userId)
 	if err != nil {
 		return nil, err
 	}
@@ -625,7 +645,7 @@ func (s *DiscoverServiceImpl) createRanking(ctx context.Context, userId string, 
 	var candidates []userdao.RankingCandidate
 	seen := map[string]bool{}
 	for _, kind := range []string{"recent", "hot", "affinity"} {
-		rows, err := s.discoverDAO.ListRankingCandidates(ctx, userId, kind, tags, mediaType, now)
+		rows, err := s.rankingDAO.ListRankingCandidates(ctx, userId, kind, tags, mediaType, now)
 		if err != nil {
 			return nil, err
 		}
@@ -725,12 +745,12 @@ func rankDiscoverCandidates(candidates []userdao.RankingCandidate, interests map
 
 // ListLikedPosts 查询用户点赞的帖子及媒体信息。
 func (s *DiscoverServiceImpl) ListLikedPosts(ctx context.Context, userId string, page, pageSize int) ([]PostInfo, int64, error) {
-	posts, err := s.discoverDAO.ListLikedPosts(userId, page, pageSize)
+	posts, err := s.discoverDAO.ListLikedPosts(ctx, userId, page, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	total, err := s.discoverDAO.CountLikedPosts(userId)
+	total, err := s.discoverDAO.CountLikedPosts(ctx, userId)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -740,13 +760,13 @@ func (s *DiscoverServiceImpl) ListLikedPosts(ctx context.Context, userId string,
 
 // GetPostDetail 查询可用帖子详情及当前用户互动状态。
 func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid string) (*PostDetailInfo, error) {
-	post, err := s.discoverDAO.FindPostByUuid(uuid)
+	post, err := s.discoverDAO.FindPostByUuid(ctx, uuid)
 	if err != nil {
 		return nil, err
 	}
 	// 作者可以在管理页查看待审、驳回或下架作品，其他用户仍仅能查看正常公开作品。
 	if post != nil && post.UserId != userId {
-		blocked, by, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).Status(userId, post.UserId)
+		blocked, by, err := s.blockDAO.Status(ctx, userId, post.UserId)
 		if err != nil {
 			return nil, fmt.Errorf("查询帖子拉黑权限失败: %w", err)
 		}
@@ -757,7 +777,7 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 			return nil, fmt.Errorf("你已拉黑该用户")
 		}
 	}
-	if !canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) && (post == nil || post.UserId != userId || post.DeletedAt.Valid) {
+	if !canViewUnblockedDiscoverPost(ctx, db.GormDB.WithContext(ctx), post, userId) && (post == nil || post.UserId != userId || post.DeletedAt.Valid) {
 		return nil, fmt.Errorf("帖子不存在")
 	}
 	expiries, err := discoverSupportExpiries(ctx, userId, []models.DiscoverPost{*post})
@@ -777,7 +797,7 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 		return nil, ctx.Err()
 	}
 
-	mediaList, err := s.discoverDAO.FindMediaByPostId(post.Id)
+	mediaList, err := s.discoverDAO.FindMediaByPostId(ctx, post.Id)
 	if err != nil {
 		return nil, fmt.Errorf("查询帖子媒体失败: %w", err)
 	}
@@ -793,7 +813,7 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 		json.Unmarshal(post.Tags, &tags)
 	}
 
-	user, _ := s.userInfoDAO.FindUserByUuid(post.UserId)
+	user, _ := s.userInfoDAO.FindUserByUuid(ctx, post.UserId)
 	nickname := ""
 	avatar := ""
 	if user != nil {
@@ -802,13 +822,13 @@ func (s *DiscoverServiceImpl) GetPostDetail(ctx context.Context, userId, uuid st
 	}
 
 	isLiked := false
-	like, _ := s.discoverDAO.FindLike(userId, uuid)
+	like, _ := s.discoverDAO.FindLike(ctx, userId, uuid)
 	if like != nil {
 		isLiked = true
 	}
 
 	isCollected := false
-	col, _ := s.discoverDAO.FindCollectionByUserAndTarget(userId, uuid)
+	col, _ := s.discoverDAO.FindCollectionByUserAndTarget(ctx, userId, uuid)
 	if col != nil {
 		isCollected = true
 	}
@@ -844,18 +864,18 @@ func (s *DiscoverServiceImpl) SetLike(ctx context.Context, userId, targetUuid st
 		var targetId int64
 		var owner string
 		if isComment {
-			comment, err := txDiscoverDAO.FindCommentByUuidForUpdate(targetUuid)
+			comment, err := txDiscoverDAO.FindCommentByUuidForUpdate(ctx, targetUuid)
 			if err != nil {
 				return fmt.Errorf("查询评论失败: %w", err)
 			}
 			if comment == nil {
 				return fmt.Errorf("评论不存在")
 			}
-			post, err := txDiscoverDAO.FindPostById(comment.PostId)
+			post, err := txDiscoverDAO.FindPostById(ctx, comment.PostId)
 			if err != nil {
 				return fmt.Errorf("查询评论所属帖子失败: %w", err)
 			}
-			if !canViewUnblockedDiscoverPost(tx, post, userId) {
+			if !canViewUnblockedDiscoverPost(ctx, tx, post, userId) {
 				return fmt.Errorf("评论所属帖子不可用")
 			}
 			if err := requireDiscoverSupport(ctx, tx, userId, post); err != nil {
@@ -863,41 +883,41 @@ func (s *DiscoverServiceImpl) SetLike(ctx context.Context, userId, targetUuid st
 			}
 			targetId, owner = comment.Id, comment.UserId
 		} else {
-			post, err := txDiscoverDAO.FindPostByUuidForUpdate(targetUuid)
+			post, err := txDiscoverDAO.FindPostByUuidForUpdate(ctx, targetUuid)
 			if err != nil {
 				return fmt.Errorf("查询帖子失败: %w", err)
 			}
-			if !canViewUnblockedDiscoverPost(tx, post, userId) {
+			if !canViewUnblockedDiscoverPost(ctx, tx, post, userId) {
 				return fmt.Errorf("帖子不存在或已下架")
 			}
 			targetId, owner = post.Id, post.UserId
 		}
 		// 先锁定目标再读取当前状态，避免同一目标并发请求重复增删和通知。
-		existing, err := txDiscoverDAO.FindLike(userId, targetUuid)
+		existing, err := txDiscoverDAO.FindLike(ctx, userId, targetUuid)
 		if err != nil {
 			return fmt.Errorf("查询点赞状态失败: %w", err)
 		}
 		changed := liked != (existing != nil)
 		if changed {
 			if liked {
-				if err := txDiscoverDAO.CreateLike(&models.DiscoverLike{UserId: userId, TargetUuid: targetUuid}); err != nil {
+				if err := txDiscoverDAO.CreateLike(ctx, &models.DiscoverLike{UserId: userId, TargetUuid: targetUuid}); err != nil {
 					return fmt.Errorf("保存点赞失败: %w", err)
 				}
 			} else {
-				if err := txDiscoverDAO.DeleteLike(userId, targetUuid); err != nil {
+				if err := txDiscoverDAO.DeleteLike(ctx, userId, targetUuid); err != nil {
 					return fmt.Errorf("取消点赞失败: %w", err)
 				}
 			}
 		}
 		// 保留按真实唯一用户数校准计数的行为，兼容遗留重复记录。
-		count, err = txDiscoverDAO.CountLikesByTargetUuid(targetUuid)
+		count, err = txDiscoverDAO.CountLikesByTargetUuid(ctx, targetUuid)
 		if err != nil {
 			return fmt.Errorf("查询点赞数量失败: %w", err)
 		}
 		if isComment {
-			err = txDiscoverDAO.UpdateCommentLikeCount(targetId, count)
+			err = txDiscoverDAO.UpdateCommentLikeCount(ctx, targetId, count)
 		} else {
-			err = txDiscoverDAO.UpdatePostLikeCount(targetId, count)
+			err = txDiscoverDAO.UpdatePostLikeCount(ctx, targetId, count)
 		}
 		if err != nil {
 			return fmt.Errorf("更新点赞数量失败: %w", err)
@@ -908,7 +928,7 @@ func (s *DiscoverServiceImpl) SetLike(ctx context.Context, userId, targetUuid st
 				notificationType, content = NotificationTypeLikeComment, "赞了你的评论"
 			}
 			// 通知写入失败时一起回滚点赞与计数，避免业务成功但通知丢失。
-			if err := userdao.NewNotificationDAO(tx).CreateNotification(&models.Notification{UserId: owner, ActorId: userId, Type: notificationType, TargetUuid: targetUuid, Content: content}); err != nil {
+			if err := userdao.NewNotificationDAO(tx).CreateNotification(ctx, &models.Notification{UserId: owner, ActorId: userId, Type: notificationType, TargetUuid: targetUuid, Content: content}); err != nil {
 				return fmt.Errorf("创建点赞通知失败: %w", err)
 			}
 		}
@@ -937,18 +957,18 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
 		var err error
-		post, err = txDiscoverDAO.FindPostByUuidForUpdate(postUuid)
+		post, err = txDiscoverDAO.FindPostByUuidForUpdate(ctx, postUuid)
 		if err != nil {
 			return err
 		}
-		if !canViewUnblockedDiscoverPost(tx, post, userId) {
+		if !canViewUnblockedDiscoverPost(ctx, tx, post, userId) {
 			return fmt.Errorf("帖子不存在或已下架")
 		}
 		if err := requireDiscoverSupport(ctx, tx, userId, post); err != nil {
 			return err
 		}
 		if parentUuid != "" {
-			parent, err := txDiscoverDAO.FindCommentByUuid(parentUuid)
+			parent, err := txDiscoverDAO.FindCommentByUuid(ctx, parentUuid)
 			if err != nil {
 				return fmt.Errorf("查询被回复评论失败: %w", err)
 			}
@@ -960,10 +980,10 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 			}
 		}
 		comment.PostId = post.Id
-		if err := txDiscoverDAO.CreateComment(comment); err != nil {
+		if err := txDiscoverDAO.CreateComment(ctx, comment); err != nil {
 			return fmt.Errorf("评论失败: %v", err)
 		}
-		if err := txDiscoverDAO.IncrementCommentCount(post.Id); err != nil {
+		if err := txDiscoverDAO.IncrementCommentCount(ctx, post.Id); err != nil {
 			return err
 		}
 		recipient, notificationType, text := post.UserId, NotificationTypeCommentPost, "评论了你的帖子："
@@ -971,7 +991,7 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 			recipient, notificationType, text = replyRecipient, NotificationTypeReply, "回复了你的评论："
 		}
 		if recipient != "" && recipient != userId {
-			return userdao.NewNotificationDAO(tx).CreateNotification(&models.Notification{UserId: recipient, ActorId: userId, Type: notificationType, TargetUuid: commentUUID, Content: text + truncateContent(content, 50)})
+			return userdao.NewNotificationDAO(tx).CreateNotification(ctx, &models.Notification{UserId: recipient, ActorId: userId, Type: notificationType, TargetUuid: commentUUID, Content: text + truncateContent(content, 50)})
 		}
 		return nil
 	})
@@ -979,7 +999,7 @@ func (s *DiscoverServiceImpl) AddComment(ctx context.Context, userId, postUuid s
 		return nil, err
 	}
 
-	user, _ := s.userInfoDAO.FindUserByUuid(userId)
+	user, _ := s.userInfoDAO.FindUserByUuid(ctx, userId)
 	nickname := ""
 	avatar := ""
 	if user != nil {
@@ -1010,37 +1030,37 @@ func truncateContent(content string, maxLen int) string {
 
 // ListComments 兼容旧客户端的全部评论分页。
 func (s *DiscoverServiceImpl) ListComments(ctx context.Context, userId, postUuid string, page, pageSize int) ([]CommentInfo, error) {
-	post, err := s.discoverDAO.FindPostByUuid(postUuid)
+	post, err := s.discoverDAO.FindPostByUuid(ctx, postUuid)
 	if err != nil {
 		return nil, err
 	}
-	if !canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) {
+	if !canViewUnblockedDiscoverPost(ctx, db.GormDB.WithContext(ctx), post, userId) {
 		return nil, fmt.Errorf("帖子不存在或已下架")
 	}
 	if err := requireDiscoverSupport(ctx, db.GormDB, userId, post); err != nil {
 		return nil, err
 	}
-	comments, err := s.discoverDAO.FindCommentsByPostId(post.Id, page, pageSize)
+	comments, err := s.discoverDAO.FindCommentsByPostId(ctx, post.Id, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
-	return s.buildCommentInfoList(userId, comments)
+	return s.buildCommentInfoList(ctx, userId, comments)
 }
 
 // ListCommentThread 分页查询顶级评论或指定评论的回复，校验父评论归属。
 func (s *DiscoverServiceImpl) ListCommentThread(ctx context.Context, userId, postUuid, parentUuid string, page, pageSize int) ([]CommentInfo, bool, error) {
-	post, err := s.discoverDAO.FindPostByUuid(postUuid)
+	post, err := s.discoverDAO.FindPostByUuid(ctx, postUuid)
 	if err != nil {
 		return nil, false, err
 	}
-	if !canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) {
+	if !canViewUnblockedDiscoverPost(ctx, db.GormDB.WithContext(ctx), post, userId) {
 		return nil, false, fmt.Errorf("帖子不存在或已下架")
 	}
 	if err := requireDiscoverSupport(ctx, db.GormDB, userId, post); err != nil {
 		return nil, false, err
 	}
 	if parentUuid != "" {
-		parent, err := s.discoverDAO.FindCommentByUuid(parentUuid)
+		parent, err := s.discoverDAO.FindCommentByUuid(ctx, parentUuid)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1048,16 +1068,16 @@ func (s *DiscoverServiceImpl) ListCommentThread(ctx context.Context, userId, pos
 			return nil, false, fmt.Errorf("父评论不存在或不属于当前帖子")
 		}
 	}
-	comments, hasMore, err := s.discoverDAO.FindCommentThread(post.Id, parentUuid, page, pageSize)
+	comments, hasMore, err := s.discoverDAO.FindCommentThread(ctx, post.Id, parentUuid, page, pageSize)
 	if err != nil {
 		return nil, false, err
 	}
-	infos, err := s.buildCommentInfoList(userId, comments)
+	infos, err := s.buildCommentInfoList(ctx, userId, comments)
 	return infos, hasMore, err
 }
 
 // buildCommentInfoList 批量装配评论作者、回复数量与当前用户点赞状态。
-func (s *DiscoverServiceImpl) buildCommentInfoList(userId string, comments []models.DiscoverComment) ([]CommentInfo, error) {
+func (s *DiscoverServiceImpl) buildCommentInfoList(ctx context.Context, userId string, comments []models.DiscoverComment) ([]CommentInfo, error) {
 	result := make([]CommentInfo, 0, len(comments))
 	if len(comments) == 0 {
 		return result, nil
@@ -1070,7 +1090,7 @@ func (s *DiscoverServiceImpl) buildCommentInfoList(userId string, comments []mod
 		}
 		uuids = append(uuids, c.Uuid)
 	}
-	users, err := s.userInfoDAO.FindUsersByUuids(userIds)
+	users, err := s.userInfoDAO.FindUsersByUuids(ctx, userIds)
 	if err != nil {
 		return nil, fmt.Errorf("查询评论用户失败: %w", err)
 	}
@@ -1078,7 +1098,7 @@ func (s *DiscoverServiceImpl) buildCommentInfoList(userId string, comments []mod
 	for _, u := range users {
 		userMap[u.Uuid] = u
 	}
-	likes, err := s.discoverDAO.FindLikesByUserIdAndTargetUuids(userId, uuids)
+	likes, err := s.discoverDAO.FindLikesByUserIdAndTargetUuids(ctx, userId, uuids)
 	if err != nil {
 		return nil, fmt.Errorf("查询评论点赞失败: %w", err)
 	}
@@ -1086,7 +1106,7 @@ func (s *DiscoverServiceImpl) buildCommentInfoList(userId string, comments []mod
 	for _, like := range likes {
 		liked[like.TargetUuid] = true
 	}
-	replies, err := s.discoverDAO.CountReplies(uuids)
+	replies, err := s.discoverDAO.CountReplies(ctx, uuids)
 	if err != nil {
 		return nil, err
 	}
@@ -1140,7 +1160,7 @@ func (s *DiscoverServiceImpl) CreateFolder(ctx context.Context, userId, name, de
 		Description: description,
 		IsPublic:    isPublic,
 	}
-	if err := s.discoverDAO.CreateFolder(folder); err != nil {
+	if err := s.discoverDAO.CreateFolder(ctx, folder); err != nil {
 		return nil, fmt.Errorf("创建收藏夹失败: %v", err)
 	}
 	return &FolderInfo{
@@ -1154,7 +1174,7 @@ func (s *DiscoverServiceImpl) CreateFolder(ctx context.Context, userId, name, de
 }
 
 func (s *DiscoverServiceImpl) UpdateFolder(ctx context.Context, userId, folderUuid, name, description string, isPublic int8) error {
-	folder, err := s.discoverDAO.FindFolderByUuid(folderUuid)
+	folder, err := s.discoverDAO.FindFolderByUuid(ctx, folderUuid)
 	if err != nil {
 		return err
 	}
@@ -1164,11 +1184,11 @@ func (s *DiscoverServiceImpl) UpdateFolder(ctx context.Context, userId, folderUu
 	if folder.UserId != userId {
 		return fmt.Errorf("无权修改此收藏夹")
 	}
-	return s.discoverDAO.UpdateFolder(folderUuid, name, description, isPublic)
+	return s.discoverDAO.UpdateFolder(ctx, folderUuid, name, description, isPublic)
 }
 
 func (s *DiscoverServiceImpl) DeleteFolder(ctx context.Context, userId, folderUuid string) error {
-	folder, err := s.discoverDAO.FindFolderByUuid(folderUuid)
+	folder, err := s.discoverDAO.FindFolderByUuid(ctx, folderUuid)
 	if err != nil {
 		return err
 	}
@@ -1178,14 +1198,14 @@ func (s *DiscoverServiceImpl) DeleteFolder(ctx context.Context, userId, folderUu
 	if folder.UserId != userId {
 		return fmt.Errorf("无权删除此收藏夹")
 	}
-	return s.discoverDAO.DeleteFolder(folderUuid)
+	return s.discoverDAO.DeleteFolder(ctx, folderUuid)
 }
 
 // ListFolders 按查看者权限装配收藏夹封面与列表。
 func (s *DiscoverServiceImpl) ListFolders(ctx context.Context, userId, viewerId string) ([]FolderInfo, error) {
 	blockedBy := false
 	if userId != viewerId {
-		blocked, by, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).Status(viewerId, userId)
+		blocked, by, err := s.blockDAO.Status(ctx, viewerId, userId)
 		if err != nil {
 			return nil, fmt.Errorf("查询收藏夹拉黑权限失败: %w", err)
 		}
@@ -1194,7 +1214,7 @@ func (s *DiscoverServiceImpl) ListFolders(ctx context.Context, userId, viewerId 
 		}
 		blockedBy = by
 	}
-	folders, err := s.discoverDAO.ListFoldersByUserId(userId)
+	folders, err := s.discoverDAO.ListFoldersByUserId(ctx, userId)
 	if err != nil {
 		return nil, err
 	}
@@ -1209,11 +1229,11 @@ func (s *DiscoverServiceImpl) ListFolders(ctx context.Context, userId, viewerId 
 		}
 		// 获取收藏夹第一张图片作为封面
 		coverUrl := ""
-		posts, _ := s.discoverDAO.ListCollectedPostsByFolder(f.Id, viewerId, 1, 1)
-		if len(posts) > 0 && canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), &posts[0], viewerId) {
+		posts, _ := s.discoverDAO.ListCollectedPostsByFolder(ctx, f.Id, viewerId, 1, 1)
+		if len(posts) > 0 && canViewUnblockedDiscoverPost(ctx, db.GormDB.WithContext(ctx), &posts[0], viewerId) {
 			coverUrl = posts[0].CoverUrl
 			if coverUrl == "" && posts[0].MediaType != 1 {
-				mediaList, _ := s.discoverDAO.FindMediaByPostId(posts[0].Id)
+				mediaList, _ := s.discoverDAO.FindMediaByPostId(ctx, posts[0].Id)
 				if len(mediaList) > 0 {
 					coverUrl = mediaList[0].Url
 				}
@@ -1234,7 +1254,7 @@ func (s *DiscoverServiceImpl) ListFolders(ctx context.Context, userId, viewerId 
 
 // GetFolderDetail 按收藏夹可见性及夹主拉黑状态检查详情读取权限。
 func (s *DiscoverServiceImpl) GetFolderDetail(ctx context.Context, userId, folderUuid string) (*FolderDetailInfo, error) {
-	folder, err := s.discoverDAO.FindFolderByUuid(folderUuid)
+	folder, err := s.discoverDAO.FindFolderByUuid(ctx, folderUuid)
 	if err != nil {
 		return nil, err
 	}
@@ -1262,7 +1282,7 @@ func checkFolderBlockAccess(ctx context.Context, viewerId, ownerId string) error
 	if viewerId == ownerId {
 		return nil
 	}
-	blocked, by, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).Status(viewerId, ownerId)
+	blocked, by, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).Status(ctx, viewerId, ownerId)
 	if err != nil {
 		return fmt.Errorf("查询收藏夹拉黑权限失败: %w", err)
 	}
@@ -1277,7 +1297,7 @@ func checkFolderBlockAccess(ctx context.Context, viewerId, ownerId string) error
 
 // ListCollectedPosts 查询收藏夹内的帖子及互动状态。
 func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, folderUuid string, page, pageSize int, offsetOverride ...int) ([]PostInfo, int64, error) {
-	folder, err := s.discoverDAO.FindFolderByUuid(folderUuid)
+	folder, err := s.discoverDAO.FindFolderByUuid(ctx, folderUuid)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1291,11 +1311,11 @@ func (s *DiscoverServiceImpl) ListCollectedPosts(ctx context.Context, userId, fo
 		return nil, 0, err
 	}
 
-	entries, err := s.discoverDAO.ListCollectionEntries(folder.Id, userId, page, pageSize, offsetOverride...)
+	entries, err := s.discoverDAO.ListCollectionEntries(ctx, folder.Id, userId, page, pageSize, offsetOverride...)
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := s.discoverDAO.CountCollectionEntries(folder.Id)
+	total, err := s.discoverDAO.CountCollectionEntries(ctx, folder.Id)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1347,15 +1367,15 @@ func collectionUnavailableReason(entry userdao.CollectionPostRow, viewerId strin
 
 // CollectPost 保存收藏及通知，并在事务内维护收藏夹和帖子计数。
 func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid, folderUuid string) (bool, int, error) {
-	post, err := s.discoverDAO.FindPostByUuid(postUuid)
+	post, err := s.discoverDAO.FindPostByUuid(ctx, postUuid)
 	if err != nil {
 		return false, 0, err
 	}
-	if !canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) {
+	if !canViewUnblockedDiscoverPost(ctx, db.GormDB.WithContext(ctx), post, userId) {
 		return false, 0, fmt.Errorf("帖子不存在")
 	}
 
-	folder, err := s.discoverDAO.FindFolderByUuid(folderUuid)
+	folder, err := s.discoverDAO.FindFolderByUuid(ctx, folderUuid)
 	if err != nil {
 		return false, 0, err
 	}
@@ -1367,11 +1387,11 @@ func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid,
 	}
 
 	// 检查是否已在该收藏夹中收藏
-	existing, _ := s.discoverDAO.FindCollectionInFolder(userId, folder.Id, postUuid)
+	existing, _ := s.discoverDAO.FindCollectionInFolder(ctx, userId, folder.Id, postUuid)
 	if existing != nil {
 		return false, 0, fmt.Errorf("该帖子已在此收藏夹中")
 	}
-	previousCollection, err := s.discoverDAO.FindCollectionByUserAndTarget(userId, postUuid)
+	previousCollection, err := s.discoverDAO.FindCollectionByUserAndTarget(ctx, userId, postUuid)
 	if err != nil {
 		return false, 0, fmt.Errorf("查询收藏状态失败: %w", err)
 	}
@@ -1385,12 +1405,12 @@ func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid,
 			FolderId:   folder.Id,
 			TargetUuid: postUuid,
 		}
-		if err := txDiscoverDAO.CreateCollection(col); err != nil {
+		if err := txDiscoverDAO.CreateCollection(ctx, col); err != nil {
 			return err
 		}
 		// 收藏多个文件夹时只在首次收藏发送通知，与收藏写入保持同一事务。
 		if previousCollection == nil && post.UserId != userId {
-			if err := userdao.NewNotificationDAO(tx).CreateNotification(&models.Notification{
+			if err := userdao.NewNotificationDAO(tx).CreateNotification(ctx, &models.Notification{
 				UserId: post.UserId, ActorId: userId, Type: NotificationTypeCollectPost,
 				TargetUuid: postUuid, Content: "收藏了你的帖子：" + truncateContent(post.Title, 50),
 			}); err != nil {
@@ -1398,10 +1418,10 @@ func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid,
 			}
 		}
 
-		if err := txDiscoverDAO.IncrementFolderPostCount(folder.Id); err != nil {
+		if err := txDiscoverDAO.IncrementFolderPostCount(ctx, folder.Id); err != nil {
 			return fmt.Errorf("更新收藏夹帖子数失败: %w", err)
 		}
-		if err := txDiscoverDAO.IncrementCollectCount(post.Id); err != nil {
+		if err := txDiscoverDAO.IncrementCollectCount(ctx, post.Id); err != nil {
 			return fmt.Errorf("更新帖子收藏数失败: %w", err)
 		}
 		return nil
@@ -1410,7 +1430,7 @@ func (s *DiscoverServiceImpl) CollectPost(ctx context.Context, userId, postUuid,
 		return false, 0, err
 	}
 
-	updatedPost, _ := s.discoverDAO.FindPostByUuid(postUuid)
+	updatedPost, _ := s.discoverDAO.FindPostByUuid(ctx, postUuid)
 	collectCount := 0
 	if updatedPost != nil {
 		collectCount = updatedPost.CollectCount
@@ -1427,7 +1447,7 @@ func (s *DiscoverServiceImpl) UncollectPost(ctx context.Context, userId, postUui
 	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txDiscoverDAO := userdao.NewDiscoverDAO(tx)
 		// 与收藏写入的收藏夹计数、帖子计数顺序一致，避免交叉持锁。
-		folder, err := txDiscoverDAO.FindFolderForUpdate(folderUuid)
+		folder, err := txDiscoverDAO.FindFolderForUpdate(ctx, folderUuid)
 		if err != nil {
 			return fmt.Errorf("查询收藏夹失败: %w", err)
 		}
@@ -1437,11 +1457,11 @@ func (s *DiscoverServiceImpl) UncollectPost(ctx context.Context, userId, postUui
 		if folder.UserId != userId {
 			return fmt.Errorf("只能取消自己收藏夹中的收藏")
 		}
-		post, err := txDiscoverDAO.FindCollectionPostForUpdate(postUuid)
+		post, err := txDiscoverDAO.FindCollectionPostForUpdate(ctx, postUuid)
 		if err != nil {
 			return fmt.Errorf("查询收藏帖子失败: %w", err)
 		}
-		existing, err := txDiscoverDAO.FindCollectionInFolder(userId, folder.Id, postUuid)
+		existing, err := txDiscoverDAO.FindCollectionInFolder(ctx, userId, folder.Id, postUuid)
 		if err != nil {
 			return fmt.Errorf("查询收藏记录失败: %w", err)
 		}
@@ -1449,14 +1469,14 @@ func (s *DiscoverServiceImpl) UncollectPost(ctx context.Context, userId, postUui
 			collectCount = post.CollectCount
 		}
 		if existing != nil {
-			if err := txDiscoverDAO.DeleteCollection(userId, folder.Id, postUuid); err != nil {
+			if err := txDiscoverDAO.DeleteCollection(ctx, userId, folder.Id, postUuid); err != nil {
 				return fmt.Errorf("删除收藏记录失败: %w", err)
 			}
-			if err := txDiscoverDAO.DecrementFolderPostCount(folder.Id); err != nil {
+			if err := txDiscoverDAO.DecrementFolderPostCount(ctx, folder.Id); err != nil {
 				return fmt.Errorf("更新收藏夹帖子数失败: %w", err)
 			}
 			if post != nil {
-				if err := txDiscoverDAO.DecrementCollectionTargetCount(post.Id); err != nil {
+				if err := txDiscoverDAO.DecrementCollectionTargetCount(ctx, post.Id); err != nil {
 					return fmt.Errorf("更新帖子收藏数失败: %w", err)
 				}
 				if collectCount > 0 {
@@ -1469,7 +1489,7 @@ func (s *DiscoverServiceImpl) UncollectPost(ctx context.Context, userId, postUui
 			collectCount = 0
 			return nil
 		}
-		blocked, by, err := userdao.NewBlockDAO(tx).Status(userId, post.UserId)
+		blocked, by, err := userdao.NewBlockDAO(tx).Status(ctx, userId, post.UserId)
 		if err != nil {
 			return fmt.Errorf("查询收藏帖子权限失败: %w", err)
 		}
@@ -1487,14 +1507,14 @@ func (s *DiscoverServiceImpl) UncollectPost(ctx context.Context, userId, postUui
 
 // CheckCollected 仅对当前身份可访问的作品查询收藏状态。
 func (s *DiscoverServiceImpl) CheckCollected(ctx context.Context, userId, postUuid string) (bool, string, error) {
-	post, err := s.discoverDAO.FindPostByUuid(postUuid)
+	post, err := s.discoverDAO.FindPostByUuid(ctx, postUuid)
 	if err != nil {
 		return false, "", err
 	}
-	if !canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) {
+	if !canViewUnblockedDiscoverPost(ctx, db.GormDB.WithContext(ctx), post, userId) {
 		return false, "", fmt.Errorf("作品不存在或不可见")
 	}
-	col, _ := s.discoverDAO.FindCollectionByUserAndTarget(userId, postUuid)
+	col, _ := s.discoverDAO.FindCollectionByUserAndTarget(ctx, userId, postUuid)
 	if col == nil {
 		return false, "", nil
 	}
@@ -1517,7 +1537,7 @@ func (s *DiscoverServiceImpl) SearchPosts(ctx context.Context, userId, keyword s
 	}
 	keyword = strings.TrimSpace(keyword)
 	if keyword != "" {
-		pending, pendingErr := userdao.NewDiscoverOutboxDAO(db.GormDB.WithContext(ctx)).HasIncomplete()
+		pending, pendingErr := s.outboxDAO.HasIncomplete(ctx)
 		if pendingErr == nil && !pending {
 			searchCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			ids, searchErr := userdao.NewESDiscoverDAO().SearchPostIDs(searchCtx, keyword)
@@ -1541,7 +1561,7 @@ func (s *DiscoverServiceImpl) SearchPosts(ctx context.Context, userId, keyword s
 			}
 		}
 	}
-	posts, total, err := s.discoverDAO.SearchPostsPage(keyword, page, pageSize, userId)
+	posts, total, err := s.discoverDAO.SearchPostsPage(ctx, keyword, page, pageSize, userId)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1606,13 +1626,13 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 		postUuids = append(postUuids, post.Uuid)
 	}
 
-	blockedBy, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).BlockedByAuthors(userId, userIds)
+	blockedBy, err := s.blockDAO.BlockedByAuthors(ctx, userId, userIds)
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询帖子占位权限失败: %w", err)
 	}
 
 	// 批量查询媒体
-	mediaList, err := s.discoverDAO.FindMediaByPostIds(postIds)
+	mediaList, err := s.discoverDAO.FindMediaByPostIds(ctx, postIds)
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询帖子媒体失败: %w", err)
 	}
@@ -1624,7 +1644,7 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 	}
 
 	// 批量查询用户信息
-	users, err := s.userInfoDAO.FindUsersByUuids(userIds)
+	users, err := s.userInfoDAO.FindUsersByUuids(ctx, userIds)
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询帖子作者失败: %w", err)
 	}
@@ -1636,7 +1656,7 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 	// 批量查询点赞状态
 	likedMap := make(map[string]bool)
 	if userId != "" {
-		likes, err := s.discoverDAO.FindLikesByUserIdAndTargetUuids(userId, postUuids)
+		likes, err := s.discoverDAO.FindLikesByUserIdAndTargetUuids(ctx, userId, postUuids)
 		if err != nil {
 			return nil, 0, fmt.Errorf("查询帖子点赞状态失败: %w", err)
 		}
@@ -1648,7 +1668,7 @@ func (s *DiscoverServiceImpl) buildPostInfoList(ctx context.Context, userId stri
 	// 批量查询收藏状态
 	collectedMap := make(map[string]bool)
 	if userId != "" {
-		collections, err := s.discoverDAO.FindCollectionsByUserIdAndTargetUuids(userId, postUuids)
+		collections, err := s.discoverDAO.FindCollectionsByUserIdAndTargetUuids(ctx, userId, postUuids)
 		if err != nil {
 			return nil, 0, fmt.Errorf("查询帖子收藏状态失败: %w", err)
 		}
@@ -1744,7 +1764,7 @@ type UserProfileInfo struct {
 // GetUserProfile 查询用户主页及帖子列表。
 func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId, currentUserId string, page, pageSize int) (*UserProfileInfo, error) {
 	// 查询用户信息
-	user, err := s.userInfoDAO.FindUserByUuid(profileUserId)
+	user, err := s.userInfoDAO.FindUserByUuid(ctx, profileUserId)
 	if err != nil {
 		return nil, fmt.Errorf("查询用户信息失败: %v", err)
 	}
@@ -1752,22 +1772,22 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 		return nil, fmt.Errorf("用户不存在")
 	}
 
-	blocked, blockedBy, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).Status(currentUserId, profileUserId)
+	blocked, blockedBy, err := s.blockDAO.Status(ctx, currentUserId, profileUserId)
 	if err != nil {
 		return nil, fmt.Errorf("查询主页拉黑状态失败: %w", err)
 	}
 	// 查询帖子列表
-	posts, err := s.discoverDAO.ListPostsByUserId(profileUserId, currentUserId, page, pageSize)
+	posts, err := s.discoverDAO.ListPostsByUserId(ctx, profileUserId, currentUserId, page, pageSize)
 	if err != nil {
 		return nil, fmt.Errorf("查询帖子列表失败: %v", err)
 	}
 
-	total, err := s.discoverDAO.CountPostsByUserId(profileUserId, currentUserId)
+	total, err := s.discoverDAO.CountPostsByUserId(ctx, profileUserId, currentUserId)
 	if err != nil {
 		return nil, fmt.Errorf("查询帖子总数失败: %v", err)
 	}
 
-	totalLikes, err := s.discoverDAO.GetUserTotalLikes(profileUserId, currentUserId)
+	totalLikes, err := s.discoverDAO.GetUserTotalLikes(ctx, profileUserId, currentUserId)
 	if err != nil {
 		totalLikes = 0
 	}
@@ -1780,7 +1800,7 @@ func (s *DiscoverServiceImpl) GetUserProfile(ctx context.Context, profileUserId,
 	// 查询当前用户是否关注了该用户
 	isFollowed := false
 	if currentUserId != "" && currentUserId != profileUserId {
-		follow, _ := s.followDAO.FindFollow(currentUserId, profileUserId)
+		follow, _ := s.followDAO.FindFollow(ctx, currentUserId, profileUserId)
 		if follow != nil {
 			isFollowed = true
 		}
@@ -1928,12 +1948,12 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 		if postUuid == "" {
 			key := input.RequestKey
 			saved = &models.DiscoverPost{Uuid: "D" + util.GetNowAndLenRandomString(11), UserId: userId, Title: input.Title, Status: constants.DiscoverPostPending, Version: 1, PublishRequestKey: &key, PublishPayloadHash: hash}
-			created, err := dao.ClaimPublishPost(saved)
+			created, err := dao.ClaimPublishPost(ctx, saved)
 			if err != nil {
 				return fmt.Errorf("创建发布记录失败: %w", err)
 			}
 			if !created {
-				saved, err = dao.FindPostByPublishKeyForUpdate(userId, key)
+				saved, err = dao.FindPostByPublishKeyForUpdate(ctx, userId, key)
 				if err != nil {
 					return fmt.Errorf("读取发布记录失败: %w", err)
 				}
@@ -1951,7 +1971,7 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 
 		} else {
 			var err error
-			saved, err = dao.FindPostByUuidForUpdate(postUuid)
+			saved, err = dao.FindPostByUuidForUpdate(ctx, postUuid)
 			if err != nil {
 				return err
 			}
@@ -1967,7 +1987,7 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 			return fmt.Errorf("作品发布后不能切换免费或助力属性")
 		}
 		if input.SupportOnly == 1 {
-			activate, err := userdao.NewSupportDAO(tx).FindActivate(userId)
+			activate, err := userdao.NewSupportDAO(tx).FindActivate(ctx, userId)
 			if err != nil {
 				return fmt.Errorf("查询助力开通状态失败: %w", err)
 			}
@@ -1985,7 +2005,7 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 			if assets[fileURL] != nil {
 				continue
 			}
-			asset, err := files.FindAssetForUpdate(fileURL)
+			asset, err := files.FindAssetForUpdate(ctx, fileURL)
 			if err != nil {
 				return fmt.Errorf("查询媒体归属失败: %w", err)
 			}
@@ -2011,7 +2031,7 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 			if fileURL == input.CoverUrl && asset.Width == 0 && input.CoverSize != nil {
 				asset.Width, asset.Height = input.CoverSize.Width, input.CoverSize.Height
 			}
-			if err := files.SaveAsset(asset); err != nil {
+			if err := files.SaveAsset(ctx, asset); err != nil {
 				return err
 			}
 			assets[fileURL] = asset
@@ -2032,14 +2052,14 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 			saved.CoverWidth, saved.CoverHeight = cover.Width, cover.Height
 		}
 		if saved.Id == 0 {
-			if err := dao.CreatePost(saved); err != nil {
+			if err := dao.CreatePost(ctx, saved); err != nil {
 				return err
 			}
 		} else {
-			if err := dao.SavePost(saved); err != nil {
+			if err := dao.SavePost(ctx, saved); err != nil {
 				return err
 			}
-			if err := dao.DeletePostMedia(saved.Id); err != nil {
+			if err := dao.DeletePostMedia(ctx, saved.Id); err != nil {
 				return err
 			}
 		}
@@ -2048,17 +2068,17 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 			// 未知视频尺寸由前端元数据补齐一次，后续统一从资源读取，不覆盖已验证图片尺寸。
 			if asset.Width == 0 && len(input.MediaSizes) > i {
 				asset.Width, asset.Height = input.MediaSizes[i].Width, input.MediaSizes[i].Height
-				if err := files.SaveAsset(asset); err != nil {
+				if err := files.SaveAsset(ctx, asset); err != nil {
 					return fmt.Errorf("保存媒体尺寸失败: %w", err)
 				}
 			}
-			if err := dao.CreateMedia(&models.DiscoverMedia{PostId: saved.Id, AssetId: asset.Id, Url: fileURL, Type: input.MediaType, SortOrder: i}); err != nil {
+			if err := dao.CreateMedia(ctx, &models.DiscoverMedia{PostId: saved.Id, AssetId: asset.Id, Url: fileURL, Type: input.MediaType, SortOrder: i}); err != nil {
 				return err
 			}
 		}
 
 		// 待审核内容仅同步搜索状态，审核通过后再分发至关注流。
-		return userdao.NewDiscoverOutboxDAO(tx).Create(saved, false)
+		return userdao.NewDiscoverOutboxDAO(tx).Create(ctx, saved, false)
 	})
 	if err != nil {
 		return nil, err
@@ -2077,7 +2097,7 @@ func (s *DiscoverServiceImpl) saveDiscoverPost(ctx context.Context, userId, post
 func (s *DiscoverServiceImpl) DeletePost(ctx context.Context, userId, postUuid string) error {
 	return db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewDiscoverDAO(tx)
-		post, err := dao.FindPostByUuidForUpdate(postUuid)
+		post, err := dao.FindPostByUuidForUpdate(ctx, postUuid)
 		if err != nil {
 			return err
 		}
@@ -2088,13 +2108,13 @@ func (s *DiscoverServiceImpl) DeletePost(ctx context.Context, userId, postUuid s
 			return fmt.Errorf("无权删除此作品")
 		}
 		post.Version++
-		if err := dao.SavePost(post); err != nil {
+		if err := dao.SavePost(ctx, post); err != nil {
 			return err
 		}
-		if err := dao.DeletePost(post); err != nil {
+		if err := dao.DeletePost(ctx, post); err != nil {
 			return err
 		}
-		return userdao.NewDiscoverOutboxDAO(tx).Create(post, false)
+		return userdao.NewDiscoverOutboxDAO(tx).Create(ctx, post, false)
 	})
 }
 
@@ -2125,11 +2145,11 @@ func (s *DiscoverServiceImpl) ListOwnWorks(ctx context.Context, userId string, i
 	if input.Visibility != nil && *input.Visibility != 0 && *input.Visibility != 1 {
 		return nil, 0, nil, fmt.Errorf("可见性无效")
 	}
-	posts, total, err := s.discoverDAO.ListOwnWorks(userId, input.Keyword, input.Status, input.Visibility, input.Page, input.PageSize)
+	posts, total, err := s.discoverDAO.ListOwnWorks(ctx, userId, input.Keyword, input.Status, input.Visibility, input.Page, input.PageSize)
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	counts, err := s.discoverDAO.CountOwnWorksByStatus(userId, input.Keyword, input.Visibility)
+	counts, err := s.discoverDAO.CountOwnWorksByStatus(ctx, userId, input.Keyword, input.Visibility)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -2145,7 +2165,7 @@ func (s *DiscoverServiceImpl) SetPostVisibility(ctx context.Context, userId stri
 	var saved *models.DiscoverPost
 	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewDiscoverDAO(tx)
-		post, err := dao.FindPostByUuidForUpdate(input.PostUuid)
+		post, err := dao.FindPostByUuidForUpdate(ctx, input.PostUuid)
 		if err != nil {
 			return err
 		}
@@ -2158,10 +2178,10 @@ func (s *DiscoverServiceImpl) SetPostVisibility(ctx context.Context, userId stri
 		if post.Visibility != *input.Visibility {
 			post.Visibility = *input.Visibility
 			post.Version++
-			if err := dao.SavePost(post); err != nil {
+			if err := dao.SavePost(ctx, post); err != nil {
 				return err
 			}
-			if err := userdao.NewDiscoverOutboxDAO(tx).Create(post, post.Status == constants.DiscoverPostPublished && post.Visibility == 0); err != nil {
+			if err := userdao.NewDiscoverOutboxDAO(tx).Create(ctx, post, post.Status == constants.DiscoverPostPublished && post.Visibility == 0); err != nil {
 				return err
 			}
 		}
@@ -2197,20 +2217,20 @@ func (s *DiscoverServiceImpl) GetCreatorAnalytics(ctx context.Context, userId st
 	result := &userresp.CreatorAnalyticsRespond{UpdatedAt: now.In(start.Location()).Format("2006-01-02 15:04:05"), Environment: configs.GetConfig().AlipayConfig.Environment}
 	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewDiscoverDAO(tx)
-		tracking, err := dao.CreatorAnalyticsTrackingStart()
+		tracking, err := dao.CreatorAnalyticsTrackingStart(ctx)
 		if err != nil {
 			return fmt.Errorf("读取数据中心启用时间失败，请确认已执行统计迁移: %w", err)
 		}
 		result.TrackingSince = tracking.In(start.Location()).Format("2006-01-02 15:04:05")
-		result.Metrics, err = dao.GetCreatorAnalyticsMetrics(userId, result.Environment, start, end)
+		result.Metrics, err = dao.GetCreatorAnalyticsMetrics(ctx, userId, result.Environment, start, end)
 		if err != nil {
 			return fmt.Errorf("查询核心数据失败: %w", err)
 		}
-		clicks, err := dao.ListCreatorClickTrend(userId, start, end)
+		clicks, err := dao.ListCreatorClickTrend(ctx, userId, start, end)
 		if err != nil {
 			return fmt.Errorf("查询点击趋势失败: %w", err)
 		}
-		revenues, err := dao.ListCreatorRevenueTrend(userId, result.Environment, revenueStart, revenueEnd)
+		revenues, err := dao.ListCreatorRevenueTrend(ctx, userId, result.Environment, revenueStart, revenueEnd)
 		if err != nil {
 			return err
 		}
@@ -2247,14 +2267,14 @@ func (s *DiscoverServiceImpl) RecordCreatorShare(ctx context.Context, userId str
 		return fmt.Errorf("分享请求标识无效")
 	}
 	return db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		post, err := userdao.NewDiscoverDAO(tx).FindPostByUuidForUpdate(input.PostUuid)
+		post, err := userdao.NewDiscoverDAO(tx).FindPostByUuidForUpdate(ctx, input.PostUuid)
 		if err != nil {
 			return fmt.Errorf("查询分享帖子失败: %w", err)
 		}
-		if !canViewUnblockedDiscoverPost(tx, post, userId) || post.Visibility != 0 {
+		if !canViewUnblockedDiscoverPost(ctx, tx, post, userId) || post.Visibility != 0 {
 			return fmt.Errorf("帖子不存在或不可分享")
 		}
-		saved, err := userdao.NewDiscoverDAO(tx).SaveCreatorAnalyticsEvent(&models.CreatorAnalyticsEvent{CreatorId: post.UserId, ActorId: userId, TargetUuid: post.Uuid, Kind: constants.CreatorAnalyticsShare, Delta: 1, RequestKey: input.RequestKey, CreatedAt: time.Now()})
+		saved, err := userdao.NewDiscoverDAO(tx).SaveCreatorAnalyticsEvent(ctx, &models.CreatorAnalyticsEvent{CreatorId: post.UserId, ActorId: userId, TargetUuid: post.Uuid, Kind: constants.CreatorAnalyticsShare, Delta: 1, RequestKey: input.RequestKey, CreatedAt: time.Now()})
 		if err != nil {
 			return fmt.Errorf("保存分享统计失败: %w", err)
 		}

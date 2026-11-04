@@ -44,7 +44,7 @@ func (c *AIChatController) CreateSession(ctx *gin.Context) {
 	}
 
 	userId := ctx.GetString("Uuid")
-	result, err := c.aiChatService.CreateSession(userId, req)
+	result, err := c.aiChatService.CreateSession(ctx.Request.Context(), userId, req)
 	if err != nil {
 		zlog.Info("创建会话服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
@@ -64,7 +64,7 @@ func (c *AIChatController) GetSessionList(ctx *gin.Context) {
 	}
 
 	userId := ctx.GetString("Uuid")
-	result, err := c.aiChatService.GetSessionList(userId, req.Page, req.PageSize)
+	result, err := c.aiChatService.GetSessionList(ctx.Request.Context(), userId, req.Page, req.PageSize)
 	if err != nil {
 		zlog.Info("获取会话列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
@@ -83,7 +83,7 @@ func (c *AIChatController) GetMessageHistory(ctx *gin.Context) {
 		return
 	}
 
-	messageList, total, err := c.aiChatService.GetMessageHistory(req.SessionId, req.PageSize, req.Cursor, req.Direction)
+	messageList, total, err := c.aiChatService.GetMessageHistory(ctx.Request.Context(), req.SessionId, req.PageSize, req.Cursor, req.Direction)
 	if err != nil {
 		zlog.Info("获取消息历史服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
@@ -294,7 +294,7 @@ func (c *AIChatController) DeleteSession(ctx *gin.Context) {
 		return
 	}
 
-	if err := c.aiChatService.DeleteSession(req.SessionId); err != nil {
+	if err := c.aiChatService.DeleteSession(ctx.Request.Context(), req.SessionId); err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}

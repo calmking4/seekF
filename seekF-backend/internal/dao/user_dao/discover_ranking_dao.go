@@ -12,6 +12,34 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// DiscoverRankingDAO 提供推荐召回、兴趣统计与负反馈的数据访问能力。
+type DiscoverRankingDAO interface {
+	// 使用数据库唯一约束消除并发或重试产生的重复点击。
+	SaveClick(ctx context.Context, click *models.DiscoverClick) (bool, error)
+	// 写入或删除同一用户的目标记录，重复设置不改变结果。
+	SetFeedback(ctx context.Context, feedback *models.DiscoverFeedback, active bool) error
+	// 依赖数据库过滤负反馈，Redis不可用时仍保留用户选择。
+	ListRecommendationFeed(ctx context.Context, userId string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
+	// 批量读取候选的当前内容，软删除由GORM过滤。
+	FindRankingPosts(ctx context.Context, userId string, ids []string, mediaType *int8, recommended bool) ([]models.DiscoverPost, error)
+	// 分别召回近期、热门和兴趣关注作品，作者自互动及AI评论不贡献热度。
+	ListRankingCandidates(ctx context.Context, userId, kind string, tags []string, mediaType *int8, now time.Time) ([]RankingCandidate, error)
+	// 合并当前有效互动，已取消的赞和收藏自然退出兴趣计算。
+	ListInterestHistory(ctx context.Context, userId string, now time.Time) ([]InterestHistory, error)
+	// 查询唯一关注作者，用于轻量推荐加分。
+	ListFollowedAuthorIds(ctx context.Context, userId string) ([]string, error)
+}
+
+// DiscoverRankingDAOImpl 实现对应业务的数据访问。
+type DiscoverRankingDAOImpl struct {
+	db *gorm.DB
+}
+
+// NewDiscoverRankingDAO 构造绑定指定连接的推荐排名数据访问器。
+func NewDiscoverRankingDAO(database *gorm.DB) DiscoverRankingDAO {
+	return &DiscoverRankingDAOImpl{db: database}
+}
+
 // RankingCandidate 召回结果附带近7天互动分，仅用于查询，不对应数据库表。
 type RankingCandidate struct {
 	models.DiscoverPost
@@ -25,17 +53,17 @@ type InterestHistory struct {
 }
 
 // SaveClick 使用数据库唯一约束消除并发或重试产生的重复点击。
-func (d *DiscoverDAOImpl) SaveClick(click *models.DiscoverClick) (bool, error) {
-	result := d.db.Clauses(clause.OnConflict{DoNothing: true}).Create(click)
+func (d *DiscoverRankingDAOImpl) SaveClick(ctx context.Context, click *models.DiscoverClick) (bool, error) {
+	result := d.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(click)
 	return result.RowsAffected == 1, result.Error
 }
 
 // SetFeedback 写入或删除同一用户的目标记录，重复设置不改变结果。
-func (d *DiscoverDAOImpl) SetFeedback(feedback *models.DiscoverFeedback, active bool) error {
+func (d *DiscoverRankingDAOImpl) SetFeedback(ctx context.Context, feedback *models.DiscoverFeedback, active bool) error {
 	if active {
-		return d.db.Clauses(clause.OnConflict{DoNothing: true}).Create(feedback).Error
+		return d.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(feedback).Error
 	}
-	return d.db.Where("user_id = ? AND target_type = ? AND target_uuid = ?", feedback.UserId, feedback.TargetType, feedback.TargetUuid).Delete(&models.DiscoverFeedback{}).Error
+	return d.db.WithContext(ctx).Where("user_id = ? AND target_type = ? AND target_uuid = ?", feedback.UserId, feedback.TargetType, feedback.TargetUuid).Delete(&models.DiscoverFeedback{}).Error
 }
 
 // withoutFeedback 将帖子及作者负反馈作为当前数据库查询条件。
@@ -44,7 +72,7 @@ func withoutFeedback(query *gorm.DB, userId, alias string) *gorm.DB {
 }
 
 // ListRecommendationFeed 依赖数据库过滤负反馈，Redis不可用时仍保留用户选择。
-func (d *DiscoverDAOImpl) ListRecommendationFeed(ctx context.Context, userId string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error) {
+func (d *DiscoverRankingDAOImpl) ListRecommendationFeed(ctx context.Context, userId string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error) {
 	posts := []models.DiscoverPost{}
 	query := withoutFeedback(d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("status = 0 AND visibility = 0"), userId, "discover_post")
 	if mediaType != nil {
@@ -58,7 +86,7 @@ func (d *DiscoverDAOImpl) ListRecommendationFeed(ctx context.Context, userId str
 }
 
 // FindRankingPosts 批量读取候选的当前内容，软删除由GORM过滤。
-func (d *DiscoverDAOImpl) FindRankingPosts(ctx context.Context, userId string, ids []string, mediaType *int8, recommended bool) ([]models.DiscoverPost, error) {
+func (d *DiscoverRankingDAOImpl) FindRankingPosts(ctx context.Context, userId string, ids []string, mediaType *int8, recommended bool) ([]models.DiscoverPost, error) {
 	posts := []models.DiscoverPost{}
 	if len(ids) == 0 {
 		return posts, nil
@@ -75,7 +103,7 @@ func (d *DiscoverDAOImpl) FindRankingPosts(ctx context.Context, userId string, i
 }
 
 // ListRankingCandidates 分别召回近期、热门和兴趣关注作品，作者自互动及AI评论不贡献热度。
-func (d *DiscoverDAOImpl) ListRankingCandidates(ctx context.Context, userId, kind string, tags []string, mediaType *int8, now time.Time) ([]RankingCandidate, error) {
+func (d *DiscoverRankingDAOImpl) ListRankingCandidates(ctx context.Context, userId, kind string, tags []string, mediaType *int8, now time.Time) ([]RankingCandidate, error) {
 	from := now.Add(-constants.DiscoverActivityWindow)
 	query := d.db.WithContext(ctx).Table("discover_post p").Where("p.status = 0 AND p.visibility = 0 AND p.deleted_at IS NULL AND p.created_at <= ?", now)
 	// 各互动按用户去重，收藏跨收藏夹去重，取消后原记录不存在即不再贡献。
@@ -108,7 +136,7 @@ func (d *DiscoverDAOImpl) ListRankingCandidates(ctx context.Context, userId, kin
 }
 
 // ListInterestHistory 合并当前有效互动，已取消的赞和收藏自然退出兴趣计算。
-func (d *DiscoverDAOImpl) ListInterestHistory(ctx context.Context, userId string, now time.Time) ([]InterestHistory, error) {
+func (d *DiscoverRankingDAOImpl) ListInterestHistory(ctx context.Context, userId string, now time.Time) ([]InterestHistory, error) {
 	from := now.Add(-constants.DiscoverInterestWindow)
 	var rows []InterestHistory
 	err := d.db.WithContext(ctx).Raw(`SELECT p.tags, SUM(a.weight) AS weight FROM (
@@ -126,7 +154,7 @@ GROUP BY p.id, p.tags ORDER BY weight DESC, p.id DESC LIMIT 200`,
 }
 
 // ListFollowedAuthorIds 查询唯一关注作者，用于轻量推荐加分。
-func (d *DiscoverDAOImpl) ListFollowedAuthorIds(ctx context.Context, userId string) ([]string, error) {
+func (d *DiscoverRankingDAOImpl) ListFollowedAuthorIds(ctx context.Context, userId string) ([]string, error) {
 	var ids []string
 	err := d.db.WithContext(ctx).Model(&models.UserFollow{}).Where("user_id = ?", userId).Distinct("follow_user_id").Pluck("follow_user_id", &ids).Error
 	return ids, err

@@ -66,7 +66,7 @@ func (s *DiscoverServiceImpl) FollowingUpdates(ctx context.Context, userId strin
 	if userId == "" {
 		return nil, fmt.Errorf("请先登录")
 	}
-	rows, err := s.discoverDAO.FollowingUpdates(ctx, userId)
+	rows, err := s.followingReadDAO.FollowingUpdates(ctx, userId)
 	if err != nil {
 		return nil, fmt.Errorf("查询关注作者更新失败: %w", err)
 	}
@@ -106,13 +106,13 @@ func (s *DiscoverServiceImpl) ReadFollowingUpdates(ctx context.Context, userId, 
 		return invalid
 	}
 	return db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		follow, err := userdao.NewFollowDAO(tx).FindFollowForUpdate(userId, value.Author)
+		follow, err := userdao.NewFollowDAO(tx).FindFollowForUpdate(ctx, userId, value.Author)
 		if err != nil {
 			return err
 		}
 		if follow == nil || follow.Id != value.Follow {
 			return ErrFollowingReadExpired
 		}
-		return userdao.NewFollowingReadDAO(tx).Advance(follow.Id, value.Post)
+		return userdao.NewFollowingReadDAO(tx).Advance(ctx, follow.Id, value.Post)
 	})
 }

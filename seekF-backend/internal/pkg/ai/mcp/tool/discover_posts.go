@@ -97,7 +97,7 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 	if viewer == "" {
 		return mcp.NewToolResultText("缺少用户身份，无法查询帖子"), nil
 	}
-	posts, _, err := t.discoverDAO.SearchPostsPage(keyword, 1, limit, viewer)
+	posts, _, err := t.discoverDAO.SearchPostsPage(ctx, keyword, 1, limit, viewer)
 	if err != nil {
 		zlog.Error("搜索帖子失败: " + err.Error())
 		return mcp.NewToolResultText("查询帖子失败: " + err.Error()), nil
@@ -123,13 +123,13 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 		userUUIDs = append(userUUIDs, post.UserId)
 	}
 
-	blockedBy, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).BlockedByAuthors(viewer, userUUIDs)
+	blockedBy, err := userdao.NewBlockDAO(db.GormDB.WithContext(ctx)).BlockedByAuthors(ctx, viewer, userUUIDs)
 	if err != nil {
 		return mcp.NewToolResultText("查询帖子访问权限失败"), nil
 	}
 
 	firstMediaURLByPostID := make(map[int64]string, len(posts))
-	mediaRows, mErr := t.discoverDAO.FindMediaByPostIds(postIDs)
+	mediaRows, mErr := t.discoverDAO.FindMediaByPostIds(ctx, postIDs)
 	if mErr != nil {
 		zlog.Error("批量加载帖子媒体失败: " + mErr.Error())
 	} else {
@@ -142,7 +142,7 @@ func (t *DiscoverPostsTool) HandleDiscoverPostsRequest(ctx context.Context, requ
 
 	userByUUID := make(map[string]*models.UserInfo, len(userUUIDs))
 	if len(userUUIDs) > 0 {
-		users, uErr := t.userInfoDAO.FindUsersByUuids(userUUIDs)
+		users, uErr := t.userInfoDAO.FindUsersByUuids(ctx, userUUIDs)
 		if uErr != nil {
 			zlog.Error("批量加载用户信息失败: " + uErr.Error())
 		} else {

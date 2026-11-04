@@ -20,8 +20,30 @@ type FollowingAuthorUpdate struct {
 	LatestAt     *time.Time `json:"latest_at"`
 }
 
+// FollowingReadDAO 关注更新进度访问器，事务由Service管理。
+type FollowingReadDAO interface {
+	// 查询全部关注作者，公开作品存在未查看边界时标记更新。
+	FollowingUpdates(ctx context.Context, userId string) ([]FollowingAuthorUpdate, error)
+	// 使用当前关注关系限定作者，复用原帖时间与主键分页。
+	ListFollowingAuthorFeed(ctx context.Context, userId, author string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
+	// 读取关注时作者已有的最大作品主键，旧作品不产生新关注提醒。
+	LatestPostID(ctx context.Context, author string) (int64, error)
+	// 仅前移指定关注关系的已查看边界，旧快照不覆盖新进度。
+	Advance(ctx context.Context, followId, postId int64) error
+}
+
+// FollowingReadDAOImpl 实现对应业务的数据访问。
+type FollowingReadDAOImpl struct {
+	db *gorm.DB
+}
+
+// NewFollowingReadDAO 构造绑定当前业务事务的更新进度访问器。
+func NewFollowingReadDAO(database *gorm.DB) FollowingReadDAO {
+	return &FollowingReadDAOImpl{db: database}
+}
+
 // FollowingUpdates 查询全部关注作者，公开作品存在未查看边界时标记更新。
-func (d *DiscoverDAOImpl) FollowingUpdates(ctx context.Context, userId string) ([]FollowingAuthorUpdate, error) {
+func (d *FollowingReadDAOImpl) FollowingUpdates(ctx context.Context, userId string) ([]FollowingAuthorUpdate, error) {
 	rows := make([]FollowingAuthorUpdate, 0)
 	err := d.db.WithContext(ctx).Raw(`SELECT f.id AS follow_id, f.follow_user_id AS author_uuid, u.nickname, u.avatar,
 COALESCE(MAX(p.id),0) AS latest_post_id, MAX(p.created_at) AS latest_at,
@@ -34,7 +56,7 @@ ORDER BY has_update DESC,latest_at DESC,f.id DESC`, userId, userId, userId).Scan
 }
 
 // ListFollowingAuthorFeed 使用当前关注关系限定作者，复用原帖时间与主键分页。
-func (d *DiscoverDAOImpl) ListFollowingAuthorFeed(ctx context.Context, userId, author string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error) {
+func (d *FollowingReadDAOImpl) ListFollowingAuthorFeed(ctx context.Context, userId, author string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error) {
 	rows := make([]models.DiscoverPost, 0)
 	q := WithoutHiddenAuthors(d.db.WithContext(ctx), userId, "discover_post").Where("user_id=? AND status=0 AND visibility=0", author).
 		Where("EXISTS (SELECT 1 FROM user_follow f WHERE f.user_id=? AND f.follow_user_id=discover_post.user_id)", userId)
@@ -48,20 +70,14 @@ func (d *DiscoverDAOImpl) ListFollowingAuthorFeed(ctx context.Context, userId, a
 	return rows, err
 }
 
-// FollowingReadDAO 关注更新进度访问器，事务由Service管理。
-type FollowingReadDAO struct{ db *gorm.DB }
-
-// NewFollowingReadDAO 构造绑定当前业务事务的更新进度访问器。
-func NewFollowingReadDAO(database *gorm.DB) *FollowingReadDAO { return &FollowingReadDAO{db: database} }
-
 // LatestPostID 读取关注时作者已有的最大作品主键，旧作品不产生新关注提醒。
-func (d *FollowingReadDAO) LatestPostID(author string) (int64, error) {
+func (d *FollowingReadDAOImpl) LatestPostID(ctx context.Context, author string) (int64, error) {
 	var id int64
-	err := d.db.Model(&models.DiscoverPost{}).Select("COALESCE(MAX(id),0)").Where("user_id=?", author).Scan(&id).Error
+	err := d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Select("COALESCE(MAX(id),0)").Where("user_id=?", author).Scan(&id).Error
 	return id, err
 }
 
 // Advance 仅前移指定关注关系的已查看边界，旧快照不覆盖新进度。
-func (d *FollowingReadDAO) Advance(followId, postId int64) error {
-	return d.db.Model(&models.UserFollow{}).Where("id=?", followId).UpdateColumn("last_seen_post_id", gorm.Expr("GREATEST(last_seen_post_id,?)", postId)).Error
+func (d *FollowingReadDAOImpl) Advance(ctx context.Context, followId, postId int64) error {
+	return d.db.WithContext(ctx).Model(&models.UserFollow{}).Where("id=?", followId).UpdateColumn("last_seen_post_id", gorm.Expr("GREATEST(last_seen_post_id,?)", postId)).Error
 }

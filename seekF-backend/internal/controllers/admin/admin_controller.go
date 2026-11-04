@@ -41,7 +41,7 @@ func (a *AdminController) Login(c *gin.Context) {
 		resp.Error(c, "请填写账号和密码", 400)
 		return
 	}
-	result, err := a.auth.Login(&req)
+	result, err := a.auth.Login(c.Request.Context(), &req)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
 			c.Set(constants.AuthCredentialFailed, true)

@@ -47,7 +47,7 @@ func (c *SessionController) Unread(ctx *gin.Context) {
 		resp.Error(ctx, "无法获取用户信息", http.StatusUnauthorized)
 		return
 	}
-	result, err := c.sessionService.GetUnreadSessions(userId.(string))
+	result, err := c.sessionService.GetUnreadSessions(ctx.Request.Context(), userId.(string))
 	if err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
@@ -98,7 +98,7 @@ func (c *SessionController) OpenSession(ctx *gin.Context) {
 	}
 
 	// 打开无需好友关系的用户私聊。
-	result, err := c.sessionService.OpenSessionWithInfo(userUuid.(string), openSessionReq.ReceiveId)
+	result, err := c.sessionService.OpenSessionWithInfo(ctx.Request.Context(), userUuid.(string), openSessionReq.ReceiveId)
 	if err != nil {
 		zlog.Info("打开会话服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
@@ -118,7 +118,7 @@ func (c *SessionController) GetSessionList(ctx *gin.Context) {
 	}
 
 	// 调用服务层方法
-	sessionList, err := c.sessionService.GetSessionList(userUuid.(string))
+	sessionList, err := c.sessionService.GetSessionList(ctx.Request.Context(), userUuid.(string))
 	if err != nil {
 		zlog.Info("获取会话列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
@@ -146,7 +146,7 @@ func (c *SessionController) DeleteSession(ctx *gin.Context) {
 	}
 
 	// 调用服务层方法
-	err := c.sessionService.DeleteSession(userUuid.(string), deleteSessionReq.SessionId)
+	err := c.sessionService.DeleteSession(ctx.Request.Context(), userUuid.(string), deleteSessionReq.SessionId)
 	if err != nil {
 		zlog.Info("删除会话服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
@@ -174,7 +174,7 @@ func (c *SessionController) CheckOpenSessionAllowed(ctx *gin.Context) {
 	}
 
 	// 调用服务层方法
-	allowed, err := c.sessionService.CheckOpenSessionAllowed(userUuid.(string), openSessionReq.ReceiveId)
+	allowed, err := c.sessionService.CheckOpenSessionAllowed(ctx.Request.Context(), userUuid.(string), openSessionReq.ReceiveId)
 	if err != nil {
 		zlog.Info("检查会话权限服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)

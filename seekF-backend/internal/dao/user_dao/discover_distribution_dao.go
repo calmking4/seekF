@@ -12,34 +12,50 @@ import (
 )
 
 // DiscoverDistributionDAO 查询关注分发事件与粉丝，业务事务由Service管理。
-type DiscoverDistributionDAO struct{ db *gorm.DB }
+type DiscoverDistributionDAO interface {
+	// 查询到期待投递的关注分发事件。
+	ListDue(ctx context.Context, limit int) ([]models.DiscoverOutbox, error)
+	// 只读取发布时已有的粉丝，并限制人数以避免无界写扩散。
+	ListFans(ctx context.Context, author string, publishedAt time.Time, limit int) ([]models.UserFollow, error)
+	// 在调用方已锁定作品的事务内调整分发方式。
+	SetPostFeedMode(ctx context.Context, id int64, mode int8) error
+	// 仅查询当前关注作者的近期推模式索引，不复制正文或缓存访问权限。
+	ListInboxPosts(ctx context.Context, userId string, from time.Time, limit int) ([]models.DiscoverPost, error)
+	// 将有界Redis候选与其他召回放入同一SQL快照，避免分发状态切换时漏读。
+	ListHybridFeed(ctx context.Context, userId string, inboxIDs []int64, mediaType *int8, from, floor, before time.Time, floorID, beforeId int64, limit int) ([]models.DiscoverPost, error)
+}
+
+// DiscoverDistributionDAOImpl 实现对应业务的数据访问。
+type DiscoverDistributionDAOImpl struct {
+	db *gorm.DB
+}
 
 // NewDiscoverDistributionDAO 构造绑定调用方连接的关注分发DAO。
-func NewDiscoverDistributionDAO(database *gorm.DB) *DiscoverDistributionDAO {
-	return &DiscoverDistributionDAO{db: database}
+func NewDiscoverDistributionDAO(database *gorm.DB) DiscoverDistributionDAO {
+	return &DiscoverDistributionDAOImpl{db: database}
 }
 
 // ListDue 查询到期待投递的关注分发事件。
-func (d *DiscoverDistributionDAO) ListDue(limit int) ([]models.DiscoverOutbox, error) {
+func (d *DiscoverDistributionDAOImpl) ListDue(ctx context.Context, limit int) ([]models.DiscoverOutbox, error) {
 	var rows []models.DiscoverOutbox
-	err := d.db.Where("target = ? AND status IN (0,1) AND next_attempt_at <= ?", constants.DiscoverTargetFeed, time.Now()).Order("next_attempt_at,id").Limit(limit).Find(&rows).Error
+	err := d.db.WithContext(ctx).Where("target = ? AND status IN (0,1) AND next_attempt_at <= ?", constants.DiscoverTargetFeed, time.Now()).Order("next_attempt_at,id").Limit(limit).Find(&rows).Error
 	return rows, err
 }
 
 // ListFans 只读取发布时已有的粉丝，并限制人数以避免无界写扩散。
-func (d *DiscoverDistributionDAO) ListFans(author string, publishedAt time.Time, limit int) ([]models.UserFollow, error) {
+func (d *DiscoverDistributionDAOImpl) ListFans(ctx context.Context, author string, publishedAt time.Time, limit int) ([]models.UserFollow, error) {
 	var rows []models.UserFollow
-	err := d.db.Select("user_id").Where("follow_user_id = ? AND created_at <= ?", author, publishedAt).Limit(limit).Find(&rows).Error
+	err := d.db.WithContext(ctx).Select("user_id").Where("follow_user_id = ? AND created_at <= ?", author, publishedAt).Limit(limit).Find(&rows).Error
 	return rows, err
 }
 
 // SetPostFeedMode 在调用方已锁定作品的事务内调整分发方式。
-func (d *DiscoverDistributionDAO) SetPostFeedMode(id int64, mode int8) error {
-	return d.db.Model(&models.DiscoverPost{}).Where("id=?", id).UpdateColumn("feed_mode", mode).Error
+func (d *DiscoverDistributionDAOImpl) SetPostFeedMode(ctx context.Context, id int64, mode int8) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("id=?", id).UpdateColumn("feed_mode", mode).Error
 }
 
 // ListInboxPosts 仅查询当前关注作者的近期推模式索引，不复制正文或缓存访问权限。
-func (d *DiscoverDAOImpl) ListInboxPosts(ctx context.Context, userId string, from time.Time, limit int) ([]models.DiscoverPost, error) {
+func (d *DiscoverDistributionDAOImpl) ListInboxPosts(ctx context.Context, userId string, from time.Time, limit int) ([]models.DiscoverPost, error) {
 	var rows []models.DiscoverPost
 	err := d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Select("id,uuid,created_at").
 		Where("feed_mode=? AND status=? AND visibility=0 AND created_at>=?", constants.DiscoverFeedPush, constants.DiscoverPostPublished, from).
@@ -49,7 +65,7 @@ func (d *DiscoverDAOImpl) ListInboxPosts(ctx context.Context, userId string, fro
 }
 
 // ListHybridFeed 将有界Redis候选与其他召回放入同一SQL快照，避免分发状态切换时漏读。
-func (d *DiscoverDAOImpl) ListHybridFeed(ctx context.Context, userId string, inboxIDs []int64, mediaType *int8, from, floor, before time.Time, floorID, beforeId int64, limit int) ([]models.DiscoverPost, error) {
+func (d *DiscoverDistributionDAOImpl) ListHybridFeed(ctx context.Context, userId string, inboxIDs []int64, mediaType *int8, from, floor, before time.Time, floorID, beforeId int64, limit int) ([]models.DiscoverPost, error) {
 	rows := make([]models.DiscoverPost, 0)
 	if limit < 1 {
 		return rows, nil

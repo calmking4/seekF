@@ -71,14 +71,14 @@ func (s *FileServiceImpl) UploadFile(ctx context.Context, userId string, file *m
 	// 先登记上传租约，数据库不可用时不产生无归属对象；标识冲突不能影响旧作品资源。
 	if err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewFileDAO(tx)
-		references, err := dao.CountAssetReferences(asset)
+		references, err := dao.CountAssetReferences(ctx, asset)
 		if err != nil {
 			return err
 		}
 		if references > 0 {
 			return fmt.Errorf("资源标识冲突，请重试上传")
 		}
-		return dao.CreateAsset(asset)
+		return dao.CreateAsset(ctx, asset)
 	}); err != nil {
 		return nil, fmt.Errorf("登记上传资源失败: %w", err)
 	}
@@ -92,7 +92,7 @@ func (s *FileServiceImpl) UploadFile(ctx context.Context, userId string, file *m
 	}
 	if err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewFileDAO(tx)
-		stored, err := dao.FindAssetForUpdate(result.URL)
+		stored, err := dao.FindAssetForUpdate(ctx, result.URL)
 		if err != nil {
 			return err
 		}
@@ -100,7 +100,7 @@ func (s *FileServiceImpl) UploadFile(ctx context.Context, userId string, file *m
 			return fmt.Errorf("上传资源状态已变化")
 		}
 		stored.State = 1
-		return dao.SaveAsset(stored)
+		return dao.SaveAsset(ctx, stored)
 	}); err != nil {
 		return nil, fmt.Errorf("完成资源登记失败，未引用对象将自动清理: %w", err)
 	}
@@ -121,7 +121,7 @@ func (s *FileServiceImpl) InitMultipartUpload(ctx context.Context, userId string
 		return nil, err
 	}
 	asset := &models.FileAsset{UserId: userId, URL: result.URL, ObjectKey: result.ObjectKey, UploadId: result.UploadId, Category: string(category), Size: req.FileSize, ContentType: req.ContentType}
-	if err := userdao.NewFileDAO(db.GormDB.WithContext(ctx)).CreateAsset(asset); err != nil {
+	if err := userdao.NewFileDAO(db.GormDB.WithContext(ctx)).CreateAsset(ctx, asset); err != nil {
 		if cleanup := oss.MultipartAbort(context.Background(), result.ObjectKey, result.UploadId); cleanup != nil {
 			zlog.Error("取消登记失败的分片任务失败: " + cleanup.Error())
 		}
@@ -134,7 +134,7 @@ func (s *FileServiceImpl) InitMultipartUpload(ctx context.Context, userId string
 func withUploadAsset(ctx context.Context, userId, objectKey, uploadId string, action func(*models.FileAsset) error) error {
 	return db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewFileDAO(tx)
-		asset, err := dao.FindAssetForUpdate(oss.FileURL(objectKey))
+		asset, err := dao.FindAssetForUpdate(ctx, oss.FileURL(objectKey))
 		if err != nil {
 			return err
 		}
@@ -144,7 +144,7 @@ func withUploadAsset(ctx context.Context, userId, objectKey, uploadId string, ac
 		if err := action(asset); err != nil {
 			return err
 		}
-		return dao.SaveAsset(asset)
+		return dao.SaveAsset(ctx, asset)
 	})
 }
 
@@ -292,7 +292,7 @@ func deleteDiscoverAsset(ctx context.Context, userId, fileURL string, expiredOnl
 	var deleting *models.FileAsset
 	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewFileDAO(tx)
-		asset, err := dao.FindAssetForUpdate(fileURL)
+		asset, err := dao.FindAssetForUpdate(ctx, fileURL)
 		if err != nil {
 			return err
 		}
@@ -308,21 +308,21 @@ func deleteDiscoverAsset(ctx context.Context, userId, fileURL string, expiredOnl
 		if expiredOnly && asset.State != 3 && asset.UpdatedAt.After(time.Now().Add(-7*24*time.Hour)) {
 			return nil
 		}
-		references, err := dao.CountAssetReferences(asset)
+		references, err := dao.CountAssetReferences(ctx, asset)
 		if err != nil {
 			return err
 		}
 		if references > 0 {
 			if expiredOnly {
 				asset.UpdatedAt = time.Now()
-				return dao.SaveAsset(asset)
+				return dao.SaveAsset(ctx, asset)
 			}
 			return fmt.Errorf("资源已被作品引用，不能删除")
 		}
 		deleting = asset
 		// 删除中状态先提交，禁止新发布引用；OSS删除成功但后续数据库写入失败时也不会产生坏引用。
 		asset.State = 3
-		return dao.SaveAsset(asset)
+		return dao.SaveAsset(ctx, asset)
 	})
 	if err != nil || deleting == nil {
 		return err
@@ -340,7 +340,7 @@ func deleteDiscoverAsset(ctx context.Context, userId, fileURL string, expiredOnl
 	}
 	return db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewFileDAO(tx)
-		asset, err := dao.FindAssetForUpdate(fileURL)
+		asset, err := dao.FindAssetForUpdate(ctx, fileURL)
 		if err != nil {
 			return err
 		}
@@ -348,7 +348,7 @@ func deleteDiscoverAsset(ctx context.Context, userId, fileURL string, expiredOnl
 			return fmt.Errorf("资源记录不存在")
 		}
 		asset.State = 2
-		return dao.SaveAsset(asset)
+		return dao.SaveAsset(ctx, asset)
 	})
 }
 
@@ -376,7 +376,7 @@ func cleanupDiscoverAssets(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		assets, err := userdao.NewFileDAO(db.GormDB.WithContext(ctx)).ListExpiredAssets(before, afterId, 100)
+		assets, err := userdao.NewFileDAO(db.GormDB.WithContext(ctx)).ListExpiredAssets(ctx, before, afterId, 100)
 		if err != nil {
 			zlog.Error("查询过期发现页资源失败: " + err.Error())
 			return
@@ -405,7 +405,8 @@ func (s *FileServiceImpl) OpenDiscoverFile(ctx context.Context, userId, fileURL,
 		return nil, fmt.Errorf("媒体地址无效或未登录")
 	}
 	dao := userdao.NewFileDAO(db.GormDB.WithContext(ctx))
-	asset, err := dao.FindAsset(fileURL)
+	asset, err := dao.FindAsset(ctx,
+		fileURL)
 	if err != nil {
 		return nil, err
 	}
@@ -413,7 +414,9 @@ func (s *FileServiceImpl) OpenDiscoverFile(ctx context.Context, userId, fileURL,
 		return nil, fmt.Errorf("媒体已失效或正在上传")
 	}
 	if asset == nil || asset.UserId != userId {
-		references, err := dao.CountReadableAssetReferences(fileURL, userId, configs.GetConfig().AlipayConfig.Environment, time.Now())
+		references, err := dao.CountReadableAssetReferences(ctx,
+
+			fileURL, userId, configs.GetConfig().AlipayConfig.Environment, time.Now())
 		if err != nil {
 			return nil, err
 		}
@@ -433,13 +436,17 @@ func (s *FileServiceImpl) DiscoverAssetStates(ctx context.Context, userId string
 	dao := userdao.NewFileDAO(db.GormDB.WithContext(ctx))
 	for _, value := range urls {
 		fileURL := normalizeDiscoverMediaURL(value)
-		asset, err := dao.FindAsset(fileURL)
+		asset, err := dao.FindAsset(ctx,
+
+			fileURL)
 		if err != nil {
 			return nil, err
 		}
 		states[value] = asset != nil && asset.UserId == userId && asset.State == 1
 		if asset == nil {
-			count, err := dao.CountOwnedAssetReferences(fileURL, userId)
+			count, err := dao.CountOwnedAssetReferences(ctx,
+
+				fileURL, userId)
 			if err != nil {
 				return nil, err
 			}

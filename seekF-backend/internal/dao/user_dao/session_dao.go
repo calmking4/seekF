@@ -1,9 +1,12 @@
 package userdao
 
 import (
+	"context"
+	"errors"
+	"time"
+
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/util"
-	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -12,34 +15,45 @@ import (
 // SessionDAO 会话DAO接口
 type SessionDAO interface {
 	// 根据最新消息刷新双方私聊摘要。
-	RefreshPrivateMessagePreview(sendId, receiveId string) error
+	RefreshPrivateMessagePreview(ctx context.Context, sendId, receiveId string) error
 	// 查询本人未删除私聊会话的未读数及消息边界。
-	GetUnreadSessions(userId string) ([]SessionUnreadRow, error)
+	GetUnreadSessions(ctx context.Context, userId string) ([]SessionUnreadRow, error)
 	// 锁定当前用户拥有的未删除会话。
-	GetOwnedSessionForUpdate(userId string, sessionId string) (models.Session, error)
+	GetOwnedSessionForUpdate(ctx context.Context, userId string, sessionId string) (models.Session, error)
 	// 验证阅读边界是该会话中的入站私信。
-	HasIncomingMessage(userId string, peerId string, messageId int64) (bool, error)
+	HasIncomingMessage(ctx context.Context, userId string, peerId string, messageId int64) (bool, error)
 	// 单调推进本人会话的阅读边界。
-	AdvanceRead(userId string, sessionId string, messageId int64) error
+	AdvanceRead(ctx context.Context, userId string, sessionId string, messageId int64) error
 	// 更新本人已锁定会话的置顶时间，nil表示取消置顶。
-	SetPinnedAt(userId, sessionId string, pinnedAt *time.Time) error
+	SetPinnedAt(ctx context.Context, userId, sessionId string, pinnedAt *time.Time) error
 	// 软删除本人对指定用户的会话并清除置顶，不影响历史消息。
-	DeletePeerSessions(userId, peerId string) error
-	GetSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error)
-	GetDeletedSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error)
-	RestoreSession(sessionId string) error
-	CreateSession(session *models.Session) error
+	DeletePeerSessions(ctx context.Context, userId, peerId string) error
+	// 根据发送者ID和接收者ID获取会话
+	GetSessionBySendAndReceiveId(ctx context.Context, sendId string, receiveId string) (models.Session, error)
+	// 获取已删除的会话（软删除）
+	GetDeletedSessionBySendAndReceiveId(ctx context.Context, sendId string, receiveId string) (models.Session, error)
+	// 恢复已删除的会话
+	RestoreSession(ctx context.Context, sessionId string) error
+	// 创建会话
+	CreateSession(ctx context.Context, session *models.Session) error
 	// 软删除当前用户拥有的私聊会话，保留消息记录。
-	DeleteSession(userId string, sessionId string) error
-	GetSessionListBySendId(userId string) ([]models.Session, error)
-	GetSessionByUuid(uuid string) (models.Session, error)
-	UpdateSessionLastMessage(sessionId string, lastMessage string, lastMessageAt time.Time) error
+	DeleteSession(ctx context.Context, userId string, sessionId string) error
+	// 查询本人会话并过滤主动拉黑目标，置顶优先后按最近活动排序。
+	GetSessionListBySendId(ctx context.Context, userId string) ([]models.Session, error)
+	// 根据UUID获取会话
+	GetSessionByUuid(ctx context.Context, uuid string) (models.Session, error)
+	// 根据会话ID更新最后消息
+	UpdateSessionLastMessage(ctx context.Context, sessionId string, lastMessage string, lastMessageAt time.Time) error
 	// AI会话相关方法
-	CreateAISession(userId string, modelType string) (*models.Session, error)
-	GetAISessionList(userId string) ([]models.Session, error)
-	GetAISessionByUuid(uuid string) (*models.Session, error)
-	DeleteAISession(uuid string) error
-	UpdateSessionFirstMessage(sessionId string, firstMessage string) error
+	CreateAISession(ctx context.Context, userId string, modelType string) (*models.Session, error)
+	// 获取用户的AI会话列表（按创建时间倒序）
+	GetAISessionList(ctx context.Context, userId string) ([]models.Session, error)
+	// 根据UUID查询AI会话，不存在时返回空。
+	GetAISessionByUuid(ctx context.Context, uuid string) (*models.Session, error)
+	// 删除AI会话
+	DeleteAISession(ctx context.Context, uuid string) error
+	// 更新会话的第一条消息
+	UpdateSessionFirstMessage(ctx context.Context, sessionId string, firstMessage string) error
 }
 
 // SessionUnreadRow 私聊会话未读聚合结果，不作为数据库表模型。
@@ -51,10 +65,20 @@ type SessionUnreadRow struct {
 	LastReadMessageId int64
 }
 
+// SessionDAOImpl 使用指定数据库或事务连接访问用户会话。
+type SessionDAOImpl struct {
+	db *gorm.DB
+}
+
+// NewSessionDAO 构造绑定指定连接的会话数据访问器。
+func NewSessionDAO(database *gorm.DB) SessionDAO {
+	return &SessionDAOImpl{db: database}
+}
+
 // GetUnreadSessions 在同一查询快照内统计本人私聊会话的入站消息和未读数。
-func (d *SessionDAOImpl) GetUnreadSessions(userId string) ([]SessionUnreadRow, error) {
+func (d *SessionDAOImpl) GetUnreadSessions(ctx context.Context, userId string) ([]SessionUnreadRow, error) {
 	rows := make([]SessionUnreadRow, 0)
-	err := d.db.Table("session AS s").Select(`s.uuid AS session_id, s.receive_id AS peer_id,
+	err := d.db.WithContext(ctx).Table("session AS s").Select(`s.uuid AS session_id, s.receive_id AS peer_id,
 		s.last_read_message_id, COALESCE(MAX(m.id), 0) AS latest_message_id,
 		COALESCE(SUM(CASE WHEN m.id > s.last_read_message_id THEN 1 ELSE 0 END), 0) AS unread_count`).
 		Joins("LEFT JOIN message AS m ON m.send_id = s.receive_id AND m.receive_id = s.send_id AND m.type IN (0, 2) AND m.receive_deleted_at IS NULL").
@@ -65,100 +89,92 @@ func (d *SessionDAOImpl) GetUnreadSessions(userId string) ([]SessionUnreadRow, e
 }
 
 // GetOwnedSessionForUpdate 锁定本人会话，串行处理已读确认和删除。
-func (d *SessionDAOImpl) GetOwnedSessionForUpdate(userId string, sessionId string) (models.Session, error) {
+func (d *SessionDAOImpl) GetOwnedSessionForUpdate(ctx context.Context, userId string, sessionId string) (models.Session, error) {
 	var session models.Session
-	err := d.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ? AND send_id = ?", sessionId, userId).First(&session).Error
+	err := d.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ? AND send_id = ?", sessionId, userId).First(&session).Error
 	return session, err
 }
 
 // HasIncomingMessage 校验入站阅读边界，兼容确认请求到达前消息被撤回。
-func (d *SessionDAOImpl) HasIncomingMessage(userId string, peerId string, messageId int64) (bool, error) {
+func (d *SessionDAOImpl) HasIncomingMessage(ctx context.Context, userId string, peerId string, messageId int64) (bool, error) {
 	var count int64
-	err := d.db.Model(&models.Message{}).Where("id = ? AND send_id = ? AND receive_id = ? AND type IN (0, 2, 9)", messageId, peerId, userId).Count(&count).Error
+	err := d.db.WithContext(ctx).Model(&models.Message{}).Where("id = ? AND send_id = ? AND receive_id = ? AND type IN (0, 2, 9)", messageId, peerId, userId).Count(&count).Error
 	return count > 0, err
 }
 
 // AdvanceRead 通过条件更新保证重复或乱序的确认不会使阅读进度倒退。
-func (d *SessionDAOImpl) AdvanceRead(userId string, sessionId string, messageId int64) error {
-	return d.db.Model(&models.Session{}).Where("uuid = ? AND send_id = ? AND last_read_message_id < ?", sessionId, userId, messageId).Update("last_read_message_id", messageId).Error
-}
-
-type SessionDAOImpl struct {
-	db *gorm.DB
-}
-
-func NewSessionDAO(db *gorm.DB) SessionDAO {
-	return &SessionDAOImpl{db: db}
+func (d *SessionDAOImpl) AdvanceRead(ctx context.Context, userId string, sessionId string, messageId int64) error {
+	return d.db.WithContext(ctx).Model(&models.Session{}).Where("uuid = ? AND send_id = ? AND last_read_message_id < ?", sessionId, userId, messageId).Update("last_read_message_id", messageId).Error
 }
 
 // GetSessionBySendAndReceiveId 根据发送者ID和接收者ID获取会话
-func (d *SessionDAOImpl) GetSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error) {
+func (d *SessionDAOImpl) GetSessionBySendAndReceiveId(ctx context.Context, sendId string, receiveId string) (models.Session, error) {
 	var session models.Session
-	result := d.db.Where("send_id = ? and receive_id = ?", sendId, receiveId).First(&session)
+	result := d.db.WithContext(ctx).Where("send_id = ? and receive_id = ?", sendId, receiveId).First(&session)
 	return session, result.Error
 }
 
 // GetDeletedSessionBySendAndReceiveId 获取已删除的会话（软删除）
-func (d *SessionDAOImpl) GetDeletedSessionBySendAndReceiveId(sendId string, receiveId string) (models.Session, error) {
+func (d *SessionDAOImpl) GetDeletedSessionBySendAndReceiveId(ctx context.Context, sendId string, receiveId string) (models.Session, error) {
 	var session models.Session
-	result := d.db.Unscoped().Where("send_id = ? AND receive_id = ? AND deleted_at IS NOT NULL", sendId, receiveId).First(&session)
+	result := d.db.WithContext(ctx).Unscoped().Where("send_id = ? AND receive_id = ? AND deleted_at IS NOT NULL", sendId, receiveId).First(&session)
 	return session, result.Error
 }
 
 // RestoreSession 恢复已删除的会话
-func (d *SessionDAOImpl) RestoreSession(sessionId string) error {
-	result := d.db.Unscoped().Model(&models.Session{}).Where("uuid = ?", sessionId).Update("deleted_at", nil)
+func (d *SessionDAOImpl) RestoreSession(ctx context.Context, sessionId string) error {
+	result := d.db.WithContext(ctx).Unscoped().Model(&models.Session{}).Where("uuid = ?", sessionId).Update("deleted_at", nil)
 	return result.Error
 }
 
 // CreateSession 创建会话
-func (d *SessionDAOImpl) CreateSession(session *models.Session) error {
-	result := d.db.Create(session)
+func (d *SessionDAOImpl) CreateSession(ctx context.Context, session *models.Session) error {
+	result := d.db.WithContext(ctx).Create(session)
 	return result.Error
 }
 
 // DeleteSession 按归属软删除私聊会话，重复删除保持幂等。
-func (d *SessionDAOImpl) DeleteSession(userId string, sessionId string) error {
-	return d.db.Model(&models.Session{}).Where("send_id = ? AND receive_id LIKE ? AND uuid = ?", userId, "U%", sessionId).
+func (d *SessionDAOImpl) DeleteSession(ctx context.Context, userId string, sessionId string) error {
+	return d.db.WithContext(ctx).Model(&models.Session{}).Where("send_id = ? AND receive_id LIKE ? AND uuid = ?", userId, "U%", sessionId).
 		Updates(map[string]any{"deleted_at": time.Now(), "pinned_at": nil}).Error
 }
 
 // SetPinnedAt 更新事务内已锁定的本人会话置顶状态。
-func (d *SessionDAOImpl) SetPinnedAt(userId, sessionId string, pinnedAt *time.Time) error {
-	return d.db.Model(&models.Session{}).Where("send_id = ? AND uuid = ?", userId, sessionId).Update("pinned_at", pinnedAt).Error
+func (d *SessionDAOImpl) SetPinnedAt(ctx context.Context, userId, sessionId string, pinnedAt *time.Time) error {
+	return d.db.WithContext(ctx).Model(&models.Session{}).Where("send_id = ? AND uuid = ?", userId, sessionId).Update("pinned_at", pinnedAt).Error
 }
 
 // DeletePeerSessions 拉黑时软删除本人对应会话并清除置顶，重复执行保持幂等。
-func (d *SessionDAOImpl) DeletePeerSessions(userId, peerId string) error {
-	return d.db.Model(&models.Session{}).Where("send_id = ? AND receive_id = ?", userId, peerId).
+func (d *SessionDAOImpl) DeletePeerSessions(ctx context.Context, userId, peerId string) error {
+	return d.db.WithContext(ctx).Model(&models.Session{}).Where("send_id = ? AND receive_id = ?", userId, peerId).
 		Updates(map[string]any{"deleted_at": time.Now(), "pinned_at": nil}).Error
 }
 
 // GetSessionListBySendId 查询本人会话并过滤主动拉黑目标，置顶优先后按最近活动排序。
-func (d *SessionDAOImpl) GetSessionListBySendId(userId string) ([]models.Session, error) {
+func (d *SessionDAOImpl) GetSessionListBySendId(ctx context.Context, userId string) ([]models.Session, error) {
 	var sessionList []models.Session
-	result := d.db.Order("pinned_at DESC, COALESCE(last_message_at, created_at) DESC, id DESC").Where("send_id = ?", userId).
+	result := d.db.WithContext(ctx).Order("pinned_at DESC, COALESCE(last_message_at, created_at) DESC, id DESC").Where("send_id = ?", userId).
 		Where("NOT EXISTS (SELECT 1 FROM user_block b WHERE b.user_id = ? AND b.blocked_user_id = session.receive_id COLLATE utf8mb4_unicode_ci)", userId).Find(&sessionList)
 	return sessionList, result.Error
 }
 
 // GetSessionByUuid 根据UUID获取会话
-func (d *SessionDAOImpl) GetSessionByUuid(uuid string) (models.Session, error) {
+func (d *SessionDAOImpl) GetSessionByUuid(ctx context.Context, uuid string) (models.Session, error) {
 	var session models.Session
-	result := d.db.Where("uuid = ?", uuid).First(&session)
+	result := d.db.WithContext(ctx).Where("uuid = ?", uuid).First(&session)
 	return session, result.Error
 }
 
 // UpdateSessionLastMessage 根据会话ID更新最后消息
-func (d *SessionDAOImpl) UpdateSessionLastMessage(sessionId string, lastMessage string, lastMessageAt time.Time) error {
-	return d.db.Model(&models.Session{}).Where("uuid = ?", sessionId).Updates(map[string]interface{}{
+func (d *SessionDAOImpl) UpdateSessionLastMessage(ctx context.Context, sessionId string, lastMessage string, lastMessageAt time.Time) error {
+	return d.db.WithContext(ctx).Model(&models.Session{}).Where("uuid = ?", sessionId).Updates(map[string]interface{}{
 		"last_message":    lastMessage,
 		"last_message_at": lastMessageAt,
 	}).Error
 }
 
 // CreateAISession 创建AI会话（receive_id以'A'开头标识AI）
-func (d *SessionDAOImpl) CreateAISession(userId string, modelType string) (*models.Session, error) {
+func (d *SessionDAOImpl) CreateAISession(ctx context.Context, userId string, modelType string) (*models.Session, error) {
 	sessionId := "S" + util.GetNowAndLenRandomString(11)
 	aiId := "A" + util.GetNowAndLenRandomString(11)
 
@@ -169,7 +185,7 @@ func (d *SessionDAOImpl) CreateAISession(userId string, modelType string) (*mode
 		CreatedAt: time.Now(),
 	}
 
-	result := d.db.Create(session)
+	result := d.db.WithContext(ctx).Create(session)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -178,18 +194,21 @@ func (d *SessionDAOImpl) CreateAISession(userId string, modelType string) (*mode
 }
 
 // GetAISessionList 获取用户的AI会话列表（按创建时间倒序）
-func (d *SessionDAOImpl) GetAISessionList(userId string) ([]models.Session, error) {
+func (d *SessionDAOImpl) GetAISessionList(ctx context.Context, userId string) ([]models.Session, error) {
 	var sessions []models.Session
-	result := d.db.Where("send_id = ? AND receive_id LIKE ?", userId, "A%").
+	result := d.db.WithContext(ctx).Where("send_id = ? AND receive_id LIKE ?", userId, "A%").
 		Order("created_at DESC").
 		Find(&sessions)
 	return sessions, result.Error
 }
 
-// GetAISessionByUuid 根据UUID获取AI会话（校验receive_id以'A'开头）
-func (d *SessionDAOImpl) GetAISessionByUuid(uuid string) (*models.Session, error) {
+// GetAISessionByUuid 根据UUID查询AI会话，不存在时返回空。
+func (d *SessionDAOImpl) GetAISessionByUuid(ctx context.Context, uuid string) (*models.Session, error) {
 	var session models.Session
-	result := d.db.Where("uuid = ? AND receive_id LIKE ?", uuid, "A%").First(&session)
+	result := d.db.WithContext(ctx).Where("uuid = ? AND receive_id LIKE ?", uuid, "A%").First(&session)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -197,21 +216,21 @@ func (d *SessionDAOImpl) GetAISessionByUuid(uuid string) (*models.Session, error
 }
 
 // DeleteAISession 删除AI会话
-func (d *SessionDAOImpl) DeleteAISession(uuid string) error {
-	return d.db.Where("uuid = ? AND receive_id LIKE ?", uuid, "A%").Delete(&models.Session{}).Error
+func (d *SessionDAOImpl) DeleteAISession(ctx context.Context, uuid string) error {
+	return d.db.WithContext(ctx).Where("uuid = ? AND receive_id LIKE ?", uuid, "A%").Delete(&models.Session{}).Error
 }
 
 // UpdateSessionFirstMessage 更新会话的第一条消息
-func (d *SessionDAOImpl) UpdateSessionFirstMessage(sessionId string, firstMessage string) error {
-	return d.db.Model(&models.Session{}).Where("uuid = ? AND first_message = ''", sessionId).Updates(map[string]interface{}{
+func (d *SessionDAOImpl) UpdateSessionFirstMessage(ctx context.Context, sessionId string, firstMessage string) error {
+	return d.db.WithContext(ctx).Model(&models.Session{}).Where("uuid = ? AND first_message = ''", sessionId).Updates(map[string]interface{}{
 		"first_message": firstMessage,
 	}).Error
 }
 
 // RefreshPrivateMessagePreview 按数据库最新消息刷新摘要，避免迟到投递覆盖撤回。
-func (d *SessionDAOImpl) RefreshPrivateMessagePreview(sendId, receiveId string) error {
+func (d *SessionDAOImpl) RefreshPrivateMessagePreview(ctx context.Context, sendId, receiveId string) error {
 	const latest = ` FROM message m WHERE ((m.send_id = session.send_id AND m.receive_id = session.receive_id AND m.send_deleted_at IS NULL) OR (m.send_id = session.receive_id AND m.receive_id = session.send_id AND m.receive_deleted_at IS NULL)) ORDER BY m.created_at DESC, m.id DESC LIMIT 1)`
-	return d.db.Model(&models.Session{}).
+	return d.db.WithContext(ctx).Model(&models.Session{}).
 		Where("(send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?)", sendId, receiveId, receiveId, sendId).
 		Updates(map[string]interface{}{
 			"last_message":    gorm.Expr("COALESCE((SELECT CASE WHEN m.type = 9 THEN '撤回了一条消息' WHEN m.type = 2 THEN CONCAT('[文件]', m.file_name) ELSE m.content END" + latest + ", '')"),

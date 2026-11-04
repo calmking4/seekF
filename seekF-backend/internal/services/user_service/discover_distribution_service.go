@@ -45,7 +45,7 @@ func (s *discoverEventConsumer) processFeedOnce(ctx context.Context, id int64, c
 	var inserted int64
 	err := s.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		outbox := userdao.NewDiscoverOutboxDAO(tx)
-		event, err := outbox.LockEvent(id, false)
+		event, err := outbox.LockEvent(ctx, id, false)
 		if err != nil {
 			return err
 		}
@@ -56,7 +56,7 @@ func (s *discoverEventConsumer) processFeedOnce(ctx context.Context, id int64, c
 			return nil
 		}
 		dao := userdao.NewDiscoverDistributionDAO(tx)
-		post, err := outbox.CurrentPostForUpdate(event.PostUuid)
+		post, err := outbox.CurrentPostForUpdate(ctx, event.PostUuid)
 		if err != nil {
 			return err
 		}
@@ -66,13 +66,13 @@ func (s *discoverEventConsumer) processFeedOnce(ctx context.Context, id int64, c
 			// 失效索引由TTL淘汰；读取时始终复核MySQL当前状态，不因缓存残留泄露内容。
 		} else {
 			threshold := discoverDistributionThreshold(cfg)
-			fans, err := dao.ListFans(post.UserId, post.CreatedAt, int(threshold))
+			fans, err := dao.ListFans(ctx, post.UserId, post.CreatedAt, int(threshold))
 			if err != nil {
 				return err
 			}
 			if int64(len(fans)) >= threshold {
 				// 仅处理发布时符合时间条件的关注关系；异常达到上限时转拉，不能截断粉丝后报分发完成。
-				if err := dao.SetPostFeedMode(post.Id, constants.DiscoverFeedPull); err != nil {
+				if err := dao.SetPostFeedMode(ctx, post.Id, constants.DiscoverFeedPull); err != nil {
 					return err
 				}
 			} else {
@@ -94,7 +94,7 @@ func (s *discoverEventConsumer) processFeedOnce(ctx context.Context, id int64, c
 		event.ProcessedAt = &now
 		event.LastError = ""
 		event.UpdatedAt = time.Now()
-		return outbox.Save(event)
+		return outbox.Save(ctx, event)
 	})
 	return inserted, err
 }
@@ -111,7 +111,7 @@ func (s *discoverEventConsumer) processFeedEvent(ctx context.Context, id int64) 
 		}
 		failureErr := s.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			dao := userdao.NewDiscoverOutboxDAO(tx)
-			event, lockErr := dao.LockEvent(id, false)
+			event, lockErr := dao.LockEvent(ctx, id, false)
 			if lockErr != nil {
 				return lockErr
 			}
@@ -119,7 +119,7 @@ func (s *discoverEventConsumer) processFeedEvent(ctx context.Context, id int64) 
 				return nil
 			}
 			setDiscoverEventFailure(event, err)
-			return dao.Save(event)
+			return dao.Save(ctx, event)
 		})
 		return errors.Join(err, failureErr)
 	}
@@ -196,7 +196,7 @@ func (s *DiscoverServiceImpl) rebuildDiscoverInbox(ctx context.Context, userID s
 	// 不缓存拉黑过滤结果，解除拉黑后仍可从同一索引召回，权限统一在最终查询检查。
 	buildCtx, buildCancel := context.WithTimeout(ctx, constants.DiscoverInboxBuildTimeout)
 	defer buildCancel()
-	posts, err := s.discoverDAO.ListInboxPosts(buildCtx, userID, from, constants.DiscoverInboxCapacity)
+	posts, err := s.distributionDAO.ListInboxPosts(buildCtx, userID, from, constants.DiscoverInboxCapacity)
 	if err != nil {
 		return false, err
 	}
@@ -255,7 +255,7 @@ func (s *DiscoverServiceImpl) listRedisFollowingFeed(ctx context.Context, userID
 	if !boundary.CreatedAt.IsZero() && (boundary.CreatedAt.Before(floor) || (boundary.CreatedAt.Equal(floor) && boundary.Id <= floorID)) {
 		return fallback("history")
 	}
-	posts, err := s.discoverDAO.ListHybridFeed(ctx, userID, ids, input.MediaType, from, floor, boundary.CreatedAt, floorID, boundary.Id, input.PageSize+1)
+	posts, err := s.distributionDAO.ListHybridFeed(ctx, userID, ids, input.MediaType, from, floor, boundary.CreatedAt, floorID, boundary.Id, input.PageSize+1)
 	if err != nil {
 		return fallback("query_error")
 	}

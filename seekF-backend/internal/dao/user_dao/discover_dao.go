@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+
 	userresp "seekF-backend/internal/dto/user/user_resp"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
-	"strings"
-	"time"
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -26,184 +27,162 @@ type DiscoverMediaInfo struct {
 // DiscoverDAO 发现页帖子、媒体和互动数据访问接口。
 type DiscoverDAO interface {
 	// 幂等保存创作者事件并返回原记录，用于校验请求目标。
-	SaveCreatorAnalyticsEvent(event *models.CreatorAnalyticsEvent) (*models.CreatorAnalyticsEvent, error)
+	SaveCreatorAnalyticsEvent(ctx context.Context, event *models.CreatorAnalyticsEvent) (*models.CreatorAnalyticsEvent, error)
 	// 查询创作者事件采集的启用时间。
-	CreatorAnalyticsTrackingStart() (time.Time, error)
+	CreatorAnalyticsTrackingStart(ctx context.Context) (time.Time, error)
 	// 汇总本人作品在指定期间的核心指标。
-	GetCreatorAnalyticsMetrics(creator, environment string, start, end time.Time) (userresp.CreatorAnalyticsMetrics, error)
+	GetCreatorAnalyticsMetrics(ctx context.Context, creator, environment string, start, end time.Time) (userresp.CreatorAnalyticsMetrics, error)
 	// 汇总本人作品在指定期间的每日点击量。
-	ListCreatorClickTrend(creator string, start, end time.Time) ([]CreatorDailyCount, error)
+	ListCreatorClickTrend(ctx context.Context, creator string, start, end time.Time) ([]CreatorDailyCount, error)
 	// 汇总本人在指定期间的每日净收益，金额单位元。
-	ListCreatorRevenueTrend(creator, environment string, start, end time.Time) ([]CreatorDailyRevenue, error)
+	ListCreatorRevenueTrend(ctx context.Context, creator, environment string, start, end time.Time) ([]CreatorDailyRevenue, error)
 	// 锁定收藏目标，包含已软删除帖子，供取消收藏维护计数。
-	FindCollectionPostForUpdate(uuid string) (*models.DiscoverPost, error)
+	FindCollectionPostForUpdate(ctx context.Context, uuid string) (*models.DiscoverPost, error)
 	// 锁定收藏夹，串行处理重复取消并校验归属。
-	FindFolderForUpdate(uuid string) (*models.DiscoverCollectionFolder, error)
+	FindFolderForUpdate(ctx context.Context, uuid string) (*models.DiscoverCollectionFolder, error)
 	// 取消收藏时减少帖子计数，包含软删除记录并保证非负。
-	DecrementCollectionTargetCount(postId int64) error
+	DecrementCollectionTargetCount(ctx context.Context, postId int64) error
 	// 按收藏记录分页保留失效帖子，供服务层输出占位卡片。
-	ListCollectionEntries(folderId int64, viewerId string, page, pageSize int, offsetOverride ...int) ([]CollectionPostRow, error)
+	ListCollectionEntries(ctx context.Context, folderId int64, viewerId string, page, pageSize int, offsetOverride ...int) ([]CollectionPostRow, error)
 	// 统计收藏记录数量，包含需要展示失效占位的帖子。
-	CountCollectionEntries(folderId int64) (int64, error)
-	// 查询关注作者及公开新作品的更新边界。
-	FollowingUpdates(ctx context.Context, userId string) ([]FollowingAuthorUpdate, error)
-	// 在当前关注与公开权限内查询指定作者的时间流。
-	ListFollowingAuthorFeed(ctx context.Context, userId, author string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
-	// 从当前关注作者的近期推模式作品重建有界收件箱索引。
-	ListInboxPosts(ctx context.Context, userId string, from time.Time, limit int) ([]models.DiscoverPost, error)
-	// 合并Redis候选、拉模式作品、新关注作品及待分发作品，统一检查当前权限。
-	ListHybridFeed(ctx context.Context, userId string, inboxIDs []int64, mediaType *int8, from, floor, before time.Time, floorID, beforeId int64, limit int) ([]models.DiscoverPost, error)
-	// 幂等保存当天首次点击，返回是否实际新增。
-	SaveClick(click *models.DiscoverClick) (bool, error)
-	// 设置帖子或作者不感兴趣状态。
-	SetFeedback(feedback *models.DiscoverFeedback, active bool) error
-	// 在时间流降级时同步过滤当前用户的不感兴趣目标。
-	ListRecommendationFeed(ctx context.Context, userId string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
-	// 批量核查当前公开状态与推荐负反馈，不依赖缓存权限。
-	FindRankingPosts(ctx context.Context, userId string, ids []string, mediaType *int8, recommended bool) ([]models.DiscoverPost, error)
-	// 查询近期、热门或兴趣关注召回候选及窗口内真实互动分。
-	ListRankingCandidates(ctx context.Context, userId, kind string, tags []string, mediaType *int8, now time.Time) ([]RankingCandidate, error)
-	// 读取用户最近30天与当前公开帖子的真实互动。
-	ListInterestHistory(ctx context.Context, userId string, now time.Time) ([]InterestHistory, error)
-	// 读取当前用户关注的作者标识。
-	ListFollowedAuthorIds(ctx context.Context, userId string) ([]string, error)
+	CountCollectionEntries(ctx context.Context, folderId int64) (int64, error)
 	// 批量读取候选作品的当前公开状态，不能使用ES中的旧正文。
 	FindPublicPostsByUuids(ctx context.Context, uuids []string, viewerId string) ([]models.DiscoverPost, error)
 	// 返回作者各状态作品数量，不受当前选中状态限制。
-	CountOwnWorksByStatus(userId, keyword string, visibility *int8) (map[int8]int64, error)
+	CountOwnWorksByStatus(ctx context.Context, userId, keyword string, visibility *int8) (map[int8]int64, error)
 	// 按作者、状态及标题筛选作品并返回真实总数。
-	ListOwnWorks(userId, keyword string, status, visibility *int8, page, pageSize int) ([]models.DiscoverPost, int64, error)
+	ListOwnWorks(ctx context.Context, userId, keyword string, status, visibility *int8, page, pageSize int) ([]models.DiscoverPost, int64, error)
 	// 更新作品内容与编辑版本。
-	SavePost(post *models.DiscoverPost) error
+	SavePost(ctx context.Context, post *models.DiscoverPost) error
 	// 软删除指定作品。
-	DeletePost(post *models.DiscoverPost) error
+	DeletePost(ctx context.Context, post *models.DiscoverPost) error
 	// 清理编辑前的媒体记录。
-	DeletePostMedia(postId int64) error
+	DeletePostMedia(ctx context.Context, postId int64) error
 	// 依赖用户请求唯一键占用发布记录，返回是否创建成功。
-	ClaimPublishPost(post *models.DiscoverPost) (bool, error)
+	ClaimPublishPost(ctx context.Context, post *models.DiscoverPost) (bool, error)
 	// 包含软删除记录地锁定发布请求对应帖子。
-	FindPostByPublishKeyForUpdate(userId, requestKey string) (*models.DiscoverPost, error)
+	FindPostByPublishKeyForUpdate(ctx context.Context, userId, requestKey string) (*models.DiscoverPost, error)
 	// ========== 帖子 ==========
 	// 保存帖子。
-	CreatePost(post *models.DiscoverPost) error
+	CreatePost(ctx context.Context, post *models.DiscoverPost) error
 	// 按 UUID 查询帖子，不存在时返回空。
-	FindPostByUuid(uuid string) (*models.DiscoverPost, error)
+	FindPostByUuid(ctx context.Context, uuid string) (*models.DiscoverPost, error)
 	// 查询并锁定帖子，须使用事务连接调用。
-	FindPostByUuidForUpdate(uuid string) (*models.DiscoverPost, error)
+	FindPostByUuidForUpdate(ctx context.Context, uuid string) (*models.DiscoverPost, error)
 	// 按主键查询帖子，不存在时返回空。
-	FindPostById(id int64) (*models.DiscoverPost, error)
+	FindPostById(ctx context.Context, id int64) (*models.DiscoverPost, error)
 	// 查询当前可见的时间流，关注子查询避免重复关系产生重复帖子。
 	ListFeed(ctx context.Context, userId string, following bool, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
 	// 判断当前用户是否关注过博主。
 	HasFollowing(ctx context.Context, userId string) (bool, error)
 	// 增加帖子的评论数。
-	IncrementCommentCount(postId int64) error
+	IncrementCommentCount(ctx context.Context, postId int64) error
 	// 增加帖子的浏览数。
-	IncrementViewCount(postId int64) error
+	IncrementViewCount(ctx context.Context, postId int64) error
 	// 分页查询指定用户的正常帖子。
-	ListPostsByUserId(userId, viewerId string, page, pageSize int) ([]models.DiscoverPost, error)
+	ListPostsByUserId(ctx context.Context, userId, viewerId string, page, pageSize int) ([]models.DiscoverPost, error)
 	// 统计指定用户的正常帖子数量。
-	CountPostsByUserId(userId, viewerId string) (int64, error)
+	CountPostsByUserId(ctx context.Context, userId, viewerId string) (int64, error)
 	// 统计指定用户正常帖子的总获赞数。
-	GetUserTotalLikes(userId, viewerId string) (int, error)
+	GetUserTotalLikes(ctx context.Context, userId, viewerId string) (int, error)
 
 	// ========== 搜索 ==========
 	// 按标题、正文、标签和作者当前昵称搜索，返回真实分页与总数。
-	SearchPostsPage(keyword string, page, pageSize int, viewerId string) ([]models.DiscoverPost, int64, error)
+	SearchPostsPage(ctx context.Context, keyword string, page, pageSize int, viewerId string) ([]models.DiscoverPost, int64, error)
 	// 按作者当前昵称召回公开帖子，超出候选上限时由服务层回退数据库完整分页。
 	SearchAuthorPostIDs(ctx context.Context, keyword, viewerId string) ([]string, error)
 
 	// ========== 媒体 ==========
 	// 保存帖子媒体信息。
-	CreateMedia(media *models.DiscoverMedia) error
+	CreateMedia(ctx context.Context, media *models.DiscoverMedia) error
 	// 按展示顺序查询帖子的媒体。
-	FindMediaByPostId(postId int64) ([]DiscoverMediaInfo, error)
+	FindMediaByPostId(ctx context.Context, postId int64) ([]DiscoverMediaInfo, error)
 	// 批量查询帖子媒体并按帖子及展示顺序排序。
-	FindMediaByPostIds(postIds []int64) ([]DiscoverMediaInfo, error)
+	FindMediaByPostIds(ctx context.Context, postIds []int64) ([]DiscoverMediaInfo, error)
 
 	// ========== 点赞 ==========
 	// 统计指定目标的去重点赞用户数。
-	CountLikesByTargetUuid(targetUuid string) (int, error)
+	CountLikesByTargetUuid(ctx context.Context, targetUuid string) (int, error)
 	// 更新帖子的实际点赞数。
-	UpdatePostLikeCount(postId int64, count int) error
+	UpdatePostLikeCount(ctx context.Context, postId int64, count int) error
 	// 更新评论的实际点赞数。
-	UpdateCommentLikeCount(commentId int64, count int) error
+	UpdateCommentLikeCount(ctx context.Context, commentId int64, count int) error
 	// 保存点赞记录。
-	CreateLike(like *models.DiscoverLike) error
+	CreateLike(ctx context.Context, like *models.DiscoverLike) error
 	// 删除用户对指定目标的点赞记录。
-	DeleteLike(userId, targetUuid string) error
+	DeleteLike(ctx context.Context, userId, targetUuid string) error
 	// 查询用户对指定目标的点赞记录。
-	FindLike(userId, targetUuid string) (*models.DiscoverLike, error)
+	FindLike(ctx context.Context, userId, targetUuid string) (*models.DiscoverLike, error)
 	// 批量查询用户对多个目标的点赞状态
-	FindLikesByUserIdAndTargetUuids(userId string, targetUuids []string) ([]models.DiscoverLike, error)
+	FindLikesByUserIdAndTargetUuids(ctx context.Context, userId string, targetUuids []string) ([]models.DiscoverLike, error)
 	// 分页查询用户点赞的正常帖子。
-	ListLikedPosts(userId string, page, pageSize int) ([]models.DiscoverPost, error)
+	ListLikedPosts(ctx context.Context, userId string, page, pageSize int) ([]models.DiscoverPost, error)
 	// 统计用户点赞的正常帖子数量。
-	CountLikedPosts(userId string) (int64, error)
+	CountLikedPosts(ctx context.Context, userId string) (int64, error)
 	// 增加帖子的点赞数。
-	IncrementLikeCount(postId int64) error
+	IncrementLikeCount(ctx context.Context, postId int64) error
 	// 减少帖子的点赞数。
-	DecrementLikeCount(postId int64) error
+	DecrementLikeCount(ctx context.Context, postId int64) error
 
 	// ========== 评论 ==========
 	// 保存评论。
-	CreateComment(comment *models.DiscoverComment) error
+	CreateComment(ctx context.Context, comment *models.DiscoverComment) error
 	// 按主键查询评论，不存在时返回空。
-	FindCommentById(commentId int64) (*models.DiscoverComment, error)
+	FindCommentById(ctx context.Context, commentId int64) (*models.DiscoverComment, error)
 	// 按 UUID 查询评论，不存在时返回空。
-	FindCommentByUuid(uuid string) (*models.DiscoverComment, error)
+	FindCommentByUuid(ctx context.Context, uuid string) (*models.DiscoverComment, error)
 	// 检查包含软删除记录的评论是否存在。
-	HasCommentIncludingDeleted(uuid string) (bool, error)
+	HasCommentIncludingDeleted(ctx context.Context, uuid string) (bool, error)
 	// 查询并锁定评论，须使用事务连接调用。
-	FindCommentByUuidForUpdate(uuid string) (*models.DiscoverComment, error)
+	FindCommentByUuidForUpdate(ctx context.Context, uuid string) (*models.DiscoverComment, error)
 	// 按时间及 ID 稳定分页读取全部评论。
-	FindCommentsByPostId(postId int64, page, pageSize int) ([]models.DiscoverComment, error)
+	FindCommentsByPostId(ctx context.Context, postId int64, page, pageSize int) ([]models.DiscoverComment, error)
 	// 按稳定顺序分页读取顶级评论或同一父评论的回复。
-	FindCommentThread(postId int64, parentUuid string, page, pageSize int) ([]models.DiscoverComment, bool, error)
+	FindCommentThread(ctx context.Context, postId int64, parentUuid string, page, pageSize int) ([]models.DiscoverComment, bool, error)
 	// 批量统计顶级评论的回复数量。
-	CountReplies(parentUuids []string) (map[string]int64, error)
+	CountReplies(ctx context.Context, parentUuids []string) (map[string]int64, error)
 	// 增加评论的点赞数。
-	IncrementCommentLikeCount(commentId int64) error
+	IncrementCommentLikeCount(ctx context.Context, commentId int64) error
 	// 减少评论的点赞数。
-	DecrementCommentLikeCount(commentId int64) error
+	DecrementCommentLikeCount(ctx context.Context, commentId int64) error
 
 	// ========== 收藏夹 ==========
 	// 创建收藏夹。
-	CreateFolder(folder *models.DiscoverCollectionFolder) error
+	CreateFolder(ctx context.Context, folder *models.DiscoverCollectionFolder) error
 	// 更新收藏夹名称、描述和公开状态。
-	UpdateFolder(uuid string, name, description string, isPublic int8) error
+	UpdateFolder(ctx context.Context, uuid string, name, description string, isPublic int8) error
 	// 删除指定收藏夹。
-	DeleteFolder(uuid string) error
+	DeleteFolder(ctx context.Context, uuid string) error
 	// 按 UUID 查询收藏夹，不存在时返回空。
-	FindFolderByUuid(uuid string) (*models.DiscoverCollectionFolder, error)
+	FindFolderByUuid(ctx context.Context, uuid string) (*models.DiscoverCollectionFolder, error)
 	// 查询用户的收藏夹列表。
-	ListFoldersByUserId(userId string) ([]models.DiscoverCollectionFolder, error)
+	ListFoldersByUserId(ctx context.Context, userId string) ([]models.DiscoverCollectionFolder, error)
 	// 查询用户的默认收藏夹。
-	FindDefaultFolder(userId string) (*models.DiscoverCollectionFolder, error)
+	FindDefaultFolder(ctx context.Context, userId string) (*models.DiscoverCollectionFolder, error)
 
 	// ========== 收藏记录 ==========
 	// 保存收藏记录。
-	CreateCollection(col *models.DiscoverCollection) error
+	CreateCollection(ctx context.Context, col *models.DiscoverCollection) error
 	// 删除用户在指定收藏夹中的目标收藏记录。
-	DeleteCollection(userId string, folderId int64, targetUuid string) error
+	DeleteCollection(ctx context.Context, userId string, folderId int64, targetUuid string) error
 	// 查询用户在指定收藏夹中的目标收藏记录。
-	FindCollectionInFolder(userId string, folderId int64, targetUuid string) (*models.DiscoverCollection, error)
+	FindCollectionInFolder(ctx context.Context, userId string, folderId int64, targetUuid string) (*models.DiscoverCollection, error)
 	// 查询用户对指定目标的收藏记录。
-	FindCollectionByUserAndTarget(userId, targetUuid string) (*models.DiscoverCollection, error)
+	FindCollectionByUserAndTarget(ctx context.Context, userId, targetUuid string) (*models.DiscoverCollection, error)
 	// 批量查询用户对多个目标的收藏状态
-	FindCollectionsByUserIdAndTargetUuids(userId string, targetUuids []string) ([]models.DiscoverCollection, error)
+	FindCollectionsByUserIdAndTargetUuids(ctx context.Context, userId string, targetUuids []string) ([]models.DiscoverCollection, error)
 	// 增加收藏夹的帖子数。
-	IncrementFolderPostCount(folderId int64) error
+	IncrementFolderPostCount(ctx context.Context, folderId int64) error
 	// 减少收藏夹的帖子数。
-	DecrementFolderPostCount(folderId int64) error
+	DecrementFolderPostCount(ctx context.Context, folderId int64) error
 	// 增加帖子的收藏数。
-	IncrementCollectCount(postId int64) error
+	IncrementCollectCount(ctx context.Context, postId int64) error
 	// 减少帖子的收藏数。
-	DecrementCollectCount(postId int64) error
+	DecrementCollectCount(ctx context.Context, postId int64) error
 	// 分页查询收藏夹中的正常帖子。
-	ListCollectedPostsByFolder(folderId int64, viewerId string, page, pageSize int) ([]models.DiscoverPost, error)
+	ListCollectedPostsByFolder(ctx context.Context, folderId int64, viewerId string, page, pageSize int) ([]models.DiscoverPost, error)
 	// 统计收藏夹中的正常帖子数量。
-	CountCollectedPostsByFolder(folderId int64, viewerId string) (int64, error)
+	CountCollectedPostsByFolder(ctx context.Context, folderId int64, viewerId string) (int64, error)
 }
 
 // DiscoverDAOImpl 发现页数据访问实现。
@@ -212,21 +191,21 @@ type DiscoverDAOImpl struct {
 }
 
 // NewDiscoverDAO 创建发现页数据访问实例。
-func NewDiscoverDAO(db *gorm.DB) DiscoverDAO {
-	return &DiscoverDAOImpl{db: db}
+func NewDiscoverDAO(database *gorm.DB) DiscoverDAO {
+	return &DiscoverDAOImpl{db: database}
 }
 
 // ========== 帖子 ==========
 
 // CreatePost 保存帖子。
-func (d *DiscoverDAOImpl) CreatePost(post *models.DiscoverPost) error {
-	return d.db.Create(post).Error
+func (d *DiscoverDAOImpl) CreatePost(ctx context.Context, post *models.DiscoverPost) error {
+	return d.db.WithContext(ctx).Create(post).Error
 }
 
 // FindPostByUuid 按 UUID 查询帖子，不存在时返回空。
-func (d *DiscoverDAOImpl) FindPostByUuid(uuid string) (*models.DiscoverPost, error) {
+func (d *DiscoverDAOImpl) FindPostByUuid(ctx context.Context, uuid string) (*models.DiscoverPost, error) {
 	var post models.DiscoverPost
-	result := d.db.Where("uuid = ?", uuid).First(&post)
+	result := d.db.WithContext(ctx).Where("uuid = ?", uuid).First(&post)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -234,9 +213,9 @@ func (d *DiscoverDAOImpl) FindPostByUuid(uuid string) (*models.DiscoverPost, err
 }
 
 // FindPostByUuidForUpdate 查询并锁定帖子，须使用事务连接调用。
-func (d *DiscoverDAOImpl) FindPostByUuidForUpdate(uuid string) (*models.DiscoverPost, error) {
+func (d *DiscoverDAOImpl) FindPostByUuidForUpdate(ctx context.Context, uuid string) (*models.DiscoverPost, error) {
 	var post models.DiscoverPost
-	result := d.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", uuid).First(&post)
+	result := d.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", uuid).First(&post)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -244,9 +223,9 @@ func (d *DiscoverDAOImpl) FindPostByUuidForUpdate(uuid string) (*models.Discover
 }
 
 // FindPostById 按主键查询帖子，不存在时返回空。
-func (d *DiscoverDAOImpl) FindPostById(id int64) (*models.DiscoverPost, error) {
+func (d *DiscoverDAOImpl) FindPostById(ctx context.Context, id int64) (*models.DiscoverPost, error) {
 	var post models.DiscoverPost
-	result := d.db.First(&post, id)
+	result := d.db.WithContext(ctx).First(&post, id)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -278,43 +257,43 @@ func (d *DiscoverDAOImpl) HasFollowing(ctx context.Context, userId string) (bool
 }
 
 // IncrementCommentCount 增加帖子的评论数。
-func (d *DiscoverDAOImpl) IncrementCommentCount(postId int64) error {
-	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("comment_count", gorm.Expr("comment_count + 1")).Error
+func (d *DiscoverDAOImpl) IncrementCommentCount(ctx context.Context, postId int64) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("comment_count", gorm.Expr("comment_count + 1")).Error
 }
 
 // IncrementViewCount 增加帖子的浏览数。
-func (d *DiscoverDAOImpl) IncrementViewCount(postId int64) error {
-	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("view_count", gorm.Expr("view_count + 1")).Error
+func (d *DiscoverDAOImpl) IncrementViewCount(ctx context.Context, postId int64) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("view_count", gorm.Expr("view_count + 1")).Error
 }
 
 // ListPostsByUserId 分页查询指定用户的正常帖子。
-func (d *DiscoverDAOImpl) ListPostsByUserId(userId, viewerId string, page, pageSize int) ([]models.DiscoverPost, error) {
+func (d *DiscoverDAOImpl) ListPostsByUserId(ctx context.Context, userId, viewerId string, page, pageSize int) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
-	result := WithoutHiddenAuthors(d.db, viewerId, "discover_post").Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&posts)
+	result := WithoutHiddenAuthors(d.db.WithContext(ctx), viewerId, "discover_post").Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&posts)
 	return posts, result.Error
 }
 
 // CountPostsByUserId 统计指定用户的正常帖子数量。
-func (d *DiscoverDAOImpl) CountPostsByUserId(userId, viewerId string) (int64, error) {
+func (d *DiscoverDAOImpl) CountPostsByUserId(ctx context.Context, userId, viewerId string) (int64, error) {
 	var count int64
-	result := WithoutHiddenAuthors(d.db, viewerId, "discover_post").Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Count(&count)
+	result := WithoutHiddenAuthors(d.db.WithContext(ctx), viewerId, "discover_post").Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Count(&count)
 	return count, result.Error
 }
 
 // GetUserTotalLikes 统计指定用户正常帖子的总获赞数。
-func (d *DiscoverDAOImpl) GetUserTotalLikes(userId, viewerId string) (int, error) {
+func (d *DiscoverDAOImpl) GetUserTotalLikes(ctx context.Context, userId, viewerId string) (int, error) {
 	var total int
-	result := WithoutHiddenAuthors(d.db, viewerId, "discover_post").Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Select("COALESCE(SUM(like_count), 0)").Scan(&total)
+	result := WithoutHiddenAuthors(d.db.WithContext(ctx), viewerId, "discover_post").Model(&models.DiscoverPost{}).Where("user_id = ? AND status = ? AND (visibility = 0 OR user_id = ?)", userId, 0, viewerId).Select("COALESCE(SUM(like_count), 0)").Scan(&total)
 	return total, result.Error
 }
 
 // ========== 搜索 ==========
 
 // discoverSearchAuthors 按作者当前昵称进行字面包含匹配，排除已删除作者。
-func (d *DiscoverDAOImpl) discoverSearchAuthors(keyword string) *gorm.DB {
+func (d *DiscoverDAOImpl) discoverSearchAuthors(ctx context.Context, keyword string) *gorm.DB {
 	pattern := "%" + strings.NewReplacer("=", "==", "%", "=%", "_", "=_").Replace(strings.TrimSpace(keyword)) + "%"
-	return d.db.Model(&models.UserInfo{}).Select("uuid").Where("nickname LIKE ? ESCAPE '='", pattern)
+	return d.db.WithContext(ctx).Model(&models.UserInfo{}).Select("uuid").Where("nickname LIKE ? ESCAPE '='", pattern)
 }
 
 // SearchAuthorPostIDs 读取实时昵称匹配的公开帖子，沿用当前用户主动拉黑过滤。
@@ -325,7 +304,7 @@ func (d *DiscoverDAOImpl) SearchAuthorPostIDs(ctx context.Context, keyword, view
 	}
 	query := d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("status = 0 AND visibility = 0")
 	query = WithoutHiddenAuthors(query, viewerId, "discover_post")
-	err := query.Where("user_id IN (?)", d.discoverSearchAuthors(keyword)).
+	err := query.Where("user_id IN (?)", d.discoverSearchAuthors(ctx, keyword)).
 		Order("created_at DESC, id DESC").Limit(constants.DiscoverSearchCandidateLimit+1).Pluck("uuid", &ids).Error
 	if err != nil {
 		return nil, fmt.Errorf("按作者昵称搜索帖子失败：%w", err)
@@ -334,8 +313,8 @@ func (d *DiscoverDAOImpl) SearchAuthorPostIDs(ctx context.Context, keyword, view
 }
 
 // SearchPostsPage 按内容或作者当前昵称分页搜索，权限条件作用于全部匹配分支。
-func (d *DiscoverDAOImpl) SearchPostsPage(keyword string, page, pageSize int, viewerId string) ([]models.DiscoverPost, int64, error) {
-	query := d.db.Model(&models.DiscoverPost{}).Where("status = 0 AND visibility = 0")
+func (d *DiscoverDAOImpl) SearchPostsPage(ctx context.Context, keyword string, page, pageSize int, viewerId string) ([]models.DiscoverPost, int64, error) {
+	query := d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("status = 0 AND visibility = 0")
 	query = WithoutHiddenAuthors(query, viewerId, "discover_post")
 	keyword = strings.TrimSpace(keyword)
 	if keyword != "" {
@@ -343,7 +322,7 @@ func (d *DiscoverDAOImpl) SearchPostsPage(keyword string, page, pageSize int, vi
 		if err != nil {
 			return nil, 0, fmt.Errorf("处理搜索关键词失败: %w", err)
 		}
-		query = query.Where("title LIKE ? OR content LIKE ? OR JSON_CONTAINS(tags, ?) OR user_id IN (?)", "%"+keyword+"%", "%"+keyword+"%", string(tag), d.discoverSearchAuthors(keyword))
+		query = query.Where("title LIKE ? OR content LIKE ? OR JSON_CONTAINS(tags, ?) OR user_id IN (?)", "%"+keyword+"%", "%"+keyword+"%", string(tag), d.discoverSearchAuthors(ctx, keyword))
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -359,60 +338,60 @@ func (d *DiscoverDAOImpl) SearchPostsPage(keyword string, page, pageSize int, vi
 // ========== 媒体 ==========
 
 // CreateMedia 保存帖子媒体信息。
-func (d *DiscoverDAOImpl) CreateMedia(media *models.DiscoverMedia) error {
-	return d.db.Create(media).Error
+func (d *DiscoverDAOImpl) CreateMedia(ctx context.Context, media *models.DiscoverMedia) error {
+	return d.db.WithContext(ctx).Create(media).Error
 }
 
 // FindMediaByPostId 按展示顺序查询帖子的媒体。
-func (d *DiscoverDAOImpl) FindMediaByPostId(postId int64) ([]DiscoverMediaInfo, error) {
+func (d *DiscoverDAOImpl) FindMediaByPostId(ctx context.Context, postId int64) ([]DiscoverMediaInfo, error) {
 	var mediaList []DiscoverMediaInfo
-	result := d.mediaWithAssets().Where("discover_media.post_id = ?", postId).Order("discover_media.sort_order ASC").Find(&mediaList)
+	result := d.mediaWithAssets(ctx).Where("discover_media.post_id = ?", postId).Order("discover_media.sort_order ASC").Find(&mediaList)
 	return mediaList, result.Error
 }
 
 // FindMediaByPostIds 批量查询帖子媒体并按帖子及展示顺序排序。
-func (d *DiscoverDAOImpl) FindMediaByPostIds(postIds []int64) ([]DiscoverMediaInfo, error) {
+func (d *DiscoverDAOImpl) FindMediaByPostIds(ctx context.Context, postIds []int64) ([]DiscoverMediaInfo, error) {
 	if len(postIds) == 0 {
 		return nil, nil
 	}
 	var mediaList []DiscoverMediaInfo
-	result := d.mediaWithAssets().Where("discover_media.post_id IN ?", postIds).Order("discover_media.post_id ASC, discover_media.sort_order ASC").Find(&mediaList)
+	result := d.mediaWithAssets(ctx).Where("discover_media.post_id IN ?", postIds).Order("discover_media.post_id ASC, discover_media.sort_order ASC").Find(&mediaList)
 	return mediaList, result.Error
 }
 
 // ========== 点赞 ==========
 
 // CountLikesByTargetUuid 统计指定目标的去重点赞用户数。
-func (d *DiscoverDAOImpl) CountLikesByTargetUuid(targetUuid string) (int, error) {
+func (d *DiscoverDAOImpl) CountLikesByTargetUuid(ctx context.Context, targetUuid string) (int, error) {
 	var total int64
-	err := d.db.Model(&models.DiscoverLike{}).Where("target_uuid = ?", targetUuid).Distinct("user_id").Count(&total).Error
+	err := d.db.WithContext(ctx).Model(&models.DiscoverLike{}).Where("target_uuid = ?", targetUuid).Distinct("user_id").Count(&total).Error
 	return int(total), err
 }
 
 // UpdatePostLikeCount 更新帖子的实际点赞数。
-func (d *DiscoverDAOImpl) UpdatePostLikeCount(postId int64, count int) error {
-	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", count).Error
+func (d *DiscoverDAOImpl) UpdatePostLikeCount(ctx context.Context, postId int64, count int) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", count).Error
 }
 
 // UpdateCommentLikeCount 更新评论的实际点赞数。
-func (d *DiscoverDAOImpl) UpdateCommentLikeCount(commentId int64, count int) error {
-	return d.db.Model(&models.DiscoverComment{}).Where("id = ?", commentId).UpdateColumn("like_count", count).Error
+func (d *DiscoverDAOImpl) UpdateCommentLikeCount(ctx context.Context, commentId int64, count int) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverComment{}).Where("id = ?", commentId).UpdateColumn("like_count", count).Error
 }
 
 // CreateLike 保存点赞记录。
-func (d *DiscoverDAOImpl) CreateLike(like *models.DiscoverLike) error {
-	return d.db.Create(like).Error
+func (d *DiscoverDAOImpl) CreateLike(ctx context.Context, like *models.DiscoverLike) error {
+	return d.db.WithContext(ctx).Create(like).Error
 }
 
 // DeleteLike 删除用户对指定目标的点赞记录。
-func (d *DiscoverDAOImpl) DeleteLike(userId, targetUuid string) error {
-	return d.db.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Delete(&models.DiscoverLike{}).Error
+func (d *DiscoverDAOImpl) DeleteLike(ctx context.Context, userId, targetUuid string) error {
+	return d.db.WithContext(ctx).Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Delete(&models.DiscoverLike{}).Error
 }
 
 // FindLike 查询用户对指定目标的点赞记录。
-func (d *DiscoverDAOImpl) FindLike(userId, targetUuid string) (*models.DiscoverLike, error) {
+func (d *DiscoverDAOImpl) FindLike(ctx context.Context, userId, targetUuid string) (*models.DiscoverLike, error) {
 	var like models.DiscoverLike
-	result := d.db.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Find(&like)
+	result := d.db.WithContext(ctx).Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Find(&like)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -423,25 +402,25 @@ func (d *DiscoverDAOImpl) FindLike(userId, targetUuid string) (*models.DiscoverL
 }
 
 // FindLikesByUserIdAndTargetUuids 批量查询用户对多个目标的点赞状态
-func (d *DiscoverDAOImpl) FindLikesByUserIdAndTargetUuids(userId string, targetUuids []string) ([]models.DiscoverLike, error) {
+func (d *DiscoverDAOImpl) FindLikesByUserIdAndTargetUuids(ctx context.Context, userId string, targetUuids []string) ([]models.DiscoverLike, error) {
 	if len(targetUuids) == 0 {
 		return nil, nil
 	}
 	var likes []models.DiscoverLike
-	result := d.db.Where("user_id = ? AND target_uuid IN ?", userId, targetUuids).Find(&likes)
+	result := d.db.WithContext(ctx).Where("user_id = ? AND target_uuid IN ?", userId, targetUuids).Find(&likes)
 	return likes, result.Error
 }
 
 // ListLikedPosts 分页查询用户点赞的正常帖子。
-func (d *DiscoverDAOImpl) ListLikedPosts(userId string, page, pageSize int) ([]models.DiscoverPost, error) {
+func (d *DiscoverDAOImpl) ListLikedPosts(ctx context.Context, userId string, page, pageSize int) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
 	// 子查询：获取用户点赞的帖子 UUID
-	likedUuids := d.db.Model(&models.DiscoverLike{}).
+	likedUuids := d.db.WithContext(ctx).Model(&models.DiscoverLike{}).
 		Where("user_id = ?", userId).
 		Select("target_uuid")
 	// 查询帖子
-	result := WithoutHiddenAuthors(d.db, userId, "discover_post").Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, userId, likedUuids).
+	result := WithoutHiddenAuthors(d.db.WithContext(ctx), userId, "discover_post").Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, userId, likedUuids).
 		Order("created_at DESC").
 		Offset(offset).Limit(pageSize).
 		Find(&posts)
@@ -449,39 +428,39 @@ func (d *DiscoverDAOImpl) ListLikedPosts(userId string, page, pageSize int) ([]m
 }
 
 // CountLikedPosts 统计用户点赞的正常帖子数量。
-func (d *DiscoverDAOImpl) CountLikedPosts(userId string) (int64, error) {
+func (d *DiscoverDAOImpl) CountLikedPosts(ctx context.Context, userId string) (int64, error) {
 	var count int64
 	// 子查询：获取用户点赞的帖子 UUID
-	likedUuids := d.db.Model(&models.DiscoverLike{}).
+	likedUuids := d.db.WithContext(ctx).Model(&models.DiscoverLike{}).
 		Where("user_id = ?", userId).
 		Select("target_uuid")
-	result := WithoutHiddenAuthors(d.db, userId, "discover_post").Model(&models.DiscoverPost{}).
+	result := WithoutHiddenAuthors(d.db.WithContext(ctx), userId, "discover_post").Model(&models.DiscoverPost{}).
 		Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, userId, likedUuids).
 		Count(&count)
 	return count, result.Error
 }
 
 // IncrementLikeCount 增加帖子的点赞数。
-func (d *DiscoverDAOImpl) IncrementLikeCount(postId int64) error {
-	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", gorm.Expr("like_count + 1")).Error
+func (d *DiscoverDAOImpl) IncrementLikeCount(ctx context.Context, postId int64) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", gorm.Expr("like_count + 1")).Error
 }
 
 // DecrementLikeCount 减少帖子的点赞数。
-func (d *DiscoverDAOImpl) DecrementLikeCount(postId int64) error {
-	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", gorm.Expr("like_count - 1")).Error
+func (d *DiscoverDAOImpl) DecrementLikeCount(ctx context.Context, postId int64) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("like_count", gorm.Expr("like_count - 1")).Error
 }
 
 // ========== 评论 ==========
 
 // CreateComment 保存评论。
-func (d *DiscoverDAOImpl) CreateComment(comment *models.DiscoverComment) error {
-	return d.db.Create(comment).Error
+func (d *DiscoverDAOImpl) CreateComment(ctx context.Context, comment *models.DiscoverComment) error {
+	return d.db.WithContext(ctx).Create(comment).Error
 }
 
 // FindCommentById 按主键查询评论，不存在时返回空。
-func (d *DiscoverDAOImpl) FindCommentById(commentId int64) (*models.DiscoverComment, error) {
+func (d *DiscoverDAOImpl) FindCommentById(ctx context.Context, commentId int64) (*models.DiscoverComment, error) {
 	var comment models.DiscoverComment
-	result := d.db.Where("id = ?", commentId).First(&comment)
+	result := d.db.WithContext(ctx).Where("id = ?", commentId).First(&comment)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -489,9 +468,9 @@ func (d *DiscoverDAOImpl) FindCommentById(commentId int64) (*models.DiscoverComm
 }
 
 // FindCommentByUuid 按 UUID 查询评论，不存在时返回空。
-func (d *DiscoverDAOImpl) FindCommentByUuid(uuid string) (*models.DiscoverComment, error) {
+func (d *DiscoverDAOImpl) FindCommentByUuid(ctx context.Context, uuid string) (*models.DiscoverComment, error) {
 	var comment models.DiscoverComment
-	result := d.db.Where("uuid = ?", uuid).First(&comment)
+	result := d.db.WithContext(ctx).Where("uuid = ?", uuid).First(&comment)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -499,9 +478,9 @@ func (d *DiscoverDAOImpl) FindCommentByUuid(uuid string) (*models.DiscoverCommen
 }
 
 // FindCommentByUuidForUpdate 查询并锁定评论，须使用事务连接调用。
-func (d *DiscoverDAOImpl) FindCommentByUuidForUpdate(uuid string) (*models.DiscoverComment, error) {
+func (d *DiscoverDAOImpl) FindCommentByUuidForUpdate(ctx context.Context, uuid string) (*models.DiscoverComment, error) {
 	var comment models.DiscoverComment
-	result := d.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", uuid).First(&comment)
+	result := d.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", uuid).First(&comment)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -509,16 +488,16 @@ func (d *DiscoverDAOImpl) FindCommentByUuidForUpdate(uuid string) (*models.Disco
 }
 
 // FindCommentsByPostId 按时间及 ID 稳定分页读取全部评论。
-func (d *DiscoverDAOImpl) FindCommentsByPostId(postId int64, page, pageSize int) ([]models.DiscoverComment, error) {
+func (d *DiscoverDAOImpl) FindCommentsByPostId(ctx context.Context, postId int64, page, pageSize int) ([]models.DiscoverComment, error) {
 	var comments []models.DiscoverComment
 	offset := (page - 1) * pageSize
-	result := d.db.Where("post_id = ?", postId).Order("created_at ASC, id ASC").Offset(offset).Limit(pageSize).Find(&comments)
+	result := d.db.WithContext(ctx).Where("post_id = ?", postId).Order("created_at ASC, id ASC").Offset(offset).Limit(pageSize).Find(&comments)
 	return comments, result.Error
 }
 
 // FindCommentThread 按稳定顺序分页读取顶级评论或同一父评论的回复。
-func (d *DiscoverDAOImpl) FindCommentThread(postId int64, parentUuid string, page, pageSize int) ([]models.DiscoverComment, bool, error) {
-	query := d.db.Where("post_id = ?", postId)
+func (d *DiscoverDAOImpl) FindCommentThread(ctx context.Context, postId int64, parentUuid string, page, pageSize int) ([]models.DiscoverComment, bool, error) {
+	query := d.db.WithContext(ctx).Where("post_id = ?", postId)
 	if parentUuid == "" {
 		query = query.Where("parent_id = '' OR parent_id IS NULL")
 	} else {
@@ -537,7 +516,7 @@ func (d *DiscoverDAOImpl) FindCommentThread(postId int64, parentUuid string, pag
 }
 
 // CountReplies 批量统计顶级评论的回复数量。
-func (d *DiscoverDAOImpl) CountReplies(parentUuids []string) (map[string]int64, error) {
+func (d *DiscoverDAOImpl) CountReplies(ctx context.Context, parentUuids []string) (map[string]int64, error) {
 	counts := make(map[string]int64)
 	if len(parentUuids) == 0 {
 		return counts, nil
@@ -546,7 +525,7 @@ func (d *DiscoverDAOImpl) CountReplies(parentUuids []string) (map[string]int64, 
 		ParentId string
 		Total    int64
 	}
-	err := d.db.Model(&models.DiscoverComment{}).Select("parent_id, COUNT(*) AS total").Where("parent_id IN ?", parentUuids).Group("parent_id").Scan(&rows).Error
+	err := d.db.WithContext(ctx).Model(&models.DiscoverComment{}).Select("parent_id, COUNT(*) AS total").Where("parent_id IN ?", parentUuids).Group("parent_id").Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("统计回复数量失败: %w", err)
 	}
@@ -557,25 +536,25 @@ func (d *DiscoverDAOImpl) CountReplies(parentUuids []string) (map[string]int64, 
 }
 
 // IncrementCommentLikeCount 增加评论的点赞数。
-func (d *DiscoverDAOImpl) IncrementCommentLikeCount(commentId int64) error {
-	return d.db.Model(&models.DiscoverComment{}).Where("id = ?", commentId).UpdateColumn("like_count", gorm.Expr("like_count + 1")).Error
+func (d *DiscoverDAOImpl) IncrementCommentLikeCount(ctx context.Context, commentId int64) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverComment{}).Where("id = ?", commentId).UpdateColumn("like_count", gorm.Expr("like_count + 1")).Error
 }
 
 // DecrementCommentLikeCount 减少评论的点赞数。
-func (d *DiscoverDAOImpl) DecrementCommentLikeCount(commentId int64) error {
-	return d.db.Model(&models.DiscoverComment{}).Where("id = ?", commentId).UpdateColumn("like_count", gorm.Expr("like_count - 1")).Error
+func (d *DiscoverDAOImpl) DecrementCommentLikeCount(ctx context.Context, commentId int64) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverComment{}).Where("id = ?", commentId).UpdateColumn("like_count", gorm.Expr("like_count - 1")).Error
 }
 
 // ========== 收藏夹 ==========
 
 // CreateFolder 创建收藏夹。
-func (d *DiscoverDAOImpl) CreateFolder(folder *models.DiscoverCollectionFolder) error {
-	return d.db.Create(folder).Error
+func (d *DiscoverDAOImpl) CreateFolder(ctx context.Context, folder *models.DiscoverCollectionFolder) error {
+	return d.db.WithContext(ctx).Create(folder).Error
 }
 
 // UpdateFolder 更新收藏夹名称、描述和公开状态。
-func (d *DiscoverDAOImpl) UpdateFolder(uuid string, name, description string, isPublic int8) error {
-	return d.db.Model(&models.DiscoverCollectionFolder{}).
+func (d *DiscoverDAOImpl) UpdateFolder(ctx context.Context, uuid string, name, description string, isPublic int8) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverCollectionFolder{}).
 		Where("uuid = ?", uuid).
 		Updates(map[string]interface{}{
 			"name":        name,
@@ -585,14 +564,14 @@ func (d *DiscoverDAOImpl) UpdateFolder(uuid string, name, description string, is
 }
 
 // DeleteFolder 删除指定收藏夹。
-func (d *DiscoverDAOImpl) DeleteFolder(uuid string) error {
-	return d.db.Where("uuid = ?", uuid).Delete(&models.DiscoverCollectionFolder{}).Error
+func (d *DiscoverDAOImpl) DeleteFolder(ctx context.Context, uuid string) error {
+	return d.db.WithContext(ctx).Where("uuid = ?", uuid).Delete(&models.DiscoverCollectionFolder{}).Error
 }
 
 // FindFolderByUuid 按 UUID 查询收藏夹，不存在时返回空。
-func (d *DiscoverDAOImpl) FindFolderByUuid(uuid string) (*models.DiscoverCollectionFolder, error) {
+func (d *DiscoverDAOImpl) FindFolderByUuid(ctx context.Context, uuid string) (*models.DiscoverCollectionFolder, error) {
 	var folder models.DiscoverCollectionFolder
-	result := d.db.Where("uuid = ?", uuid).First(&folder)
+	result := d.db.WithContext(ctx).Where("uuid = ?", uuid).First(&folder)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -600,16 +579,16 @@ func (d *DiscoverDAOImpl) FindFolderByUuid(uuid string) (*models.DiscoverCollect
 }
 
 // ListFoldersByUserId 查询用户的收藏夹列表。
-func (d *DiscoverDAOImpl) ListFoldersByUserId(userId string) ([]models.DiscoverCollectionFolder, error) {
+func (d *DiscoverDAOImpl) ListFoldersByUserId(ctx context.Context, userId string) ([]models.DiscoverCollectionFolder, error) {
 	var folders []models.DiscoverCollectionFolder
-	result := d.db.Where("user_id = ?", userId).Order("created_at DESC").Find(&folders)
+	result := d.db.WithContext(ctx).Where("user_id = ?", userId).Order("created_at DESC").Find(&folders)
 	return folders, result.Error
 }
 
 // FindDefaultFolder 查询用户的默认收藏夹。
-func (d *DiscoverDAOImpl) FindDefaultFolder(userId string) (*models.DiscoverCollectionFolder, error) {
+func (d *DiscoverDAOImpl) FindDefaultFolder(ctx context.Context, userId string) (*models.DiscoverCollectionFolder, error) {
 	var folder models.DiscoverCollectionFolder
-	result := d.db.Where("user_id = ? AND name = ?", userId, "默认收藏夹").First(&folder)
+	result := d.db.WithContext(ctx).Where("user_id = ? AND name = ?", userId, "默认收藏夹").First(&folder)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -619,20 +598,20 @@ func (d *DiscoverDAOImpl) FindDefaultFolder(userId string) (*models.DiscoverColl
 // ========== 收藏记录 ==========
 
 // CreateCollection 保存收藏记录。
-func (d *DiscoverDAOImpl) CreateCollection(col *models.DiscoverCollection) error {
-	return d.db.Create(col).Error
+func (d *DiscoverDAOImpl) CreateCollection(ctx context.Context, col *models.DiscoverCollection) error {
+	return d.db.WithContext(ctx).Create(col).Error
 }
 
 // DeleteCollection 删除用户在指定收藏夹中的目标收藏记录。
-func (d *DiscoverDAOImpl) DeleteCollection(userId string, folderId int64, targetUuid string) error {
-	return d.db.Where("user_id = ? AND folder_id = ? AND target_uuid = ?", userId, folderId, targetUuid).
+func (d *DiscoverDAOImpl) DeleteCollection(ctx context.Context, userId string, folderId int64, targetUuid string) error {
+	return d.db.WithContext(ctx).Where("user_id = ? AND folder_id = ? AND target_uuid = ?", userId, folderId, targetUuid).
 		Delete(&models.DiscoverCollection{}).Error
 }
 
 // FindCollectionInFolder 查询用户在指定收藏夹中的目标收藏记录。
-func (d *DiscoverDAOImpl) FindCollectionInFolder(userId string, folderId int64, targetUuid string) (*models.DiscoverCollection, error) {
+func (d *DiscoverDAOImpl) FindCollectionInFolder(ctx context.Context, userId string, folderId int64, targetUuid string) (*models.DiscoverCollection, error) {
 	var col models.DiscoverCollection
-	result := d.db.Where("user_id = ? AND folder_id = ? AND target_uuid = ?", userId, folderId, targetUuid).Find(&col)
+	result := d.db.WithContext(ctx).Where("user_id = ? AND folder_id = ? AND target_uuid = ?", userId, folderId, targetUuid).Find(&col)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -643,9 +622,9 @@ func (d *DiscoverDAOImpl) FindCollectionInFolder(userId string, folderId int64, 
 }
 
 // FindCollectionByUserAndTarget 查询用户对指定目标的收藏记录。
-func (d *DiscoverDAOImpl) FindCollectionByUserAndTarget(userId, targetUuid string) (*models.DiscoverCollection, error) {
+func (d *DiscoverDAOImpl) FindCollectionByUserAndTarget(ctx context.Context, userId, targetUuid string) (*models.DiscoverCollection, error) {
 	var col models.DiscoverCollection
-	result := d.db.Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Find(&col)
+	result := d.db.WithContext(ctx).Where("user_id = ? AND target_uuid = ?", userId, targetUuid).Find(&col)
 	if result.RowsAffected == 0 {
 		return nil, nil
 	}
@@ -653,44 +632,44 @@ func (d *DiscoverDAOImpl) FindCollectionByUserAndTarget(userId, targetUuid strin
 }
 
 // FindCollectionsByUserIdAndTargetUuids 批量查询用户对多个目标的收藏状态
-func (d *DiscoverDAOImpl) FindCollectionsByUserIdAndTargetUuids(userId string, targetUuids []string) ([]models.DiscoverCollection, error) {
+func (d *DiscoverDAOImpl) FindCollectionsByUserIdAndTargetUuids(ctx context.Context, userId string, targetUuids []string) ([]models.DiscoverCollection, error) {
 	if len(targetUuids) == 0 {
 		return nil, nil
 	}
 	var collections []models.DiscoverCollection
-	result := d.db.Where("user_id = ? AND target_uuid IN ?", userId, targetUuids).Find(&collections)
+	result := d.db.WithContext(ctx).Where("user_id = ? AND target_uuid IN ?", userId, targetUuids).Find(&collections)
 	return collections, result.Error
 }
 
 // IncrementFolderPostCount 增加收藏夹的帖子数。
-func (d *DiscoverDAOImpl) IncrementFolderPostCount(folderId int64) error {
-	return d.db.Model(&models.DiscoverCollectionFolder{}).Where("id = ?", folderId).UpdateColumn("post_count", gorm.Expr("post_count + 1")).Error
+func (d *DiscoverDAOImpl) IncrementFolderPostCount(ctx context.Context, folderId int64) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverCollectionFolder{}).Where("id = ?", folderId).UpdateColumn("post_count", gorm.Expr("post_count + 1")).Error
 }
 
 // DecrementFolderPostCount 减少收藏夹的帖子数。
-func (d *DiscoverDAOImpl) DecrementFolderPostCount(folderId int64) error {
-	return d.db.Model(&models.DiscoverCollectionFolder{}).Where("id = ?", folderId).UpdateColumn("post_count", gorm.Expr("GREATEST(post_count - 1, 0)")).Error
+func (d *DiscoverDAOImpl) DecrementFolderPostCount(ctx context.Context, folderId int64) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverCollectionFolder{}).Where("id = ?", folderId).UpdateColumn("post_count", gorm.Expr("GREATEST(post_count - 1, 0)")).Error
 }
 
 // IncrementCollectCount 增加帖子的收藏数。
-func (d *DiscoverDAOImpl) IncrementCollectCount(postId int64) error {
-	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("collect_count", gorm.Expr("collect_count + 1")).Error
+func (d *DiscoverDAOImpl) IncrementCollectCount(ctx context.Context, postId int64) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("collect_count", gorm.Expr("collect_count + 1")).Error
 }
 
 // DecrementCollectCount 减少帖子的收藏数。
-func (d *DiscoverDAOImpl) DecrementCollectCount(postId int64) error {
-	return d.db.Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("collect_count", gorm.Expr("collect_count - 1")).Error
+func (d *DiscoverDAOImpl) DecrementCollectCount(ctx context.Context, postId int64) error {
+	return d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("collect_count", gorm.Expr("collect_count - 1")).Error
 }
 
 // ListCollectedPostsByFolder 分页查询收藏夹中的正常帖子。
-func (d *DiscoverDAOImpl) ListCollectedPostsByFolder(folderId int64, viewerId string, page, pageSize int) ([]models.DiscoverPost, error) {
+func (d *DiscoverDAOImpl) ListCollectedPostsByFolder(ctx context.Context, folderId int64, viewerId string, page, pageSize int) ([]models.DiscoverPost, error) {
 	var posts []models.DiscoverPost
 	offset := (page - 1) * pageSize
 	// 子查询：获取该收藏夹中的帖子 UUID
-	collectedUuids := d.db.Model(&models.DiscoverCollection{}).
+	collectedUuids := d.db.WithContext(ctx).Model(&models.DiscoverCollection{}).
 		Where("folder_id = ?", folderId).
 		Select("target_uuid")
-	result := WithoutHiddenAuthors(d.db, viewerId, "discover_post").Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, viewerId, collectedUuids).
+	result := WithoutHiddenAuthors(d.db.WithContext(ctx), viewerId, "discover_post").Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, viewerId, collectedUuids).
 		Order("created_at DESC").
 		Offset(offset).Limit(pageSize).
 		Find(&posts)
@@ -698,12 +677,12 @@ func (d *DiscoverDAOImpl) ListCollectedPostsByFolder(folderId int64, viewerId st
 }
 
 // CountCollectedPostsByFolder 统计收藏夹中的正常帖子数量。
-func (d *DiscoverDAOImpl) CountCollectedPostsByFolder(folderId int64, viewerId string) (int64, error) {
+func (d *DiscoverDAOImpl) CountCollectedPostsByFolder(ctx context.Context, folderId int64, viewerId string) (int64, error) {
 	var count int64
-	collectedUuids := d.db.Model(&models.DiscoverCollection{}).
+	collectedUuids := d.db.WithContext(ctx).Model(&models.DiscoverCollection{}).
 		Where("folder_id = ?", folderId).
 		Select("target_uuid")
-	result := WithoutHiddenAuthors(d.db, viewerId, "discover_post").Model(&models.DiscoverPost{}).
+	result := WithoutHiddenAuthors(d.db.WithContext(ctx), viewerId, "discover_post").Model(&models.DiscoverPost{}).
 		Where("status = ? AND (visibility = 0 OR user_id = ?) AND uuid IN (?)", 0, viewerId, collectedUuids).
 		Count(&count)
 	return count, result.Error
@@ -712,26 +691,30 @@ func (d *DiscoverDAOImpl) CountCollectedPostsByFolder(folderId int64, viewerId s
 // ========== 作品管理与发布幂等 ==========
 
 // SavePost 更新作品内容与编辑版本。
-func (d *DiscoverDAOImpl) SavePost(post *models.DiscoverPost) error { return d.db.Save(post).Error }
+func (d *DiscoverDAOImpl) SavePost(ctx context.Context, post *models.DiscoverPost) error {
+	return d.db.WithContext(ctx).Save(post).Error
+}
 
 // DeletePost 软删除指定作品，保留业务记录供审计和幂等重试识别。
-func (d *DiscoverDAOImpl) DeletePost(post *models.DiscoverPost) error { return d.db.Delete(post).Error }
+func (d *DiscoverDAOImpl) DeletePost(ctx context.Context, post *models.DiscoverPost) error {
+	return d.db.WithContext(ctx).Delete(post).Error
+}
 
 // DeletePostMedia 清理编辑前的媒体记录。
-func (d *DiscoverDAOImpl) DeletePostMedia(postId int64) error {
-	return d.db.Where("post_id = ?", postId).Delete(&models.DiscoverMedia{}).Error
+func (d *DiscoverDAOImpl) DeletePostMedia(ctx context.Context, postId int64) error {
+	return d.db.WithContext(ctx).Where("post_id = ?", postId).Delete(&models.DiscoverMedia{}).Error
 }
 
 // ClaimPublishPost 依赖唯一键占用发布记录，冲突时不覆盖原帖子。
-func (d *DiscoverDAOImpl) ClaimPublishPost(post *models.DiscoverPost) (bool, error) {
-	result := d.db.Clauses(clause.OnConflict{DoNothing: true}).Create(post)
+func (d *DiscoverDAOImpl) ClaimPublishPost(ctx context.Context, post *models.DiscoverPost) (bool, error) {
+	result := d.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(post)
 	return result.RowsAffected == 1, result.Error
 }
 
 // FindPostByPublishKeyForUpdate 查询并锁定发布对应帖子，软删除记录也用于防重。
-func (d *DiscoverDAOImpl) FindPostByPublishKeyForUpdate(userId, requestKey string) (*models.DiscoverPost, error) {
+func (d *DiscoverDAOImpl) FindPostByPublishKeyForUpdate(ctx context.Context, userId, requestKey string) (*models.DiscoverPost, error) {
 	var post models.DiscoverPost
-	err := d.db.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ? AND publish_request_key = ?", userId, requestKey).First(&post).Error
+	err := d.db.WithContext(ctx).Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ? AND publish_request_key = ?", userId, requestKey).First(&post).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -739,13 +722,13 @@ func (d *DiscoverDAOImpl) FindPostByPublishKeyForUpdate(userId, requestKey strin
 }
 
 // mediaWithAssets 从资源表读取媒体原尺寸，帖子封面尺寸由帖子字段提供。
-func (d *DiscoverDAOImpl) mediaWithAssets() *gorm.DB {
-	return d.db.Model(&models.DiscoverMedia{}).Select("discover_media.*, COALESCE(a.width, 0) AS width, COALESCE(a.height, 0) AS height").Joins("LEFT JOIN file_asset a ON a.id = discover_media.asset_id")
+func (d *DiscoverDAOImpl) mediaWithAssets(ctx context.Context) *gorm.DB {
+	return d.db.WithContext(ctx).Model(&models.DiscoverMedia{}).Select("discover_media.*, COALESCE(a.width, 0) AS width, COALESCE(a.height, 0) AS height").Joins("LEFT JOIN file_asset a ON a.id = discover_media.asset_id")
 }
 
 // ListOwnWorks 按作者、作品状态及搜索条件分页查询，软删除记录由GORM排除。
-func (d *DiscoverDAOImpl) ListOwnWorks(userId, keyword string, status, visibility *int8, page, pageSize int) ([]models.DiscoverPost, int64, error) {
-	query := d.db.Model(&models.DiscoverPost{}).Where("user_id = ?", userId)
+func (d *DiscoverDAOImpl) ListOwnWorks(ctx context.Context, userId, keyword string, status, visibility *int8, page, pageSize int) ([]models.DiscoverPost, int64, error) {
+	query := d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("user_id = ?", userId)
 	state := int8(0)
 	if status != nil {
 		state = *status
@@ -767,8 +750,8 @@ func (d *DiscoverDAOImpl) ListOwnWorks(userId, keyword string, status, visibilit
 }
 
 // CountOwnWorksByStatus 按作者、标题和公开范围统计所有状态，补齐无记录状态的零值。
-func (d *DiscoverDAOImpl) CountOwnWorksByStatus(userId, keyword string, visibility *int8) (map[int8]int64, error) {
-	query := d.db.Model(&models.DiscoverPost{}).Where("user_id = ? AND status IN (0,1,2,3)", userId)
+func (d *DiscoverDAOImpl) CountOwnWorksByStatus(ctx context.Context, userId, keyword string, visibility *int8) (map[int8]int64, error) {
+	query := d.db.WithContext(ctx).Model(&models.DiscoverPost{}).Where("user_id = ? AND status IN (0,1,2,3)", userId)
 	if keyword != "" {
 		query = query.Where("title LIKE ?", "%"+keyword+"%")
 	}
@@ -802,9 +785,9 @@ func (d *DiscoverDAOImpl) FindPublicPostsByUuids(ctx context.Context, uuids []st
 }
 
 // FindCollectionPostForUpdate 锁定收藏原帖子，软删除目标仍允许减少收藏计数。
-func (d *DiscoverDAOImpl) FindCollectionPostForUpdate(uuid string) (*models.DiscoverPost, error) {
+func (d *DiscoverDAOImpl) FindCollectionPostForUpdate(ctx context.Context, uuid string) (*models.DiscoverPost, error) {
 	var post models.DiscoverPost
-	err := d.db.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", uuid).First(&post).Error
+	err := d.db.WithContext(ctx).Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", uuid).First(&post).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -812,9 +795,9 @@ func (d *DiscoverDAOImpl) FindCollectionPostForUpdate(uuid string) (*models.Disc
 }
 
 // FindFolderForUpdate 锁定未删除收藏夹，供服务层校验所有者并处理幂等。
-func (d *DiscoverDAOImpl) FindFolderForUpdate(uuid string) (*models.DiscoverCollectionFolder, error) {
+func (d *DiscoverDAOImpl) FindFolderForUpdate(ctx context.Context, uuid string) (*models.DiscoverCollectionFolder, error) {
 	var folder models.DiscoverCollectionFolder
-	err := d.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", uuid).First(&folder).Error
+	err := d.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", uuid).First(&folder).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -822,8 +805,8 @@ func (d *DiscoverDAOImpl) FindFolderForUpdate(uuid string) (*models.DiscoverColl
 }
 
 // DecrementCollectionTargetCount 更新取消收藏后的目标计数，原帖失效不影响移除收藏。
-func (d *DiscoverDAOImpl) DecrementCollectionTargetCount(postId int64) error {
-	return d.db.Unscoped().Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("collect_count", gorm.Expr("GREATEST(collect_count - 1, 0)")).Error
+func (d *DiscoverDAOImpl) DecrementCollectionTargetCount(ctx context.Context, postId int64) error {
+	return d.db.WithContext(ctx).Unscoped().Model(&models.DiscoverPost{}).Where("id = ?", postId).UpdateColumn("collect_count", gorm.Expr("GREATEST(collect_count - 1, 0)")).Error
 }
 
 // CollectionPostRow 收藏记录关联帖子与查看者权限的查询结果，不对应表字段。
@@ -835,13 +818,13 @@ type CollectionPostRow struct {
 }
 
 // ListCollectionEntries 从收藏记录出发关联帖子，保留下架、软删除及已不存在的目标。
-func (d *DiscoverDAOImpl) ListCollectionEntries(folderId int64, viewerId string, page, pageSize int, offsetOverride ...int) ([]CollectionPostRow, error) {
+func (d *DiscoverDAOImpl) ListCollectionEntries(ctx context.Context, folderId int64, viewerId string, page, pageSize int, offsetOverride ...int) ([]CollectionPostRow, error) {
 	rows := make([]CollectionPostRow, 0)
 	offset := (page - 1) * pageSize
 	if len(offsetOverride) > 0 && offsetOverride[0] >= 0 {
 		offset = offsetOverride[0]
 	}
-	err := d.db.Table("discover_collection AS c").
+	err := d.db.WithContext(ctx).Table("discover_collection AS c").
 		Select("p.*, c.target_uuid AS collection_uuid, c.created_at AS collected_at, EXISTS(SELECT 1 FROM user_block b WHERE b.user_id = ? AND b.blocked_user_id = p.user_id COLLATE utf8mb4_unicode_ci) AS is_author_blocked", viewerId).
 		Joins("LEFT JOIN discover_post AS p ON p.uuid = c.target_uuid").Where("c.folder_id = ?", folderId).
 		Order("COALESCE(p.created_at, c.created_at) DESC, c.id DESC").Offset(offset).Limit(pageSize).Scan(&rows).Error
@@ -849,9 +832,9 @@ func (d *DiscoverDAOImpl) ListCollectionEntries(folderId int64, viewerId string,
 }
 
 // CountCollectionEntries 统计收藏夹中的原收藏记录，与占位分页使用同一范围。
-func (d *DiscoverDAOImpl) CountCollectionEntries(folderId int64) (int64, error) {
+func (d *DiscoverDAOImpl) CountCollectionEntries(ctx context.Context, folderId int64) (int64, error) {
 	var count int64
-	err := d.db.Model(&models.DiscoverCollection{}).Where("folder_id = ?", folderId).Count(&count).Error
+	err := d.db.WithContext(ctx).Model(&models.DiscoverCollection{}).Where("folder_id = ?", folderId).Count(&count).Error
 	return count, err
 }
 
@@ -870,58 +853,58 @@ type CreatorDailyRevenue struct {
 }
 
 // SaveCreatorAnalyticsEvent 幂等保存事件，重复请求返回原记录供Service核对业务目标。
-func (d *DiscoverDAOImpl) SaveCreatorAnalyticsEvent(event *models.CreatorAnalyticsEvent) (*models.CreatorAnalyticsEvent, error) {
-	if err := d.db.Clauses(clause.OnConflict{DoNothing: true}).Create(event).Error; err != nil {
+func (d *DiscoverDAOImpl) SaveCreatorAnalyticsEvent(ctx context.Context, event *models.CreatorAnalyticsEvent) (*models.CreatorAnalyticsEvent, error) {
+	if err := d.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(event).Error; err != nil {
 		return nil, err
 	}
 	var saved models.CreatorAnalyticsEvent
-	err := d.db.Where("actor_id = ? AND request_key = ?", event.ActorId, event.RequestKey).Take(&saved).Error
+	err := d.db.WithContext(ctx).Where("actor_id = ? AND request_key = ?", event.ActorId, event.RequestKey).Take(&saved).Error
 	return &saved, err
 }
 
 // CreatorAnalyticsTrackingStart 读取迁移时固定的事件采集启用时间。
-func (d *DiscoverDAOImpl) CreatorAnalyticsTrackingStart() (time.Time, error) {
+func (d *DiscoverDAOImpl) CreatorAnalyticsTrackingStart(ctx context.Context) (time.Time, error) {
 	var event models.CreatorAnalyticsEvent
-	err := d.db.Where("kind = ? AND actor_id = ? AND request_key = ?", constants.CreatorAnalyticsStarted, "", "tracking-start").Take(&event).Error
+	err := d.db.WithContext(ctx).Where("kind = ? AND actor_id = ? AND request_key = ?", constants.CreatorAnalyticsStarted, "", "tracking-start").Take(&event).Error
 	return event.CreatedAt, err
 }
 
 // GetCreatorAnalyticsMetrics 查询本人作品在半开日期区间内的有效互动及粉丝净增。
-func (d *DiscoverDAOImpl) GetCreatorAnalyticsMetrics(creator, environment string, start, end time.Time) (userresp.CreatorAnalyticsMetrics, error) {
+func (d *DiscoverDAOImpl) GetCreatorAnalyticsMetrics(ctx context.Context, creator, environment string, start, end time.Time) (userresp.CreatorAnalyticsMetrics, error) {
 	var result userresp.CreatorAnalyticsMetrics
 	queries := []struct {
 		query  *gorm.DB
 		target *int64
 	}{
-		{d.db.Table("discover_click AS a").Joins("JOIN discover_post AS p ON p.uuid = a.post_uuid").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.click_day >= ? AND a.click_day < ?", creator, start.Format("2006-01-02"), end.Format("2006-01-02")), &result.Clicks},
-		{d.db.Table("discover_like AS a").Joins("JOIN discover_post AS p ON p.uuid = a.target_uuid").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.created_at >= ? AND a.created_at < ?", creator, start, end), &result.Likes},
-		{d.db.Table("discover_collection AS a").Joins("JOIN discover_post AS p ON p.uuid = a.target_uuid").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.created_at >= ? AND a.created_at < ?", creator, start, end), &result.Collections},
-		{d.db.Table("discover_comment AS a").Joins("JOIN discover_post AS p ON p.id = a.post_id").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.deleted_at IS NULL AND a.created_at >= ? AND a.created_at < ?", creator, start, end), &result.Comments},
-		{d.db.Model(&models.SupportOrder{}).Where("creator_id = ? AND environment = ? AND status = ? AND refund_status <> ? AND paid_at >= ? AND paid_at < ?", creator, environment, constants.SupportOrderPaid, constants.SupportRefundSucceeded, start, end), &result.Supports},
+		{d.db.WithContext(ctx).Table("discover_click AS a").Joins("JOIN discover_post AS p ON p.uuid = a.post_uuid").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.click_day >= ? AND a.click_day < ?", creator, start.Format("2006-01-02"), end.Format("2006-01-02")), &result.Clicks},
+		{d.db.WithContext(ctx).Table("discover_like AS a").Joins("JOIN discover_post AS p ON p.uuid = a.target_uuid").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.created_at >= ? AND a.created_at < ?", creator, start, end), &result.Likes},
+		{d.db.WithContext(ctx).Table("discover_collection AS a").Joins("JOIN discover_post AS p ON p.uuid = a.target_uuid").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.created_at >= ? AND a.created_at < ?", creator, start, end), &result.Collections},
+		{d.db.WithContext(ctx).Table("discover_comment AS a").Joins("JOIN discover_post AS p ON p.id = a.post_id").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.deleted_at IS NULL AND a.created_at >= ? AND a.created_at < ?", creator, start, end), &result.Comments},
+		{d.db.WithContext(ctx).Model(&models.SupportOrder{}).Where("creator_id = ? AND environment = ? AND status = ? AND refund_status <> ? AND paid_at >= ? AND paid_at < ?", creator, environment, constants.SupportOrderPaid, constants.SupportRefundSucceeded, start, end), &result.Supports},
 	}
 	for _, item := range queries {
 		if err := item.query.Count(item.target).Error; err != nil {
 			return result, err
 		}
 	}
-	if err := d.db.Model(&models.CreatorAnalyticsEvent{}).Where("creator_id = ? AND kind = ? AND created_at >= ? AND created_at < ?", creator, constants.CreatorAnalyticsFollower, start, end).Select("COALESCE(SUM(delta), 0)").Scan(&result.NetFollowers).Error; err != nil {
+	if err := d.db.WithContext(ctx).Model(&models.CreatorAnalyticsEvent{}).Where("creator_id = ? AND kind = ? AND created_at >= ? AND created_at < ?", creator, constants.CreatorAnalyticsFollower, start, end).Select("COALESCE(SUM(delta), 0)").Scan(&result.NetFollowers).Error; err != nil {
 		return result, err
 	}
-	err := d.db.Table("creator_analytics_event AS a").Joins("JOIN discover_post AS p ON p.uuid = a.target_uuid").Where("a.creator_id = ? AND a.kind = ? AND p.deleted_at IS NULL AND a.created_at >= ? AND a.created_at < ?", creator, constants.CreatorAnalyticsShare, start, end).Count(&result.Shares).Error
+	err := d.db.WithContext(ctx).Table("creator_analytics_event AS a").Joins("JOIN discover_post AS p ON p.uuid = a.target_uuid").Where("a.creator_id = ? AND a.kind = ? AND p.deleted_at IS NULL AND a.created_at >= ? AND a.created_at < ?", creator, constants.CreatorAnalyticsShare, start, end).Count(&result.Shares).Error
 	return result, err
 }
 
 // ListCreatorClickTrend 按北京时间去重日期汇总本人未删除作品的点击量。
-func (d *DiscoverDAOImpl) ListCreatorClickTrend(creator string, start, end time.Time) ([]CreatorDailyCount, error) {
+func (d *DiscoverDAOImpl) ListCreatorClickTrend(ctx context.Context, creator string, start, end time.Time) ([]CreatorDailyCount, error) {
 	var rows []CreatorDailyCount
-	err := d.db.Table("discover_click AS a").Joins("JOIN discover_post AS p ON p.uuid = a.post_uuid").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.click_day >= ? AND a.click_day < ?", creator, start.Format("2006-01-02"), end.Format("2006-01-02")).Select("DATE_FORMAT(a.click_day, '%Y-%m-%d') AS date, COUNT(*) AS count").Group("a.click_day").Order("a.click_day").Scan(&rows).Error
+	err := d.db.WithContext(ctx).Table("discover_click AS a").Joins("JOIN discover_post AS p ON p.uuid = a.post_uuid").Where("p.user_id = ? AND p.deleted_at IS NULL AND a.click_day >= ? AND a.click_day < ?", creator, start.Format("2006-01-02"), end.Format("2006-01-02")).Select("DATE_FORMAT(a.click_day, '%Y-%m-%d') AS date, COUNT(*) AS count").Group("a.click_day").Order("a.click_day").Scan(&rows).Error
 	return rows, err
 }
 
 // ListCreatorRevenueTrend 按流水日期汇总入账份额减退款冲销，不将提现或冻结算作收益。
-func (d *DiscoverDAOImpl) ListCreatorRevenueTrend(creator, environment string, start, end time.Time) ([]CreatorDailyRevenue, error) {
+func (d *DiscoverDAOImpl) ListCreatorRevenueTrend(ctx context.Context, creator, environment string, start, end time.Time) ([]CreatorDailyRevenue, error) {
 	var rows []CreatorDailyRevenue
-	err := d.db.Model(&models.SupportLedger{}).Where("creator_id = ? AND environment = ? AND kind IN ? AND created_at >= ? AND created_at < ?", creator, environment, []string{constants.SupportLedgerIncome, constants.SupportLedgerRefund}, start, end).Select("DATE_FORMAT(created_at, '%Y-%m-%d') AS date, SUM(CASE WHEN kind = ? THEN amount ELSE -amount END) AS amount", constants.SupportLedgerIncome).Group("DATE_FORMAT(created_at, '%Y-%m-%d')").Order("date").Scan(&rows).Error
+	err := d.db.WithContext(ctx).Model(&models.SupportLedger{}).Where("creator_id = ? AND environment = ? AND kind IN ? AND created_at >= ? AND created_at < ?", creator, environment, []string{constants.SupportLedgerIncome, constants.SupportLedgerRefund}, start, end).Select("DATE_FORMAT(created_at, '%Y-%m-%d') AS date, SUM(CASE WHEN kind = ? THEN amount ELSE -amount END) AS amount", constants.SupportLedgerIncome).Group("DATE_FORMAT(created_at, '%Y-%m-%d')").Order("date").Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("查询收益趋势失败: %w", err)
 	}
@@ -929,8 +912,8 @@ func (d *DiscoverDAOImpl) ListCreatorRevenueTrend(creator, environment string, s
 }
 
 // HasCommentIncludingDeleted 检查稳定评论ID，防止重放任务恢复已删除的AI回复。
-func (d *DiscoverDAOImpl) HasCommentIncludingDeleted(uuid string) (bool, error) {
+func (d *DiscoverDAOImpl) HasCommentIncludingDeleted(ctx context.Context, uuid string) (bool, error) {
 	var count int64
-	err := d.db.Unscoped().Model(&models.DiscoverComment{}).Where("uuid = ?", uuid).Count(&count).Error
+	err := d.db.WithContext(ctx).Unscoped().Model(&models.DiscoverComment{}).Where("uuid = ?", uuid).Count(&count).Error
 	return count > 0, err
 }

@@ -101,7 +101,7 @@ func (s *KnowledgeServiceImpl) AddDocument(ctx context.Context, userId, fileName
 			Content:  chunk,
 		}
 	}
-	err = s.knowledgeChunkDAO.BatchCreate(chunkModels)
+	err = s.knowledgeChunkDAO.BatchCreate(ctx, chunkModels)
 	if err != nil {
 		return nil, fmt.Errorf("存储分块文本失败: %v", err)
 	}
@@ -113,7 +113,7 @@ func (s *KnowledgeServiceImpl) AddDocument(ctx context.Context, userId, fileName
 	err = ragInst.UpsertChunks(ctx, collectionName, chunks, docUUID)
 	if err != nil {
 		// 回滚：删除已存储的分块文本
-		_ = s.knowledgeChunkDAO.DeleteByDocUUID(docUUID)
+		_ = s.knowledgeChunkDAO.DeleteByDocUUID(ctx, docUUID)
 		return nil, fmt.Errorf("存储向量失败: %v", err)
 	}
 
@@ -126,7 +126,7 @@ func (s *KnowledgeServiceImpl) AddDocument(ctx context.Context, userId, fileName
 		ChunkCount: len(chunks),
 	}
 
-	err = s.knowledgeDAO.Create(doc)
+	err = s.knowledgeDAO.Create(ctx, doc)
 	if err != nil {
 		zlog.Error("保存知识库记录失败: " + err.Error())
 		return nil, fmt.Errorf("保存记录失败")
@@ -144,7 +144,7 @@ func (s *KnowledgeServiceImpl) AddDocument(ctx context.Context, userId, fileName
 
 // ListDocuments 获取用户的文档列表
 func (s *KnowledgeServiceImpl) ListDocuments(ctx context.Context, userId string) ([]DocInfo, error) {
-	docs, err := s.knowledgeDAO.FindByUserId(userId)
+	docs, err := s.knowledgeDAO.FindByUserId(ctx, userId)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +166,7 @@ func (s *KnowledgeServiceImpl) ListDocuments(ctx context.Context, userId string)
 
 // RemoveDocument 从知识库删除文档
 func (s *KnowledgeServiceImpl) RemoveDocument(ctx context.Context, userId, uuid string) error {
-	doc, err := s.knowledgeDAO.FindByUuid(uuid)
+	doc, err := s.knowledgeDAO.FindByUuid(ctx, uuid)
 	if err != nil {
 		return err
 	}
@@ -187,13 +187,13 @@ func (s *KnowledgeServiceImpl) RemoveDocument(ctx context.Context, userId, uuid 
 	}
 
 	// 2. 删除分块文本
-	err = s.knowledgeChunkDAO.DeleteByDocUUID(uuid)
+	err = s.knowledgeChunkDAO.DeleteByDocUUID(ctx, uuid)
 	if err != nil {
 		zlog.Error("从MySQL删除分块数据失败: " + err.Error())
 	}
 
 	// 3. 删除文档记录
-	err = s.knowledgeDAO.Delete(uuid)
+	err = s.knowledgeDAO.Delete(ctx, uuid)
 	if err != nil {
 		return err
 	}
@@ -227,7 +227,7 @@ func (s *KnowledgeServiceImpl) Search(ctx context.Context, userId, query string,
 	}
 
 	// 3. 一次性从 MySQL 批量查询所有分块文本
-	chunks, err := s.knowledgeChunkDAO.FindByDocUUIDs(docUUIDs)
+	chunks, err := s.knowledgeChunkDAO.FindByDocUUIDs(ctx, docUUIDs)
 	if err != nil {
 		return nil, fmt.Errorf("查询分块文本失败: %w", err)
 	}
@@ -308,7 +308,7 @@ func removeMarkdownMarkers(content string) string {
 
 // GetDocumentContent 获取文档原始内容
 func (s *KnowledgeServiceImpl) GetDocumentContent(ctx context.Context, userId, uuid string) (string, error) {
-	doc, err := s.knowledgeDAO.FindByUuid(uuid)
+	doc, err := s.knowledgeDAO.FindByUuid(ctx, uuid)
 	if err != nil {
 		return "", err
 	}

@@ -80,14 +80,15 @@ func (s *AdminService) DiscoverReviewDetail(ctx context.Context, adminId, postUu
 		return nil, fmt.Errorf("帖子标识无效")
 	}
 	dao := userdao.NewDiscoverDAO(db.GormDB.WithContext(ctx))
-	post, err := dao.FindPostByUuid(postUuid)
+	post, err := dao.FindPostByUuid(ctx,
+		postUuid)
 	if err != nil {
 		return nil, err
 	}
 	if post == nil {
 		return nil, fmt.Errorf("帖子不存在")
 	}
-	user, err := userdao.NewUserInfoDAO(db.GormDB.WithContext(ctx)).FindUserByUuid(post.UserId)
+	user, err := userdao.NewUserInfoDAO(db.GormDB.WithContext(ctx)).FindUserByUuid(ctx, post.UserId)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +102,9 @@ func (s *AdminService) DiscoverReviewDetail(ctx context.Context, adminId, postUu
 		return nil, fmt.Errorf("读取帖子标签失败")
 	}
 	result.URLs = make([]string, 0)
-	media, err := dao.FindMediaByPostId(post.Id)
+	media, err := dao.FindMediaByPostId(ctx,
+
+		post.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +128,7 @@ func (s *AdminService) ReviewDiscoverPost(ctx context.Context, adminId string, r
 	}
 	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		dao := userdao.NewDiscoverDAO(tx)
-		post, err := dao.FindPostByUuidForUpdate(req.PostUuid)
+		post, err := dao.FindPostByUuidForUpdate(ctx, req.PostUuid)
 		if err != nil {
 			return err
 		}
@@ -152,7 +155,7 @@ func (s *AdminService) ReviewDiscoverPost(ctx context.Context, adminId string, r
 					threshold = constants.DiscoverDistributionThreshold
 				}
 				// 最多读取阈值条真实关注关系，发布时固定策略，不依赖可能滞后的粉丝计数。
-				fans, err := userdao.NewDiscoverDistributionDAO(tx).ListFans(post.UserId, post.CreatedAt, int(threshold))
+				fans, err := userdao.NewDiscoverDistributionDAO(tx).ListFans(ctx, post.UserId, post.CreatedAt, int(threshold))
 				if err != nil {
 					return fmt.Errorf("确定作品关注流分发方式失败: %w", err)
 				}
@@ -161,10 +164,10 @@ func (s *AdminService) ReviewDiscoverPost(ctx context.Context, adminId string, r
 				}
 			}
 		}
-		if err := dao.SavePost(post); err != nil {
+		if err := dao.SavePost(ctx, post); err != nil {
 			return err
 		}
-		return userdao.NewDiscoverOutboxDAO(tx).Create(post, post.Status == constants.DiscoverPostPublished && post.Visibility == 0)
+		return userdao.NewDiscoverOutboxDAO(tx).Create(ctx, post, post.Status == constants.DiscoverPostPublished && post.Visibility == 0)
 	})
 	if err == nil {
 		zlog.Info(fmt.Sprintf("管理员审核帖子成功，管理员=%s，帖子=%s，原版本=%d，目标状态=%d", adminId, req.PostUuid, req.Version, req.Status))
@@ -181,7 +184,8 @@ func (s *AdminService) OpenDiscoverReviewMedia(ctx context.Context, adminId, pos
 		return nil, fmt.Errorf("媒体参数无效")
 	}
 	dao := userdao.NewDiscoverDAO(db.GormDB.WithContext(ctx))
-	post, err := dao.FindPostByUuid(postUuid)
+	post, err := dao.FindPostByUuid(ctx,
+		postUuid)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +194,9 @@ func (s *AdminService) OpenDiscoverReviewMedia(ctx context.Context, adminId, pos
 	}
 	matched := source != "" && post.CoverUrl == source
 	if !matched {
-		media, err := dao.FindMediaByPostId(post.Id)
+		media, err := dao.FindMediaByPostId(ctx,
+
+			post.Id)
 		if err != nil {
 			return nil, err
 		}

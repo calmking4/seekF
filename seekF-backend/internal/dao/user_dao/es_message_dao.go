@@ -7,23 +7,24 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/elastic/go-elasticsearch/v8"
-	"github.com/elastic/go-elasticsearch/v8/esapi"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/zlog"
+
+	"github.com/elastic/go-elasticsearch/v8"
+	"github.com/elastic/go-elasticsearch/v8/esapi"
 )
 
 // ESMessageDAO ES消息搜索DAO接口
 type ESMessageDAO interface {
-	// IndexMessage 索引一条消息到ES
-	IndexMessage(message *models.Message) error
-	// SearchMessages 按sessionId + 关键词搜索消息（分页）
-	SearchMessages(sessionId string, keyword string, page, pageSize int) ([]models.Message, int64, error)
-	// SearchMessagesBySessionIds 按会话列表 + 关键词搜索消息（跨会话联想）
-	SearchMessagesBySessionIds(sessionIds []string, keyword string, limit int) ([]models.Message, int64, error)
-	// DeleteMessagesBySessionId 删除指定会话的所有消息
-	DeleteMessagesBySessionId(sessionId string) error
+	// 索引一条消息到ES
+	IndexMessage(ctx context.Context, message *models.Message) error
+	// 按sessionId + 关键词搜索消息（分页）
+	SearchMessages(ctx context.Context, sessionId string, keyword string, page, pageSize int) ([]models.Message, int64, error)
+	// 按会话列表 + 关键词搜索消息（跨会话联想）
+	SearchMessagesBySessionIds(ctx context.Context, sessionIds []string, keyword string, limit int) ([]models.Message, int64, error)
+	// 删除指定会话的所有消息
+	DeleteMessagesBySessionId(ctx context.Context, sessionId string) error
 }
 
 // ESMessageDAOImpl ES消息搜索DAO实现
@@ -52,7 +53,7 @@ type esMessageDoc struct {
 }
 
 // IndexMessage 索引一条消息到ES
-func (d *ESMessageDAOImpl) IndexMessage(message *models.Message) error {
+func (d *ESMessageDAOImpl) IndexMessage(ctx context.Context, message *models.Message) error {
 	doc := esMessageDoc{
 		MessageId:   message.Uuid,
 		SessionId:   message.SessionId,
@@ -77,7 +78,7 @@ func (d *ESMessageDAOImpl) IndexMessage(message *models.Message) error {
 		Refresh:    "false",
 	}
 
-	res, err := req.Do(context.Background(), d.client)
+	res, err := req.Do(ctx, d.client)
 	if err != nil {
 		zlog.Error("索引消息到ES失败: " + err.Error())
 		return err
@@ -93,7 +94,7 @@ func (d *ESMessageDAOImpl) IndexMessage(message *models.Message) error {
 }
 
 // SearchMessages 按sessionId + 关键词搜索消息（分页）
-func (d *ESMessageDAOImpl) SearchMessages(sessionId string, keyword string, page, pageSize int) ([]models.Message, int64, error) {
+func (d *ESMessageDAOImpl) SearchMessages(ctx context.Context, sessionId string, keyword string, page, pageSize int) ([]models.Message, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -141,6 +142,7 @@ func (d *ESMessageDAOImpl) SearchMessages(sessionId string, keyword string, page
 	}
 
 	res, err := d.client.Search(
+		d.client.Search.WithContext(ctx),
 		d.client.Search.WithIndex(db.ESIndexChatMessages),
 		d.client.Search.WithBody(bytes.NewReader(data)),
 		d.client.Search.WithTrackTotalHits(true),
@@ -160,7 +162,7 @@ func (d *ESMessageDAOImpl) SearchMessages(sessionId string, keyword string, page
 				Value int64 `json:"value"`
 			} `json:"total"`
 			Hits []struct {
-				Source    esMessageDoc       `json:"_source"`
+				Source    esMessageDoc        `json:"_source"`
 				Highlight map[string][]string `json:"highlight,omitempty"`
 			} `json:"hits"`
 		} `json:"hits"`
@@ -197,7 +199,7 @@ func (d *ESMessageDAOImpl) SearchMessages(sessionId string, keyword string, page
 }
 
 // SearchMessagesBySessionIds 按会话列表 + 关键词搜索消息（跨会话联想）
-func (d *ESMessageDAOImpl) SearchMessagesBySessionIds(sessionIds []string, keyword string, limit int) ([]models.Message, int64, error) {
+func (d *ESMessageDAOImpl) SearchMessagesBySessionIds(ctx context.Context, sessionIds []string, keyword string, limit int) ([]models.Message, int64, error) {
 	if len(sessionIds) == 0 || keyword == "" {
 		return nil, 0, nil
 	}
@@ -244,6 +246,7 @@ func (d *ESMessageDAOImpl) SearchMessagesBySessionIds(sessionIds []string, keywo
 	}
 
 	res, err := d.client.Search(
+		d.client.Search.WithContext(ctx),
 		d.client.Search.WithIndex(db.ESIndexChatMessages),
 		d.client.Search.WithBody(bytes.NewReader(data)),
 		d.client.Search.WithTrackTotalHits(true),
@@ -263,7 +266,7 @@ func (d *ESMessageDAOImpl) SearchMessagesBySessionIds(sessionIds []string, keywo
 				Value int64 `json:"value"`
 			} `json:"total"`
 			Hits []struct {
-				Source    esMessageDoc       `json:"_source"`
+				Source    esMessageDoc        `json:"_source"`
 				Highlight map[string][]string `json:"highlight,omitempty"`
 			} `json:"hits"`
 		} `json:"hits"`
@@ -300,7 +303,7 @@ func (d *ESMessageDAOImpl) SearchMessagesBySessionIds(sessionIds []string, keywo
 }
 
 // DeleteMessagesBySessionId 删除指定会话的所有消息
-func (d *ESMessageDAOImpl) DeleteMessagesBySessionId(sessionId string) error {
+func (d *ESMessageDAOImpl) DeleteMessagesBySessionId(ctx context.Context, sessionId string) error {
 	query := map[string]interface{}{
 		"query": map[string]interface{}{
 			"term": map[string]interface{}{
@@ -317,6 +320,7 @@ func (d *ESMessageDAOImpl) DeleteMessagesBySessionId(sessionId string) error {
 	res, err := d.client.DeleteByQuery(
 		[]string{db.ESIndexChatMessages},
 		bytes.NewReader(data),
+		d.client.DeleteByQuery.WithContext(ctx),
 	)
 	if err != nil {
 		zlog.Error("ES删除会话消息失败: " + err.Error())

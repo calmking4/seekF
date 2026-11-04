@@ -26,10 +26,15 @@ var daoProviderSet = wire.NewSet(
 	userdao.NewKnowledgeDAO,
 	userdao.NewKnowledgeChunkDAO,
 	userdao.NewDiscoverDAO,
+	userdao.NewDiscoverDistributionDAO,
+	userdao.NewFollowingReadDAO,
+	userdao.NewDiscoverRankingDAO,
+	userdao.NewDiscoverOutboxDAO,
 	userdao.NewESDiscoverDAO,
 	userdao.NewFollowDAO,
 	userdao.NewNotificationDAO,
 	userdao.NewSupportDAO,
+	userdao.NewSupportSettlementDAO,
 	userdao.NewBlockDAO,
 )
 

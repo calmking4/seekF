@@ -74,12 +74,12 @@ func NewNotificationService(notificationDAO userdao.NotificationDAO, userInfoDAO
 // ListNotifications 分页查询分类通知并装配触发者、评论和所属帖子信息。
 func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId string, page, pageSize int, category string, unreadOnly bool) ([]NotificationInfo, int64, error) {
 	types := NotificationCategoryTypes(category)
-	notifications, err := s.notificationDAO.ListByUserId(userId, page, pageSize, types, unreadOnly)
+	notifications, err := s.notificationDAO.ListByUserId(ctx, userId, page, pageSize, types, unreadOnly)
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询通知列表失败: %v", err)
 	}
 
-	total, err := s.notificationDAO.CountByUserId(userId, types, unreadOnly)
+	total, err := s.notificationDAO.CountByUserId(ctx, userId, types, unreadOnly)
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询通知总数失败: %w", err)
 	}
@@ -99,13 +99,13 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 		}
 		var notificationComment *models.DiscoverComment
 		if (n.Type == NotificationTypeCommentPost || n.Type == NotificationTypeReply || n.Type == NotificationTypeLikeComment) && strings.HasPrefix(targetUuid, "C") {
-			notificationComment, err = s.discoverDAO.FindCommentByUuid(targetUuid)
+			notificationComment, err = s.discoverDAO.FindCommentByUuid(ctx, targetUuid)
 			if err != nil {
 				return nil, 0, fmt.Errorf("查询通知评论失败: %w", err)
 			}
 			targetUuid = ""
 			if notificationComment != nil {
-				post, err := s.discoverDAO.FindPostById(notificationComment.PostId)
+				post, err := s.discoverDAO.FindPostById(ctx, notificationComment.PostId)
 				if err != nil {
 					return nil, 0, fmt.Errorf("查询评论所属帖子失败: %w", err)
 				}
@@ -118,7 +118,7 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 		// 查询触发者信息
 		actor, cached := actors[n.ActorId]
 		if !cached {
-			actor, err = s.userInfoDAO.FindUserByUuid(n.ActorId)
+			actor, err = s.userInfoDAO.FindUserByUuid(ctx, n.ActorId)
 			if err != nil {
 				return nil, 0, fmt.Errorf("查询通知用户失败: %w", err)
 			}
@@ -149,7 +149,7 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 		}
 		if n.Type == NotificationTypeFollow {
 			if _, ok := following[n.ActorId]; !ok {
-				follow, err := s.followDAO.FindFollow(userId, n.ActorId)
+				follow, err := s.followDAO.FindFollow(ctx, userId, n.ActorId)
 				if err != nil {
 					return nil, 0, fmt.Errorf("查询关注状态失败: %w", err)
 				}
@@ -160,17 +160,17 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 		} else if targetUuid != "" {
 			post, cached := posts[targetUuid]
 			if !cached {
-				post, err = s.discoverDAO.FindPostByUuid(targetUuid)
+				post, err = s.discoverDAO.FindPostByUuid(ctx, targetUuid)
 				if err != nil {
 					return nil, 0, fmt.Errorf("查询通知帖子失败: %w", err)
 				}
 				posts[targetUuid] = post
 			}
 			if _, cached := covers[targetUuid]; !cached {
-				if canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) {
+				if canViewUnblockedDiscoverPost(ctx, db.GormDB.WithContext(ctx), post, userId) {
 					covers[targetUuid] = post.CoverUrl
 					if post.MediaType == 0 && post.CoverUrl == "" {
-						media, err := s.discoverDAO.FindMediaByPostId(post.Id)
+						media, err := s.discoverDAO.FindMediaByPostId(ctx, post.Id)
 						if err != nil {
 							return nil, 0, fmt.Errorf("查询通知封面失败: %w", err)
 						}
@@ -180,7 +180,7 @@ func (s *NotificationServiceImpl) ListNotifications(ctx context.Context, userId 
 					}
 				}
 			}
-			if canViewUnblockedDiscoverPost(db.GormDB.WithContext(ctx), post, userId) {
+			if canViewUnblockedDiscoverPost(ctx, db.GormDB.WithContext(ctx), post, userId) {
 				info.PostTitle, info.PostCover, info.TargetAvailable = post.Title, covers[targetUuid], true
 			}
 		}
@@ -217,7 +217,7 @@ func NotificationCategoryTypes(category string) []int8 {
 
 // GetUnreadCounts 统计助力、评论、赞和收藏、关注各分类的未读数量。
 func (s *NotificationServiceImpl) GetUnreadCounts(ctx context.Context, userId string) (map[string]int64, error) {
-	counts, err := s.notificationDAO.CountUnreadByType(userId)
+	counts, err := s.notificationDAO.CountUnreadByType(ctx, userId)
 	if err != nil {
 		return nil, fmt.Errorf("查询分类未读数失败: %w", err)
 	}
@@ -230,18 +230,18 @@ func (s *NotificationServiceImpl) GetUnreadCounts(ctx context.Context, userId st
 }
 
 func (s *NotificationServiceImpl) GetUnreadCount(ctx context.Context, userId string) (int64, error) {
-	return s.notificationDAO.CountUnread(userId)
+	return s.notificationDAO.CountUnread(ctx, userId)
 }
 
 func (s *NotificationServiceImpl) MarkAsRead(ctx context.Context, userId string, ids []int64) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	return s.notificationDAO.MarkAsRead(userId, ids)
+	return s.notificationDAO.MarkAsRead(ctx, userId, ids)
 }
 
 func (s *NotificationServiceImpl) MarkAllAsRead(ctx context.Context, userId string) error {
-	return s.notificationDAO.MarkAllAsRead(userId)
+	return s.notificationDAO.MarkAllAsRead(ctx, userId)
 }
 
 func (s *NotificationServiceImpl) MarkCategoryAsRead(ctx context.Context, userId, category string) (int64, error) {
@@ -249,7 +249,7 @@ func (s *NotificationServiceImpl) MarkCategoryAsRead(ctx context.Context, userId
 	if len(types) == 0 {
 		return 0, fmt.Errorf("通知分类无效")
 	}
-	return s.notificationDAO.MarkCategoryAsRead(userId, types)
+	return s.notificationDAO.MarkCategoryAsRead(ctx, userId, types)
 }
 
 func (s *NotificationServiceImpl) CreateNotification(ctx context.Context, userId, actorId string, notiType int8, targetUuid, content string) error {
@@ -266,5 +266,5 @@ func (s *NotificationServiceImpl) CreateNotification(ctx context.Context, userId
 		Content:    content,
 		IsRead:     0,
 	}
-	return s.notificationDAO.CreateNotification(notification)
+	return s.notificationDAO.CreateNotification(ctx, notification)
 }

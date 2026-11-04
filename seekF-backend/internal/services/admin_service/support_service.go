@@ -26,7 +26,7 @@ func (s *AdminService) ListSupportOrders(ctx context.Context, orderNo string, st
 	if page > 100000 || len(orderNo) > 64 || (status != nil && (*status < 0 || *status > 5)) {
 		return nil, fmt.Errorf("查询参数无效")
 	}
-	rows, total, err := userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).ListAdminOrders(configs.GetConfig().AlipayConfig.Environment, strings.TrimSpace(orderNo), status, page)
+	rows, total, err := userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).ListAdminOrders(ctx, configs.GetConfig().AlipayConfig.Environment, strings.TrimSpace(orderNo), status, page)
 	if err != nil {
 		return nil, fmt.Errorf("查询助力订单失败: %w", err)
 	}

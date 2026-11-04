@@ -19,6 +19,7 @@ import (
 	mcppkg "seekF-backend/internal/pkg/ai/mcp"
 	toolpkg "seekF-backend/internal/pkg/ai/mcp/tool"
 	"seekF-backend/internal/pkg/ai/tts"
+	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
@@ -32,15 +33,15 @@ import (
 // AIChatService AI聊天服务接口
 type AIChatService interface {
 	// CreateSession 创建AI会话
-	CreateSession(userId string, req userreq.CreateAISessionRequest) (*userresp.CreateAISessionRespond, error)
+	CreateSession(ctx context.Context, userId string, req userreq.CreateAISessionRequest) (*userresp.CreateAISessionRespond, error)
 	// GetSessionList 获取用户AI会话列表
-	GetSessionList(userId string, page int, pageSize int) (*userresp.GetAISessionListRespond, error)
+	GetSessionList(ctx context.Context, userId string, page int, pageSize int) (*userresp.GetAISessionListRespond, error)
 	// GetMessageHistory 游标分页获取AI消息历史
-	GetMessageHistory(sessionId string, pageSize int, cursor string, direction string) ([]userresp.GetAIMessageHistoryRespond, int64, error)
+	GetMessageHistory(ctx context.Context, sessionId string, pageSize int, cursor string, direction string) ([]userresp.GetAIMessageHistoryRespond, int64, error)
 	// SendMessageStream 流式发送消息，通过SSE推送实时响应
 	SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onPosts func(posts []toolpkg.DiscoverPostItem) error, onComplete func(fullContent string) error) error
 	// DeleteSession 删除AI会话
-	DeleteSession(sessionId string) error
+	DeleteSession(ctx context.Context, sessionId string) error
 	// TextToSpeech 流式文本转语音，返回流式结果
 	TextToSpeech(ctx context.Context, content string, voice string) (*tts.StreamResult, error)
 	// SpeechToText 使用GLM-ASR-2512流式识别录音。
@@ -71,8 +72,8 @@ func NewAIChatService(sessionDAO userdao.SessionDAO, messageDAO userdao.MessageD
 }
 
 // CreateSession 创建AI会话，为用户分配一个AI接收者（A前缀ID）
-func (s *AIChatServiceImpl) CreateSession(userId string, req userreq.CreateAISessionRequest) (*userresp.CreateAISessionRespond, error) {
-	session, err := s.sessionDAO.CreateAISession(userId, req.ModelType)
+func (s *AIChatServiceImpl) CreateSession(ctx context.Context, userId string, req userreq.CreateAISessionRequest) (*userresp.CreateAISessionRespond, error) {
+	session, err := s.sessionDAO.CreateAISession(ctx, userId, req.ModelType)
 	if err != nil {
 		zlog.Error("创建AI会话失败: " + err.Error())
 		return nil, fmt.Errorf("创建会话失败")
@@ -86,7 +87,7 @@ func (s *AIChatServiceImpl) CreateSession(userId string, req userreq.CreateAISes
 }
 
 // GetSessionList 获取用户的AI会话列表（receive_id以'A'开头）
-func (s *AIChatServiceImpl) GetSessionList(userId string, page int, pageSize int) (*userresp.GetAISessionListRespond, error) {
+func (s *AIChatServiceImpl) GetSessionList(ctx context.Context, userId string, page int, pageSize int) (*userresp.GetAISessionListRespond, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -94,7 +95,7 @@ func (s *AIChatServiceImpl) GetSessionList(userId string, page int, pageSize int
 		pageSize = 20
 	}
 
-	sessions, err := s.sessionDAO.GetAISessionList(userId)
+	sessions, err := s.sessionDAO.GetAISessionList(ctx, userId)
 	if err != nil {
 		zlog.Error("获取AI会话列表失败: " + err.Error())
 		return nil, fmt.Errorf("获取会话列表失败")
@@ -130,18 +131,18 @@ func (s *AIChatServiceImpl) GetSessionList(userId string, page int, pageSize int
 }
 
 // GetMessageHistory 游标分页获取指定AI会话的消息历史
-func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, pageSize int, cursor string, direction string) ([]userresp.GetAIMessageHistoryRespond, int64, error) {
+func (s *AIChatServiceImpl) GetMessageHistory(ctx context.Context, sessionId string, pageSize int, cursor string, direction string) ([]userresp.GetAIMessageHistoryRespond, int64, error) {
 	if pageSize < 1 {
 		pageSize = 20
 	}
 
-	total, err := s.messageDAO.CountMessagesBySessionId(sessionId)
+	total, err := s.messageDAO.CountMessagesBySessionId(ctx, sessionId)
 	if err != nil {
 		zlog.Error("统计AI消息失败: " + err.Error())
 		return nil, 0, fmt.Errorf("获取消息历史失败")
 	}
 
-	messages, err := s.messageDAO.GetMessagesBySessionIdWithCursor(sessionId, cursor, pageSize, direction)
+	messages, err := s.messageDAO.GetMessagesBySessionIdWithCursor(ctx, sessionId, cursor, pageSize, direction)
 	if err != nil {
 		zlog.Error("获取AI消息失败: " + err.Error())
 		return nil, 0, fmt.Errorf("获取消息历史失败")
@@ -173,11 +174,11 @@ func (s *AIChatServiceImpl) GetMessageHistory(sessionId string, pageSize int, cu
 	}
 
 	if len(referencedPosts) > 0 {
-		session, err := s.sessionDAO.GetAISessionByUuid(sessionId)
+		session, err := s.sessionDAO.GetAISessionByUuid(ctx, sessionId)
 		if err != nil || session == nil {
 			return nil, 0, fmt.Errorf("获取AI会话失败")
 		}
-		if err := refreshAIPostSupport(context.Background(), session.SendId, referencedPosts); err != nil {
+		if err := refreshAIPostSupport(ctx, session.SendId, referencedPosts); err != nil {
 			return nil, 0, err
 		}
 		offset := 0
@@ -234,14 +235,17 @@ func refreshAIPostSupport(ctx context.Context, userId string, items []toolpkg.Di
 // 6. 完整响应保存到DB（失败则走Kafka异步持久化）
 func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onPosts func(posts []toolpkg.DiscoverPostItem) error, onComplete func(fullContent string) error) error {
 	// 校验AI会话是否存在
-	session, err := s.sessionDAO.GetAISessionByUuid(req.SessionId)
+	session, err := s.sessionDAO.GetAISessionByUuid(ctx, req.SessionId)
 	if err != nil {
 		zlog.Error("获取AI会话失败: " + err.Error())
 		return fmt.Errorf("会话不存在")
 	}
+	if session == nil {
+		return fmt.Errorf("会话不存在")
+	}
 
 	// 获取用户信息
-	user, err := s.userInfoDAO.FindUserByUuid(userId)
+	user, err := s.userInfoDAO.FindUserByUuid(ctx, userId)
 	if err != nil {
 		zlog.Error("获取用户信息失败: " + err.Error())
 		return fmt.Errorf("系统错误")
@@ -280,24 +284,24 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		Status:     1,
 	}
 
-	err = db.GormDB.Transaction(func(tx *gorm.DB) error {
+	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txMessageDAO := userdao.NewMessageDAO(tx)
 		txSessionDAO := userdao.NewSessionDAO(tx)
 
-		if err := txMessageDAO.CreateMessage(userMessage); err != nil {
+		if err := txMessageDAO.CreateMessage(ctx, userMessage); err != nil {
 			zlog.Error("保存用户消息失败: " + err.Error())
 			return fmt.Errorf("发送消息失败")
 		}
 
 		// 更新会话最后一条消息
-		if err := txSessionDAO.UpdateSessionLastMessage(req.SessionId, content, userMessage.CreatedAt); err != nil {
+		if err := txSessionDAO.UpdateSessionLastMessage(ctx, req.SessionId, content, userMessage.CreatedAt); err != nil {
 			zlog.Error("更新会话最后消息失败: " + err.Error())
 			return fmt.Errorf("更新会话失败")
 		}
 
 		// 如果是第一消息，更新会话第一条消息
 		if session.FirstMessage == "" {
-			if err := txSessionDAO.UpdateSessionFirstMessage(req.SessionId, content); err != nil {
+			if err := txSessionDAO.UpdateSessionFirstMessage(ctx, req.SessionId, content); err != nil {
 				zlog.Error("更新会话首条消息失败: " + err.Error())
 				return fmt.Errorf("更新会话失败")
 			}
@@ -311,15 +315,18 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 
 	// 异步索引用户消息到ES（搜索用）
 	go func() {
+		// 后台索引不随请求结束取消，但必须有明确的执行时限。
+		indexCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), constants.AIMessageIndexTimeout)
+		defer cancel()
 		esDAO := userdao.NewESMessageDAO()
-		if err := esDAO.IndexMessage(userMessage); err != nil {
+		if err := esDAO.IndexMessage(indexCtx, userMessage); err != nil {
 			zlog.Error("索引AI用户消息到ES失败: " + err.Error())
 		}
 	}()
 
 	// 从DB读取历史消息构建上下文（最近100条）
 	// 使用DESC排序获取最近的消息，然后反转为正序
-	messages, err := s.messageDAO.GetMessagesBySessionIdDesc(req.SessionId, 100, 0)
+	messages, err := s.messageDAO.GetMessagesBySessionIdDesc(ctx, req.SessionId, 100, 0)
 	if err != nil {
 		zlog.Error("获取消息历史上下文失败: " + err.Error())
 		messages = []models.Message{}
@@ -454,7 +461,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 				zlog.Error("发送帖子到客户端失败: " + err.Error())
 			}
 		}
-		return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, sources, posts, onChunk, onComplete)
+		return s.persistAndCompleteAIMessage(ctx, req, userId, userMessage, finalContent, sources, posts, onChunk, onComplete)
 	}
 
 	finalContent, err = streamChatModelToSSE(ctx, chatModel, chatMessages, onChunk)
@@ -463,11 +470,11 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		return fmt.Errorf("AI响应失败")
 	}
 
-	return s.persistAndCompleteAIMessage(req, userId, userMessage, finalContent, nil, nil, onChunk, onComplete)
+	return s.persistAndCompleteAIMessage(ctx, req, userId, userMessage, finalContent, nil, nil, onChunk, onComplete)
 }
 
 // persistAndCompleteAIMessage 负责将最终回复兜底、持久化，并触发完成回调。
-func (s *AIChatServiceImpl) persistAndCompleteAIMessage(req userreq.SendAIMessageRequest, userId string, userMessage *models.Message, finalContent string,
+func (s *AIChatServiceImpl) persistAndCompleteAIMessage(ctx context.Context, req userreq.SendAIMessageRequest, userId string, userMessage *models.Message, finalContent string,
 	sources []toolpkg.SearchSource, posts []toolpkg.DiscoverPostItem, onChunk func(chunk string) error, onComplete func(fullContent string) error) error {
 	if finalContent == "" {
 		finalContent = "抱歉，我暂时无法回答这个问题。"
@@ -514,7 +521,7 @@ func (s *AIChatServiceImpl) persistAndCompleteAIMessage(req userreq.SendAIMessag
 		Posts:     postsJSON,
 	})
 
-	s.sessionDAO.UpdateSessionLastMessage(req.SessionId, finalContent, userMessage.CreatedAt)
+	s.sessionDAO.UpdateSessionLastMessage(ctx, req.SessionId, finalContent, userMessage.CreatedAt)
 
 	if onComplete != nil {
 		onComplete(finalContent)
@@ -701,17 +708,17 @@ func (s *AIChatServiceImpl) TextToSpeech(ctx context.Context, content string, vo
 }
 
 // DeleteSession 删除AI会话及其所有消息
-func (s *AIChatServiceImpl) DeleteSession(sessionId string) error {
-	err := db.GormDB.Transaction(func(tx *gorm.DB) error {
+func (s *AIChatServiceImpl) DeleteSession(ctx context.Context, sessionId string) error {
+	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txMessageDAO := userdao.NewMessageDAO(tx)
 		txSessionDAO := userdao.NewSessionDAO(tx)
 
-		if err := txMessageDAO.DeleteMessagesBySessionId(sessionId); err != nil {
+		if err := txMessageDAO.DeleteMessagesBySessionId(ctx, sessionId); err != nil {
 			zlog.Error("删除AI会话消息失败: " + err.Error())
 			return fmt.Errorf("删除会话消息失败")
 		}
 
-		if err := txSessionDAO.DeleteAISession(sessionId); err != nil {
+		if err := txSessionDAO.DeleteAISession(ctx, sessionId); err != nil {
 			zlog.Error("删除AI会话失败: " + err.Error())
 			return fmt.Errorf("删除会话失败")
 		}
@@ -724,8 +731,10 @@ func (s *AIChatServiceImpl) DeleteSession(sessionId string) error {
 
 	// 异步删除ES中的消息索引
 	go func() {
+		indexCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), constants.AIMessageIndexTimeout)
+		defer cancel()
 		esDAO := userdao.NewESMessageDAO()
-		if err := esDAO.DeleteMessagesBySessionId(sessionId); err != nil {
+		if err := esDAO.DeleteMessagesBySessionId(indexCtx, sessionId); err != nil {
 			zlog.Error("删除ES中的AI会话消息失败: " + err.Error())
 		}
 	}()

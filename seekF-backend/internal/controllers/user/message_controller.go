@@ -56,7 +56,7 @@ func (c *MessageController) GetUserMessageList(ctx *gin.Context) {
 		resp.Success(ctx, "刷新聊天记录成功", gin.H{"list": added, "updated": updated, "has_more": more})
 		return
 	}
-	messageList, total, err := c.messageService.GetUserMessageList(currentUser, peerId, req.Page, req.PageSize, req.BeforeMessageId)
+	messageList, total, err := c.messageService.GetUserMessageList(ctx.Request.Context(), currentUser, peerId, req.Page, req.PageSize, req.BeforeMessageId)
 	if err != nil {
 		zlog.Info("获取用户消息列表服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
@@ -78,7 +78,7 @@ func (c *MessageController) SearchMessages(ctx *gin.Context) {
 		return
 	}
 
-	messageList, total, err := c.messageService.SearchMessages(ctx.GetString("Uuid"), req.SessionId, req.Keyword, req.Page, req.PageSize)
+	messageList, total, err := c.messageService.SearchMessages(ctx.Request.Context(), ctx.GetString("Uuid"), req.SessionId, req.Keyword, req.Page, req.PageSize)
 	if err != nil {
 		zlog.Info("搜索消息服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
@@ -101,7 +101,7 @@ func (c *MessageController) SearchMessageSuggestions(ctx *gin.Context) {
 		return
 	}
 
-	messageList, err := c.messageService.SearchMessageSuggestions(userId, req.Keyword, req.PageSize)
+	messageList, err := c.messageService.SearchMessageSuggestions(ctx.Request.Context(), userId, req.Keyword, req.PageSize)
 	if err != nil {
 		zlog.Info("搜索消息联想服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)

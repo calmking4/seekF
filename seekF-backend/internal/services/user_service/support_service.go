@@ -46,7 +46,7 @@ func requireDiscoverSupport(ctx context.Context, conn *gorm.DB, userId string, p
 	if post.SupportOnly == 0 || post.UserId == userId {
 		return nil
 	}
-	rows, err := userdao.NewSupportDAO(conn.WithContext(ctx)).ListEntitlements(configs.GetConfig().AlipayConfig.Environment, userId, []string{post.UserId})
+	rows, err := userdao.NewSupportDAO(conn.WithContext(ctx)).ListEntitlements(ctx, configs.GetConfig().AlipayConfig.Environment, userId, []string{post.UserId})
 	if err != nil {
 		return fmt.Errorf("查询助力权益失败: %w", err)
 	}
@@ -86,13 +86,14 @@ type SupportService interface {
 
 // SupportServiceImpl 使用现有分层组织助力开通业务。
 type SupportServiceImpl struct {
-	supportDAO  userdao.SupportDAO
-	userInfoDAO userdao.UserInfoDAO
+	supportDAO    userdao.SupportDAO
+	settlementDAO userdao.SupportSettlementDAO
+	userInfoDAO   userdao.UserInfoDAO
 }
 
 // NewSupportService 创建创作者助力服务。
-func NewSupportService(supportDAO userdao.SupportDAO, userInfoDAO userdao.UserInfoDAO) SupportService {
-	return &SupportServiceImpl{supportDAO: supportDAO, userInfoDAO: userInfoDAO}
+func NewSupportService(supportDAO userdao.SupportDAO, settlementDAO userdao.SupportSettlementDAO, userInfoDAO userdao.UserInfoDAO) SupportService {
+	return &SupportServiceImpl{supportDAO: supportDAO, settlementDAO: settlementDAO, userInfoDAO: userInfoDAO}
 }
 
 // GetCreator 查询配置及当前用户的权益，不将查看者状态写入共享缓存。
@@ -100,14 +101,14 @@ func (s *SupportServiceImpl) GetCreator(ctx context.Context, userId, creatorId s
 	if creatorId == "" {
 		creatorId = userId
 	}
-	user, err := s.userInfoDAO.FindUserByUuid(creatorId)
+	user, err := s.userInfoDAO.FindUserByUuid(ctx, creatorId)
 	if err != nil {
 		return nil, fmt.Errorf("查询创作者失败: %w", err)
 	}
 	if user == nil || user.Uuid == "" || user.Status != 0 {
 		return nil, fmt.Errorf("创作者不存在或账号不可用")
 	}
-	activate, err := s.supportDAO.FindActivate(creatorId)
+	activate, err := s.supportDAO.FindActivate(ctx, creatorId)
 	if err != nil {
 		return nil, fmt.Errorf("查询助力设置失败: %w", err)
 	}
@@ -126,7 +127,7 @@ func (s *SupportServiceImpl) GetCreator(ctx context.Context, userId, creatorId s
 		result.Activated = true
 		result.PriceYuan = activate.Price.IntPart()
 	}
-	rows, err := s.supportDAO.ListEntitlements(configs.GetConfig().AlipayConfig.Environment, userId, []string{creatorId})
+	rows, err := s.supportDAO.ListEntitlements(ctx, configs.GetConfig().AlipayConfig.Environment, userId, []string{creatorId})
 	if err != nil {
 		return nil, fmt.Errorf("查询助力权益失败: %w", err)
 	}
@@ -146,7 +147,7 @@ func (s *SupportServiceImpl) SaveActivate(ctx context.Context, userId string, in
 		return nil, fmt.Errorf("助力价格必须为5至100整数元")
 	}
 	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		user, err := userdao.NewUserInfoDAO(tx).FindUserByUuidForUpdate(userId)
+		user, err := userdao.NewUserInfoDAO(tx).FindUserByUuidForUpdate(ctx, userId)
 		if err != nil {
 			return fmt.Errorf("查询创作者账号失败: %w", err)
 		}
@@ -154,7 +155,7 @@ func (s *SupportServiceImpl) SaveActivate(ctx context.Context, userId string, in
 			return fmt.Errorf("创作者账号不存在或不可用")
 		}
 		dao := userdao.NewSupportDAO(tx)
-		activate, err := dao.FindActivate(userId)
+		activate, err := dao.FindActivate(ctx, userId)
 		if err != nil {
 			return fmt.Errorf("查询助力开通状态失败: %w", err)
 		}
@@ -175,7 +176,7 @@ func (s *SupportServiceImpl) SaveActivate(ctx context.Context, userId string, in
 			activate.TermsPlatformRateBPS = &rate
 		}
 		activate.Price = decimal.NewFromInt(int64(input.PriceYuan))
-		return dao.SaveActivate(activate)
+		return dao.SaveActivate(ctx, activate)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("保存助力设置失败: %w", err)
@@ -198,7 +199,7 @@ func discoverSupportExpiries(ctx context.Context, userId string, posts []models.
 			creators = append(creators, post.UserId)
 		}
 	}
-	rows, err := userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).ListEntitlements(configs.GetConfig().AlipayConfig.Environment, userId, creators)
+	rows, err := userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).ListEntitlements(ctx, configs.GetConfig().AlipayConfig.Environment, userId, creators)
 	if err != nil {
 		return nil, fmt.Errorf("查询助力观看权益失败: %w", err)
 	}
@@ -270,7 +271,7 @@ func (s *SupportServiceImpl) CreateOrder(ctx context.Context, userId, creatorId,
 	}
 	var result *models.SupportOrder
 	err := supportTransaction(ctx, func(tx *gorm.DB) error {
-		user, err := userdao.NewUserInfoDAO(tx).FindUserByUuidForUpdate(userId)
+		user, err := userdao.NewUserInfoDAO(tx).FindUserByUuidForUpdate(ctx, userId)
 		if err != nil {
 			return err
 		}
@@ -278,7 +279,7 @@ func (s *SupportServiceImpl) CreateOrder(ctx context.Context, userId, creatorId,
 			return fmt.Errorf("购买者账号不可用")
 		}
 		dao := userdao.NewSupportDAO(tx)
-		result, err = dao.FindRequest(cfg.Environment, userId, requestKey)
+		result, err = dao.FindRequest(ctx, cfg.Environment, userId, requestKey)
 		if err != nil {
 			return err
 		}
@@ -288,14 +289,14 @@ func (s *SupportServiceImpl) CreateOrder(ctx context.Context, userId, creatorId,
 			}
 			return nil
 		}
-		creator, err := userdao.NewUserInfoDAO(tx).FindUserByUuid(creatorId)
+		creator, err := userdao.NewUserInfoDAO(tx).FindUserByUuid(ctx, creatorId)
 		if err != nil {
 			return err
 		}
 		if creator == nil || creator.Uuid == "" || creator.Status != 0 {
 			return fmt.Errorf("创作者账号不可用")
 		}
-		activate, err := userdao.NewSupportDAO(tx).FindActivate(creatorId)
+		activate, err := userdao.NewSupportDAO(tx).FindActivate(ctx, creatorId)
 		if err != nil {
 			return err
 		}
@@ -303,7 +304,7 @@ func (s *SupportServiceImpl) CreateOrder(ctx context.Context, userId, creatorId,
 			return fmt.Errorf("创作者尚未开通助力")
 		}
 		now := time.Now()
-		result, err = dao.FindPending(cfg.Environment, userId, creatorId, now)
+		result, err = dao.FindPending(ctx, cfg.Environment, userId, creatorId, now)
 		if err != nil || result != nil {
 			return err
 		}
@@ -311,7 +312,7 @@ func (s *SupportServiceImpl) CreateOrder(ctx context.Context, userId, creatorId,
 		if err := setSupportSettlementSnapshot(result); err != nil {
 			return err
 		}
-		return dao.CreateOrder(result)
+		return dao.CreateOrder(ctx, result)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("创建助力订单失败: %w", err)
@@ -321,7 +322,7 @@ func (s *SupportServiceImpl) CreateOrder(ctx context.Context, userId, creatorId,
 
 // ownOrder 校验交易环境及购买者身份。
 func ownOrder(ctx context.Context, userId, orderNo string) (*models.SupportOrder, error) {
-	row, err := userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).FindOrder(configs.GetConfig().AlipayConfig.Environment, orderNo, false)
+	row, err := userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).FindOrder(ctx, configs.GetConfig().AlipayConfig.Environment, orderNo, false)
 	if err != nil {
 		return nil, fmt.Errorf("查询助力订单失败: %w", err)
 	}
@@ -376,9 +377,11 @@ func (s *SupportServiceImpl) ListSupport(ctx context.Context, userId, kind strin
 	dao := userdao.NewSupportDAO(db.GormDB.WithContext(ctx))
 	switch kind {
 	case "balance", "ledger":
-		return listSupportSettlement(ctx, userId, kind, page)
+		return s.listSupportSettlement(ctx, userId, kind, page)
 	case "received":
-		rows, total, err := dao.ListReceivedOrders(cfg.Environment, userId, page)
+		rows, total, err := dao.ListReceivedOrders(ctx,
+
+			cfg.Environment, userId, page)
 		if err != nil {
 			return nil, fmt.Errorf("查询收到的助力记录失败: %w", err)
 		}
@@ -388,7 +391,9 @@ func (s *SupportServiceImpl) ListSupport(ctx context.Context, userId, kind strin
 		}
 		return map[string]any{"list": result, "total": total}, nil
 	case "orders":
-		rows, total, err := dao.ListOrders(cfg.Environment, userId, page)
+		rows, total, err := dao.ListOrders(ctx,
+
+			cfg.Environment, userId, page)
 		if err != nil {
 			return nil, fmt.Errorf("查询助力订单失败: %w", err)
 		}
@@ -400,7 +405,9 @@ func (s *SupportServiceImpl) ListSupport(ctx context.Context, userId, kind strin
 		}
 		return map[string]any{"list": result, "total": total}, nil
 	case "entitlements":
-		rows, err := dao.ListMyEntitlements(cfg.Environment, userId, page)
+		rows, err := dao.ListMyEntitlements(ctx,
+
+			cfg.Environment, userId, page)
 		if err != nil {
 			return nil, fmt.Errorf("查询助力权益失败: %w", err)
 		}
@@ -410,7 +417,9 @@ func (s *SupportServiceImpl) ListSupport(ctx context.Context, userId, kind strin
 		}
 		return result, nil
 	case "income":
-		row, err := dao.Income(cfg.Environment, userId)
+		row, err := dao.Income(ctx,
+
+			cfg.Environment, userId)
 		if err != nil {
 			return nil, fmt.Errorf("查询助力收益失败: %w", err)
 		}
@@ -440,7 +449,7 @@ func applySupportTrade(ctx context.Context, environment string, trade *payment.A
 	}
 	return supportTransaction(ctx, func(tx *gorm.DB) error {
 		dao := userdao.NewSupportDAO(tx)
-		row, err := dao.FindOrder(environment, trade.OrderNo, true)
+		row, err := dao.FindOrder(ctx, environment, trade.OrderNo, true)
 		if err != nil {
 			return err
 		}
@@ -463,10 +472,10 @@ func applySupportTrade(ctx context.Context, environment string, trade *payment.A
 			if err != nil {
 				return fmt.Errorf("支付宝付款时间格式错误")
 			}
-			if err := applySupportSettlement(tx, row, constants.SupportLedgerIncome); err != nil {
+			if err := applySupportSettlement(ctx, tx, row, constants.SupportLedgerIncome); err != nil {
 				return err
 			}
-			entitlement, err := dao.LockEntitlement(environment, row.UserId, row.CreatorId)
+			entitlement, err := dao.LockEntitlement(ctx, environment, row.UserId, row.CreatorId)
 			if err != nil {
 				return err
 			}
@@ -474,18 +483,18 @@ func applySupportTrade(ctx context.Context, environment string, trade *payment.A
 			if entitlement.ExpiresAt != nil && entitlement.ExpiresAt.After(start) {
 				start = *entitlement.ExpiresAt
 			}
-			if err := dao.SaveExpiry(entitlement.Id, start.Add(time.Duration(row.DurationHours)*time.Hour)); err != nil {
+			if err := dao.SaveExpiry(ctx, entitlement.Id, start.Add(time.Duration(row.DurationHours)*time.Hour)); err != nil {
 				return err
 			}
-			if err := dao.UpdateOrder(row.Id, map[string]any{"status": constants.SupportOrderPaid, "trade_no": trade.TradeNo, "paid_at": paidAt, "confirmed_at": now, "next_attempt_at": now.Add(constants.SupportRefundAuditInterval), "closed_at": nil, "processing_until": nil, "last_error": ""}); err != nil {
+			if err := dao.UpdateOrder(ctx, row.Id, map[string]any{"status": constants.SupportOrderPaid, "trade_no": trade.TradeNo, "paid_at": paidAt, "confirmed_at": now, "next_attempt_at": now.Add(constants.SupportRefundAuditInterval), "closed_at": nil, "processing_until": nil, "last_error": ""}); err != nil {
 				return err
 			}
 			notifications := userdao.NewNotificationDAO(tx)
-			if err := notifications.CreateNotification(&models.Notification{UserId: row.UserId, ActorId: row.CreatorId, Type: constants.NotificationSupportPaid, Content: "助力付款已确认，30天观看权益已生效。", CreatedAt: now}); err != nil {
+			if err := notifications.CreateNotification(ctx, &models.Notification{UserId: row.UserId, ActorId: row.CreatorId, Type: constants.NotificationSupportPaid, Content: "助力付款已确认，30天观看权益已生效。", CreatedAt: now}); err != nil {
 				return fmt.Errorf("保存助力付款通知失败: %w", err)
 			}
 			// 与付款、入账和权益同事务写入；已付款订单的重复回调在上方直接返回。
-			if err := notifications.CreateNotification(supportReceivedNotification(row, now)); err != nil {
+			if err := notifications.CreateNotification(ctx, supportReceivedNotification(row, now)); err != nil {
 				return fmt.Errorf("保存收到助力通知失败: %w", err)
 			}
 			return nil
@@ -493,7 +502,7 @@ func applySupportTrade(ctx context.Context, environment string, trade *payment.A
 			if row.Status == constants.SupportOrderPaid {
 				return nil
 			}
-			return dao.UpdateOrder(row.Id, map[string]any{"status": constants.SupportOrderClosed, "trade_no": trade.TradeNo, "closed_at": now, "processing_until": nil, "last_error": ""})
+			return dao.UpdateOrder(ctx, row.Id, map[string]any{"status": constants.SupportOrderClosed, "trade_no": trade.TradeNo, "closed_at": now, "processing_until": nil, "last_error": ""})
 		case "WAIT_BUYER_PAY":
 			return nil
 		default:
@@ -548,14 +557,14 @@ func reconcileSupportOrder(ctx context.Context, row models.SupportOrder) error {
 	}
 	return supportTransaction(ctx, func(tx *gorm.DB) error {
 		dao := userdao.NewSupportDAO(tx)
-		current, err := dao.FindOrder(row.Environment, row.OrderNo, true)
+		current, err := dao.FindOrder(ctx, row.Environment, row.OrderNo, true)
 		if err != nil {
 			return err
 		}
 		if current == nil || current.Status == constants.SupportOrderPaid {
 			return nil
 		}
-		return dao.UpdateOrder(row.Id, map[string]any{"status": constants.SupportOrderClosed, "closed_at": time.Now(), "processing_until": nil, "last_error": ""})
+		return dao.UpdateOrder(ctx, row.Id, map[string]any{"status": constants.SupportOrderClosed, "closed_at": time.Now(), "processing_until": nil, "last_error": ""})
 	})
 }
 
@@ -584,7 +593,7 @@ func scanSupportOrders(ctx context.Context) {
 	var rows []models.SupportOrder
 	err := supportTransaction(ctx, func(tx *gorm.DB) error {
 		var err error
-		rows, err = userdao.NewSupportDAO(tx).ClaimOrders(cfg.Environment, time.Now())
+		rows, err = userdao.NewSupportDAO(tx).ClaimOrders(ctx, cfg.Environment, time.Now())
 		return err
 	})
 	if err != nil {
@@ -608,7 +617,7 @@ func scanSupportOrders(ctx context.Context) {
 			if len([]rune(message)) > 300 {
 				message = string([]rune(message)[:300])
 			}
-			if err := userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).FinishAttempt(row, message); err != nil {
+			if err := userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).FinishAttempt(ctx, row, message); err != nil {
 				zlog.Error("保存助力订单补偿结果失败，订单号=" + row.OrderNo + ": " + err.Error())
 			}
 		}(row)
@@ -629,7 +638,7 @@ func (s *SupportServiceImpl) RequestRefund(ctx context.Context, userId, orderNo,
 	}
 	return supportTransaction(ctx, func(tx *gorm.DB) error {
 		dao := userdao.NewSupportDAO(tx)
-		row, err := dao.FindOrder(configs.GetConfig().AlipayConfig.Environment, orderNo, true)
+		row, err := dao.FindOrder(ctx, configs.GetConfig().AlipayConfig.Environment, orderNo, true)
 		if err != nil {
 			return err
 		}
@@ -640,10 +649,10 @@ func (s *SupportServiceImpl) RequestRefund(ctx context.Context, userId, orderNo,
 		if !canRequestSupportRefund(row, now) {
 			return fmt.Errorf("该订单已申请退款或不在付款后7天内")
 		}
-		if err := applySupportSettlement(tx, row, constants.SupportLedgerReserve); err != nil {
+		if err := applySupportSettlement(ctx, tx, row, constants.SupportLedgerReserve); err != nil {
 			return err
 		}
-		return dao.UpdateOrder(row.Id, map[string]any{"refund_status": constants.SupportRefundPending, "refund_requested_at": now, "refund_reason": reason, "refund_request_no": "SR" + strings.ReplaceAll(uuid.NewString(), "-", "")})
+		return dao.UpdateOrder(ctx, row.Id, map[string]any{"refund_status": constants.SupportRefundPending, "refund_requested_at": now, "refund_reason": reason, "refund_request_no": "SR" + strings.ReplaceAll(uuid.NewString(), "-", "")})
 	})
 }
 
@@ -654,7 +663,7 @@ func ReviewSupportRefund(ctx context.Context, adminId, orderNo, action, note str
 		return fmt.Errorf("请填写1至500字的审核说明")
 	}
 	return supportTransaction(ctx, func(tx *gorm.DB) error {
-		admin, err := userdao.NewUserInfoDAO(tx).FindUserByUuid(adminId)
+		admin, err := userdao.NewUserInfoDAO(tx).FindUserByUuid(ctx, adminId)
 		if err != nil {
 			return err
 		}
@@ -662,7 +671,7 @@ func ReviewSupportRefund(ctx context.Context, adminId, orderNo, action, note str
 			return fmt.Errorf("管理员账号不可用")
 		}
 		dao := userdao.NewSupportDAO(tx)
-		row, err := dao.FindOrder(configs.GetConfig().AlipayConfig.Environment, orderNo, true)
+		row, err := dao.FindOrder(ctx, configs.GetConfig().AlipayConfig.Environment, orderNo, true)
 		if err != nil {
 			return err
 		}
@@ -690,11 +699,11 @@ func ReviewSupportRefund(ctx context.Context, adminId, orderNo, action, note str
 		}
 		// 渠道已有退款金额时，驳回本站申请也不能释放资金差异预留。
 		if status == constants.SupportRefundRejected && row.ChannelRefundAmount.IsZero() {
-			if err := applySupportSettlement(tx, row, constants.SupportLedgerRelease); err != nil {
+			if err := applySupportSettlement(ctx, tx, row, constants.SupportLedgerRelease); err != nil {
 				return err
 			}
 		}
-		return dao.UpdateOrder(row.Id, map[string]any{"refund_status": status, "refund_reviewer_id": adminId, "refund_reviewed_at": time.Now(), "refund_review_note": note, "processing_until": nil, "next_attempt_at": time.Now(), "last_error": ""})
+		return dao.UpdateOrder(ctx, row.Id, map[string]any{"refund_status": status, "refund_reviewer_id": adminId, "refund_reviewed_at": time.Now(), "refund_review_note": note, "processing_until": nil, "next_attempt_at": time.Now(), "last_error": ""})
 	})
 }
 
@@ -719,7 +728,7 @@ func supportRefundExpiry(rows []models.SupportOrder) *time.Time {
 func confirmSupportRefund(ctx context.Context, row models.SupportOrder, refundedAt time.Time) error {
 	return supportTransaction(ctx, func(tx *gorm.DB) error {
 		dao := userdao.NewSupportDAO(tx)
-		current, err := dao.FindOrder(row.Environment, row.OrderNo, true)
+		current, err := dao.FindOrder(ctx, row.Environment, row.OrderNo, true)
 		if err != nil {
 			return err
 		}
@@ -729,31 +738,31 @@ func confirmSupportRefund(ctx context.Context, row models.SupportOrder, refunded
 		if current.RefundStatus == constants.SupportRefundSucceeded {
 			return nil
 		}
-		if err := applySupportSettlement(tx, current, constants.SupportLedgerRefund); err != nil {
+		if err := applySupportSettlement(ctx, tx, current, constants.SupportLedgerRefund); err != nil {
 			return err
 		}
-		entitlement, err := dao.LockEntitlement(current.Environment, current.UserId, current.CreatorId)
+		entitlement, err := dao.LockEntitlement(ctx, current.Environment, current.UserId, current.CreatorId)
 		if err != nil {
 			return err
 		}
-		if err := dao.UpdateOrder(current.Id, map[string]any{"refund_status": constants.SupportRefundSucceeded, "refunded_at": refundedAt, "processing_until": nil, "last_error": ""}); err != nil {
+		if err := dao.UpdateOrder(ctx, current.Id, map[string]any{"refund_status": constants.SupportRefundSucceeded, "refunded_at": refundedAt, "processing_until": nil, "last_error": ""}); err != nil {
 			return err
 		}
-		rows, err := dao.PaidPairOrders(current.Environment, current.UserId, current.CreatorId)
+		rows, err := dao.PaidPairOrders(ctx, current.Environment, current.UserId, current.CreatorId)
 		if err != nil {
 			return err
 		}
-		if err := dao.SetExpiry(entitlement.Id, supportRefundExpiry(rows)); err != nil {
+		if err := dao.SetExpiry(ctx, entitlement.Id, supportRefundExpiry(rows)); err != nil {
 			return err
 		}
-		return userdao.NewNotificationDAO(tx).CreateNotification(&models.Notification{UserId: current.UserId, ActorId: current.CreatorId, Type: constants.NotificationSupportRefund, Content: "助力订单" + current.OrderNo + "已全额退款，观看权益已重新计算。", CreatedAt: time.Now()})
+		return userdao.NewNotificationDAO(tx).CreateNotification(ctx, &models.Notification{UserId: current.UserId, ActorId: current.CreatorId, Type: constants.NotificationSupportRefund, Content: "助力订单" + current.OrderNo + "已全额退款，观看权益已重新计算。", CreatedAt: time.Now()})
 	})
 }
 
 // supportRefundFailure 记录明确失败或人工核对原因，未知结果保持处理中。
 func supportRefundFailure(ctx context.Context, row models.SupportOrder, message string) error {
 	zlog.Warn("助力退款失败或需要人工核对，订单号=" + row.OrderNo + ": " + message)
-	return userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).FailRefund(row, message)
+	return userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).FailRefund(ctx, row, message)
 }
 
 // reconcileSupportRefund 校验原交易后按固定请求查询退款，日常账单核对识别站外退款。
@@ -851,7 +860,7 @@ func scanSupportRefunds(ctx context.Context) {
 	var rows []models.SupportOrder
 	err := supportTransaction(ctx, func(tx *gorm.DB) error {
 		var err error
-		rows, err = userdao.NewSupportDAO(tx).ClaimRefundOrders(configs.GetConfig().AlipayConfig.Environment, time.Now())
+		rows, err = userdao.NewSupportDAO(tx).ClaimRefundOrders(ctx, configs.GetConfig().AlipayConfig.Environment, time.Now())
 		return err
 	})
 	if err != nil {
@@ -884,7 +893,7 @@ func scanSupportRefunds(ctx context.Context) {
 			if len([]rune(message)) > 300 {
 				message = string([]rune(message)[:300])
 			}
-			if err := userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).FinishRefundAttempt(row, message, next); err != nil {
+			if err := userdao.NewSupportDAO(db.GormDB.WithContext(ctx)).FinishRefundAttempt(ctx, row, message, next); err != nil {
 				zlog.Error("保存助力退款核对结果失败，订单号=" + row.OrderNo + ": " + err.Error())
 			}
 		}(row)
@@ -915,7 +924,7 @@ func auditSupportRefundBill(ctx context.Context, row *models.SupportOrder) error
 	}
 	err = supportTransaction(ctx, func(tx *gorm.DB) error {
 		dao := userdao.NewSupportDAO(tx)
-		current, err := dao.FindOrder(row.Environment, row.OrderNo, true)
+		current, err := dao.FindOrder(ctx, row.Environment, row.OrderNo, true)
 		if err != nil {
 			return err
 		}
@@ -928,11 +937,11 @@ func auditSupportRefundBill(ctx context.Context, row *models.SupportOrder) error
 		}
 		row.ChannelRefundAmount = current.ChannelRefundAmount.Add(amount)
 		if row.ChannelRefundAmount.IsPositive() && current.RefundStatus != constants.SupportRefundSucceeded {
-			if err := applySupportSettlement(tx, current, constants.SupportLedgerAuditReserve); err != nil {
+			if err := applySupportSettlement(ctx, tx, current, constants.SupportLedgerAuditReserve); err != nil {
 				return err
 			}
 		}
-		return dao.UpdateOrder(row.Id, map[string]any{"channel_refund_amount": row.ChannelRefundAmount, "refund_checked_date": day})
+		return dao.UpdateOrder(ctx, row.Id, map[string]any{"channel_refund_amount": row.ChannelRefundAmount, "refund_checked_date": day})
 	})
 	if err != nil {
 		return err
@@ -946,17 +955,24 @@ func auditSupportRefundBill(ctx context.Context, row *models.SupportOrder) error
 // ========== 收益账户、分配与退款联动 ==========
 
 // listSupportSettlement 查询本人当前环境余额与分页流水，金额始终输出两位小数字符串。
-func listSupportSettlement(ctx context.Context, userId, kind string, page int) (any, error) {
-	dao := userdao.NewSupportSettlementDAO(db.GormDB.WithContext(ctx))
+func (s *SupportServiceImpl) listSupportSettlement(ctx context.Context, userId, kind string, page int) (any, error) {
+	dao := s.settlementDAO
 	environment := configs.GetConfig().AlipayConfig.Environment
 	if kind == "balance" {
-		row, err := dao.FindAccount(environment, userId)
+		row, err := dao.FindAccount(ctx,
+
+			environment, userId)
 		if err != nil {
 			return nil, fmt.Errorf("查询收益账户失败: %w", err)
 		}
+		if row == nil {
+			row = &models.SupportAccount{}
+		}
 		return map[string]any{"available_amount": row.AvailableAmount.StringFixed(2), "refund_frozen_amount": row.RefundFrozenAmount.StringFixed(2), "refund_reserve_amount": row.RefundReserveAmount.StringFixed(2), "withdraw_frozen_amount": row.WithdrawFrozenAmount.StringFixed(2), "debt_amount": row.DebtAmount.StringFixed(2), "income_amount": row.IncomeAmount.StringFixed(2), "refund_amount": row.RefundAmount.StringFixed(2), "withdrawn_amount": row.WithdrawnAmount.StringFixed(2)}, nil
 	}
-	rows, total, err := dao.ListLedger(environment, userId, page)
+	rows, total, err := dao.ListLedger(ctx,
+
+		environment, userId, page)
 	if err != nil {
 		return nil, fmt.Errorf("查询收益流水失败: %w", err)
 	}
@@ -1024,7 +1040,7 @@ func checkSupportBalance(account *models.SupportAccount) error {
 }
 
 // applySupportSettlement 在已持有订单锁的业务事务中变更余额、流水及订单幂等标记。
-func applySupportSettlement(tx *gorm.DB, row *models.SupportOrder, kind string) error {
+func applySupportSettlement(ctx context.Context, tx *gorm.DB, row *models.SupportOrder, kind string) error {
 	// 历史订单仅展示原统计，不自动生成可提现余额。
 	if row.SettlementVersion == 0 {
 		return nil
@@ -1071,7 +1087,7 @@ func applySupportSettlement(tx *gorm.DB, row *models.SupportOrder, kind string) 
 		return fmt.Errorf("收益流水类型无效")
 	}
 	dao := userdao.NewSupportSettlementDAO(tx)
-	account, err := dao.LockAccount(row.Environment, row.CreatorId)
+	account, err := dao.LockAccount(ctx, row.Environment, row.CreatorId)
 	if err != nil {
 		return fmt.Errorf("锁定创作者收益账户失败: %w", err)
 	}
@@ -1102,14 +1118,14 @@ func applySupportSettlement(tx *gorm.DB, row *models.SupportOrder, kind string) 
 	if err := checkSupportBalance(account); err != nil {
 		return err
 	}
-	if err := dao.SaveAccount(account); err != nil {
+	if err := dao.SaveAccount(ctx, account); err != nil {
 		return fmt.Errorf("保存创作者收益账户失败: %w", err)
 	}
 	ledger := &models.SupportLedger{Environment: row.Environment, CreatorId: row.CreatorId, OrderNo: row.OrderNo, Kind: kind, Amount: row.CreatorAmount, OffsetAmount: offset, AvailableDelta: account.AvailableAmount.Sub(before), AvailableAfter: account.AvailableAmount}
-	if err := dao.CreateLedger(ledger); err != nil {
+	if err := dao.CreateLedger(ctx, ledger); err != nil {
 		return fmt.Errorf("保存创作者收益流水失败: %w", err)
 	}
-	if err := userdao.NewSupportDAO(tx).UpdateOrder(row.Id, changes); err != nil {
+	if err := userdao.NewSupportDAO(tx).UpdateOrder(ctx, row.Id, changes); err != nil {
 		return fmt.Errorf("保存订单收益状态失败: %w", err)
 	}
 	if kind == constants.SupportLedgerIncome {
@@ -1190,13 +1206,17 @@ func (s *SupportServiceImpl) GetSettlementAccount(ctx context.Context, userId st
 		return nil, fmt.Errorf("请先登录")
 	}
 	conn := db.GormDB.WithContext(ctx)
-	user, err := userdao.NewUserInfoDAO(conn).FindUserByUuid(userId)
+	user, err := userdao.NewUserInfoDAO(conn).FindUserByUuid(ctx,
+		userId)
 	if err != nil || user == nil || user.Status != 0 {
 		return nil, fmt.Errorf("账号不可用")
 	}
-	row, err := userdao.NewSupportSettlementDAO(conn).FindAccount(configs.GetConfig().AlipayConfig.Environment, userId)
+	row, err := s.settlementDAO.FindAccount(ctx, configs.GetConfig().AlipayConfig.Environment, userId)
 	if err != nil {
 		return nil, err
+	}
+	if row == nil {
+		row = &models.SupportAccount{}
 	}
 	var payee payment.TransferPayee
 	if row.PayeeCipher != "" {
@@ -1247,7 +1267,7 @@ func (s *SupportServiceImpl) BindSettlementAccount(ctx context.Context, userId s
 		return err
 	}
 	return supportTransaction(ctx, func(tx *gorm.DB) error {
-		user, err := userdao.NewUserInfoDAO(tx).FindUserByUuidForUpdate(userId)
+		user, err := userdao.NewUserInfoDAO(tx).FindUserByUuidForUpdate(ctx, userId)
 		if err != nil {
 			return err
 		}
@@ -1258,7 +1278,7 @@ func (s *SupportServiceImpl) BindSettlementAccount(ctx context.Context, userId s
 			return fmt.Errorf("登录密码不正确")
 		}
 		dao := userdao.NewSupportSettlementDAO(tx)
-		row, err := dao.LockAccount(env, userId)
+		row, err := dao.LockAccount(ctx, env, userId)
 		if err != nil {
 			return err
 		}
@@ -1266,7 +1286,7 @@ func (s *SupportServiceImpl) BindSettlementAccount(ctx context.Context, userId s
 		row.PayeeCipher = encoded
 		row.AccountVersion++
 		row.AcceptedAt = &now
-		return dao.SavePayee(row)
+		return dao.SavePayee(ctx, row)
 	})
 }
 
@@ -1287,15 +1307,15 @@ func supportWithdrawRespond(row *models.SupportWithdraw, admin bool) map[string]
 }
 
 // writeSupportWithdrawLedger 与余额同事务记录冻结、成功或失败事件。
-func writeSupportWithdrawLedger(tx *gorm.DB, row *models.SupportWithdraw, account *models.SupportAccount, kind string, before, offset decimal.Decimal) error {
+func writeSupportWithdrawLedger(ctx context.Context, tx *gorm.DB, row *models.SupportWithdraw, account *models.SupportAccount, kind string, before, offset decimal.Decimal) error {
 	if err := checkSupportBalance(account); err != nil {
 		return err
 	}
 	dao := userdao.NewSupportSettlementDAO(tx)
-	if err := dao.SaveAccount(account); err != nil {
+	if err := dao.SaveAccount(ctx, account); err != nil {
 		return err
 	}
-	return dao.CreateLedger(&models.SupportLedger{Environment: row.Environment, CreatorId: row.CreatorId, OrderNo: row.WithdrawNo, Kind: kind, Amount: row.Amount, OffsetAmount: offset, AvailableDelta: account.AvailableAmount.Sub(before), AvailableAfter: account.AvailableAmount})
+	return dao.CreateLedger(ctx, &models.SupportLedger{Environment: row.Environment, CreatorId: row.CreatorId, OrderNo: row.WithdrawNo, Kind: kind, Amount: row.Amount, OffsetAmount: offset, AvailableDelta: account.AvailableAmount.Sub(before), AvailableAfter: account.AvailableAmount})
 }
 
 // CreateWithdrawal 先锁余额并冻结再创建提现，同一个请求键只生成一张单。
@@ -1311,11 +1331,11 @@ func (s *SupportServiceImpl) CreateWithdrawal(ctx context.Context, userId string
 		completed = false
 		defer func() { completed = err == nil }()
 		dao := userdao.NewSupportSettlementDAO(tx)
-		account, err := dao.LockAccount(cfg.AlipayConfig.Environment, userId)
+		account, err := dao.LockAccount(ctx, cfg.AlipayConfig.Environment, userId)
 		if err != nil {
 			return err
 		}
-		existing, err := dao.FindWithdrawRequest(cfg.AlipayConfig.Environment, userId, req.RequestKey)
+		existing, err := dao.FindWithdrawRequest(ctx, cfg.AlipayConfig.Environment, userId, req.RequestKey)
 		if err != nil {
 			return err
 		}
@@ -1330,7 +1350,7 @@ func (s *SupportServiceImpl) CreateWithdrawal(ctx context.Context, userId string
 			result = existing
 			return nil
 		}
-		user, err := userdao.NewUserInfoDAO(tx).FindUserByUuid(userId)
+		user, err := userdao.NewUserInfoDAO(tx).FindUserByUuid(ctx, userId)
 		if err != nil {
 			return err
 		}
@@ -1361,13 +1381,13 @@ func (s *SupportServiceImpl) CreateWithdrawal(ctx context.Context, userId string
 			return err
 		}
 		result = &models.SupportWithdraw{Environment: cfg.AlipayConfig.Environment, WithdrawNo: "SW" + strings.ReplaceAll(uuid.NewString(), "-", ""), CreatorId: userId, RequestKey: req.RequestKey, Amount: amount, PayeeCipher: encoded}
-		if err := dao.CreateWithdraw(result); err != nil {
+		if err := dao.CreateWithdraw(ctx, result); err != nil {
 			return err
 		}
 		before := account.AvailableAmount
 		account.AvailableAmount = account.AvailableAmount.Sub(amount)
 		account.WithdrawFrozenAmount = account.WithdrawFrozenAmount.Add(amount)
-		return writeSupportWithdrawLedger(tx, result, account, constants.SupportLedgerWithdrawFreeze, before, decimal.Zero)
+		return writeSupportWithdrawLedger(ctx, tx, result, account, constants.SupportLedgerWithdrawFreeze, before, decimal.Zero)
 	})
 	if err != nil {
 		if completed {
@@ -1389,10 +1409,12 @@ func (s *SupportServiceImpl) ListWithdrawals(ctx context.Context, userId string,
 	if req.Page > 100000 || len(req.WithdrawNo) > 64 {
 		return nil, fmt.Errorf("提现查询参数错误")
 	}
-	dao := userdao.NewSupportSettlementDAO(db.GormDB.WithContext(ctx))
+	dao := s.settlementDAO
 	env := configs.GetConfig().AlipayConfig.Environment
 	if req.WithdrawNo != "" {
-		row, err := dao.FindWithdraw(env, req.WithdrawNo, false)
+		row, err := dao.FindWithdraw(ctx,
+
+			env, req.WithdrawNo, false)
 		if err != nil {
 			return nil, err
 		}
@@ -1401,7 +1423,9 @@ func (s *SupportServiceImpl) ListWithdrawals(ctx context.Context, userId string,
 		}
 		return supportWithdrawRespond(row, false), nil
 	}
-	rows, total, err := dao.ListWithdraw(env, userId, "", req.Page)
+	rows, total, err := dao.ListWithdraw(ctx,
+
+		env, userId, "", req.Page)
 	if err != nil {
 		return nil, err
 	}
@@ -1436,7 +1460,7 @@ func applySupportWithdrawResult(ctx context.Context, row models.SupportWithdraw,
 	}
 	return supportTransaction(ctx, func(tx *gorm.DB) error {
 		dao := userdao.NewSupportSettlementDAO(tx)
-		current, err := dao.FindWithdraw(row.Environment, row.WithdrawNo, true)
+		current, err := dao.FindWithdraw(ctx, row.Environment, row.WithdrawNo, true)
 		if err != nil {
 			return err
 		}
@@ -1452,7 +1476,7 @@ func applySupportWithdrawResult(ctx context.Context, row models.SupportWithdraw,
 			}
 			return nil
 		}
-		account, err := dao.LockAccount(current.Environment, current.CreatorId)
+		account, err := dao.LockAccount(ctx, current.Environment, current.CreatorId)
 		if err != nil {
 			return err
 		}
@@ -1473,14 +1497,14 @@ func applySupportWithdrawResult(ctx context.Context, row models.SupportWithdraw,
 			message = "渠道已确认失败，金额已退回账户或抵扣欠款"
 			offset = normalizeSupportBalance(account, account.AvailableAmount.Add(account.RefundFrozenAmount).Add(current.Amount))
 		}
-		if err := writeSupportWithdrawLedger(tx, current, account, kind, before, offset); err != nil {
+		if err := writeSupportWithdrawLedger(ctx, tx, current, account, kind, before, offset); err != nil {
 			return err
 		}
 		var channelID *string
 		if result.OrderID != "" {
 			channelID = &result.OrderID
 		}
-		return dao.UpdateWithdraw(current.Id, map[string]any{"status": status, "channel_order_id": channelID, "last_error": message})
+		return dao.UpdateWithdraw(ctx, current.Id, map[string]any{"status": status, "channel_order_id": channelID, "last_error": message})
 	})
 }
 
@@ -1515,7 +1539,7 @@ func processSupportWithdraw(ctx context.Context, row *models.SupportWithdraw) er
 	if !now.After(row.UpdatedAt) {
 		now = row.UpdatedAt.Add(time.Millisecond)
 	}
-	ok, err := userdao.NewSupportSettlementDAO(db.GormDB.WithContext(ctx)).RenewWithdraw(row.Id, row.UpdatedAt, now)
+	ok, err := userdao.NewSupportSettlementDAO(db.GormDB.WithContext(ctx)).RenewWithdraw(ctx, row.Id, row.UpdatedAt, now)
 	if err != nil {
 		return err
 	}
@@ -1541,7 +1565,8 @@ func processSupportWithdraw(ctx context.Context, row *models.SupportWithdraw) er
 // scanSupportWithdrawals 沿用每分钟扫描，状态及更新时间支持重启恢复，不扫描成功单。
 func scanSupportWithdrawals(ctx context.Context) {
 	dao := userdao.NewSupportSettlementDAO(db.GormDB.WithContext(ctx))
-	rows, err := dao.ListPendingWithdraw(configs.GetConfig().AlipayConfig.Environment)
+	rows, err := dao.ListPendingWithdraw(ctx,
+		configs.GetConfig().AlipayConfig.Environment)
 	if err != nil {
 		zlog.Error("查询待处理提现失败: " + err.Error())
 		return
@@ -1552,7 +1577,9 @@ func scanSupportWithdrawals(ctx context.Context) {
 		go func(row models.SupportWithdraw) {
 			defer workers.Done()
 			now := time.Now().Truncate(time.Millisecond)
-			claimed, err := dao.ClaimWithdraw(row.Id, now)
+			claimed, err := dao.ClaimWithdraw(ctx,
+
+				row.Id, now)
 			if err != nil {
 				zlog.Error("领取提现处理失败: " + err.Error())
 				return
@@ -1568,7 +1595,9 @@ func scanSupportWithdrawals(ctx context.Context) {
 				if len([]rune(message)) > 300 {
 					message = string([]rune(message)[:300])
 				}
-				if err := dao.FinishWithdraw(row, message); err != nil {
+				if err := dao.FinishWithdraw(ctx,
+
+					row, message); err != nil {
 					zlog.Error("保存提现处理说明失败: " + err.Error())
 				}
 			}
@@ -1577,16 +1606,42 @@ func scanSupportWithdrawals(ctx context.Context) {
 	workers.Wait()
 }
 
+// auditSupportAccount 在调用方持有账户锁时按顺序核对流水、订单和提现，所有查询使用同一DAO连接。
+func auditSupportAccount(ctx context.Context, dao userdao.SupportSettlementDAO, account *models.SupportAccount) (string, error) {
+	flow, err := dao.GetLedgerTotals(ctx, account.Environment, account.CreatorId)
+	if err != nil {
+		return "", err
+	}
+	if !flow.Income.Equal(account.IncomeAmount) || !flow.Refund.Equal(account.RefundAmount) || !flow.Withdrawn.Equal(account.WithdrawnAmount) || !flow.Available.Equal(account.AvailableAmount) {
+		return "账户金额与累计流水不一致", nil
+	}
+	orders, err := dao.GetOrderTotals(ctx, account.Environment, account.CreatorId)
+	if err != nil {
+		return "", err
+	}
+	if !orders.Income.Equal(account.IncomeAmount) || !orders.Refund.Equal(account.RefundAmount) || !orders.Reserve.Equal(account.RefundReserveAmount) {
+		return "订单收益、退款或预留与账户不一致", nil
+	}
+	withdrawals, err := dao.GetWithdrawTotals(ctx, account.Environment, account.CreatorId)
+	if err != nil {
+		return "", err
+	}
+	if !withdrawals.Frozen.Equal(account.WithdrawFrozenAmount) || !withdrawals.Paid.Equal(account.WithdrawnAmount) {
+		return "提现单状态与账户冻结或已提现金额不一致", nil
+	}
+	return "", nil
+}
+
 // checkSupportAccount 按需核对账户与已有订单流水，不保存额外对账字段或自动调账。
 func checkSupportAccount(ctx context.Context, id int64) (string, error) {
 	var message string
 	err := supportTransaction(ctx, func(tx *gorm.DB) error {
 		dao := userdao.NewSupportSettlementDAO(tx)
-		row, err := dao.LockExistingAccount(configs.GetConfig().AlipayConfig.Environment, id)
+		row, err := dao.LockExistingAccount(ctx, configs.GetConfig().AlipayConfig.Environment, id)
 		if err != nil {
 			return err
 		}
-		message, err = dao.AuditAccount(row)
+		message, err = auditSupportAccount(ctx, dao, row)
 		if err != nil {
 			return err
 		}
@@ -1601,7 +1656,8 @@ func checkSupportAccount(ctx context.Context, id int64) (string, error) {
 // AdminSupportSettlement 只提供提现查询和手动核对，不增加审批或独立后台核对流程。
 func AdminSupportSettlement(ctx context.Context, adminId, action, no string, id int64, page int) (any, error) {
 	conn := db.GormDB.WithContext(ctx)
-	user, err := userdao.NewUserInfoDAO(conn).FindUserByUuid(adminId)
+	user, err := userdao.NewUserInfoDAO(conn).FindUserByUuid(ctx,
+		adminId)
 	if err != nil || user == nil || user.IsAdmin != 1 || user.Status != 0 {
 		return nil, fmt.Errorf("管理员账号不可用")
 	}
@@ -1615,7 +1671,9 @@ func AdminSupportSettlement(ctx context.Context, adminId, action, no string, id 
 	dao := userdao.NewSupportSettlementDAO(conn)
 	switch action {
 	case "withdrawals":
-		rows, total, err := dao.ListWithdraw(env, "", no, page)
+		rows, total, err := dao.ListWithdraw(ctx,
+
+			env, "", no, page)
 		if err != nil {
 			return nil, err
 		}
@@ -1625,7 +1683,9 @@ func AdminSupportSettlement(ctx context.Context, adminId, action, no string, id 
 		}
 		return map[string]any{"list": list, "total": total}, nil
 	case "accounts":
-		rows, total, err := dao.ListAuditAccounts(env, page)
+		rows, total, err := dao.ListAuditAccounts(ctx,
+
+			env, page)
 		if err != nil {
 			return nil, err
 		}
@@ -1640,7 +1700,9 @@ func AdminSupportSettlement(ctx context.Context, adminId, action, no string, id 
 		return map[string]any{"list": list, "total": total}, nil
 	case "reconcile":
 		if no != "" {
-			row, err := dao.FindWithdraw(env, no, false)
+			row, err := dao.FindWithdraw(ctx,
+
+				env, no, false)
 			if err != nil {
 				return nil, err
 			}
