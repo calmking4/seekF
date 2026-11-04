@@ -10,7 +10,6 @@ import (
 
 	"seekF-backend/internal/configs"
 	userdao "seekF-backend/internal/dao/user_dao"
-	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
 	businessmetrics "seekF-backend/internal/pkg/observability/metrics"
@@ -175,102 +174,6 @@ func parseDiscoverInboxMember(member string) (int64, time.Time, error) {
 		return 0, time.Time{}, fmt.Errorf("Redis收件箱帖子ID无效")
 	}
 	return id, time.Unix(seconds, 0), nil
-}
-
-// rebuildDiscoverInbox 从帖子和当前关注关系重建近期索引，变更冲突时放弃发布并由请求回源。
-func (s *DiscoverServiceImpl) rebuildDiscoverInbox(ctx context.Context, userID string, from time.Time) (bool, error) {
-	token := uuid.NewString()
-	attempt, cancel := context.WithTimeout(ctx, constants.DiscoverInboxReadTimeout)
-	revision, acquired, err := beginDiscoverInboxBuild(attempt, userID, token)
-	cancel()
-	if err != nil || !acquired {
-		return false, err
-	}
-	defer func() {
-		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), constants.DiscoverInboxReadTimeout)
-		defer releaseCancel()
-		if err := releaseDiscoverInboxBuild(releaseCtx, userID, token); err != nil {
-			zlog.Warn("释放关注收件箱重建锁失败，userId=" + userID + ": " + err.Error())
-		}
-	}()
-	// 不缓存拉黑过滤结果，解除拉黑后仍可从同一索引召回，权限统一在最终查询检查。
-	buildCtx, buildCancel := context.WithTimeout(ctx, constants.DiscoverInboxBuildTimeout)
-	defer buildCancel()
-	posts, err := s.distributionDAO.ListInboxPosts(buildCtx, userID, from, constants.DiscoverInboxCapacity)
-	if err != nil {
-		return false, err
-	}
-	members := make([]string, 0, len(posts))
-	scores := make([]int64, 0, len(posts))
-	for _, post := range posts {
-		members = append(members, discoverInboxMember(post))
-		scores = append(scores, post.CreatedAt.Unix())
-	}
-	attempt, cancel = context.WithTimeout(ctx, constants.DiscoverInboxReadTimeout)
-	defer cancel()
-	return publishDiscoverInboxBuild(attempt, userID, token, revision, members, scores)
-}
-
-// listRedisFollowingFeed 尝试Redis混合召回，缓存未就绪、窗口不足或并发变化时直接从MySQL全拉。
-func (s *DiscoverServiceImpl) listRedisFollowingFeed(ctx context.Context, userID string, input userreq.FeedRequest, boundary feedCursor) ([]models.DiscoverPost, string, error) {
-	mode := "redis"
-	fallback := func(reason string) ([]models.DiscoverPost, string, error) {
-		businessmetrics.RecordDiscoverInboxRead(reason)
-		posts, err := s.discoverDAO.ListFeed(ctx, userID, true, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
-		return posts, "fallback", err
-	}
-	attempt, cancel := context.WithTimeout(ctx, constants.DiscoverInboxReadTimeout)
-	snapshot, err := readDiscoverInbox(attempt, userID)
-	cancel()
-	if err != nil {
-		return fallback("error")
-	}
-	from := discoverDistributionFrom(configs.GetConfig().DiscoverFeedConfig)
-	if !snapshot.Ready {
-		businessmetrics.RecordDiscoverInboxRead("miss")
-		rebuilt, err := s.rebuildDiscoverInbox(ctx, userID, from)
-		if err != nil || !rebuilt {
-			return fallback("rebuild_fallback")
-		}
-		attempt, cancel = context.WithTimeout(ctx, constants.DiscoverInboxReadTimeout)
-		snapshot, err = readDiscoverInbox(attempt, userID)
-		cancel()
-		if err != nil || !snapshot.Ready {
-			return fallback("error")
-		}
-		mode = "redis_rebuilt"
-	}
-	ids := make([]int64, 0, len(snapshot.Members))
-	floor, floorID := from, int64(0)
-	for i, member := range snapshot.Members {
-		id, created, err := parseDiscoverInboxMember(member)
-		if err != nil {
-			return fallback("invalid")
-		}
-		ids = append(ids, id)
-		if len(snapshot.Members) == constants.DiscoverInboxCapacity && i == len(snapshot.Members)-1 && !created.Before(from) {
-			floor, floorID = created, id
-		}
-	}
-	if !boundary.CreatedAt.IsZero() && (boundary.CreatedAt.Before(floor) || (boundary.CreatedAt.Equal(floor) && boundary.Id <= floorID)) {
-		return fallback("history")
-	}
-	posts, err := s.distributionDAO.ListHybridFeed(ctx, userID, ids, input.MediaType, from, floor, boundary.CreatedAt, floorID, boundary.Id, input.PageSize+1)
-	if err != nil {
-		return fallback("query_error")
-	}
-	if len(posts) < input.PageSize+1 {
-		return fallback("insufficient")
-	}
-	// 若分发在读取索引后完成，pending分支可能已消失；检测变更后全拉避免这段切换漏帖。
-	attempt, cancel = context.WithTimeout(ctx, constants.DiscoverInboxReadTimeout)
-	unchanged, err := discoverInboxUnchanged(attempt, userID, snapshot.Revision)
-	cancel()
-	if err != nil || !unchanged {
-		return fallback("changed")
-	}
-	businessmetrics.RecordDiscoverInboxRead("hit")
-	return posts, mode, nil
 }
 
 // discoverInboxSnapshot 保存同一次原子读取的完整性标记、变更标识和有序帖子索引。

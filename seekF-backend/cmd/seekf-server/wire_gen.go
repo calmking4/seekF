@@ -46,14 +46,18 @@ func initApp(db *gorm.DB) App {
 	aiChatController := user.NewAIChatController(aiChatService, fileService)
 	knowledgeController := user.NewKnowledgeController(knowledgeService)
 	discoverDAO := userdao.NewDiscoverDAO(db)
+	discoverPostService := userservice.NewDiscoverPostService(discoverDAO, blockDAO, userInfoDAO)
 	discoverDistributionDAO := userdao.NewDiscoverDistributionDAO(db)
 	followingReadDAO := userdao.NewFollowingReadDAO(db)
 	discoverRankingDAO := userdao.NewDiscoverRankingDAO(db)
+	discoverFeedService := userservice.NewDiscoverFeedService(discoverDAO, discoverDistributionDAO, followingReadDAO, discoverRankingDAO, blockDAO, userInfoDAO)
+	discoverInteractionService := userservice.NewDiscoverInteractionService(discoverDAO, blockDAO, userInfoDAO)
 	discoverOutboxDAO := userdao.NewDiscoverOutboxDAO(db)
 	followDAO := userdao.NewFollowDAO(db)
+	discoverProfileService := userservice.NewDiscoverProfileService(discoverDAO, discoverOutboxDAO, blockDAO, userInfoDAO, followDAO)
+	discoverAnalyticsService := userservice.NewDiscoverAnalyticsService()
+	discoverController := user.NewDiscoverController(discoverPostService, discoverFeedService, discoverInteractionService, discoverProfileService, discoverAnalyticsService)
 	notificationDAO := userdao.NewNotificationDAO(db)
-	discoverService := userservice.NewDiscoverService(discoverDAO, discoverDistributionDAO, followingReadDAO, discoverRankingDAO, discoverOutboxDAO, blockDAO, userInfoDAO, followDAO, notificationDAO)
-	discoverController := user.NewDiscoverController(discoverService)
 	followService := userservice.NewFollowService(followDAO, userInfoDAO, notificationDAO)
 	followController := user.NewFollowController(followService)
 	notificationService := userservice.NewNotificationService(notificationDAO, userInfoDAO, discoverDAO, followDAO)
@@ -87,7 +91,7 @@ func initApp(db *gorm.DB) App {
 var daoProviderSet = wire.NewSet(admindao.NewAdminDAO, userdao.NewUserInfoDAO, userdao.NewSessionDAO, userdao.NewMessageDAO, userdao.NewKnowledgeDAO, userdao.NewKnowledgeChunkDAO, userdao.NewDiscoverDAO, userdao.NewDiscoverDistributionDAO, userdao.NewFollowingReadDAO, userdao.NewDiscoverRankingDAO, userdao.NewDiscoverOutboxDAO, userdao.NewESDiscoverDAO, userdao.NewFollowDAO, userdao.NewNotificationDAO, userdao.NewSupportDAO, userdao.NewSupportSettlementDAO, userdao.NewBlockDAO)
 
 // ServiceProviderSet — 所有业务逻辑层依赖
-var serviceProviderSet = wire.NewSet(adminservice.NewAdminService, userservice.NewAuthService, userservice.NewUserInfoService, userservice.NewSessionService, userservice.NewMessageService, userservice.NewFileService, userservice.NewAIChatService, userservice.NewKnowledgeService, userservice.NewDiscoverService, userservice.NewFollowService, userservice.NewNotificationService, userservice.NewSupportService, userservice.NewBlockService)
+var serviceProviderSet = wire.NewSet(adminservice.NewAdminService, userservice.NewAuthService, userservice.NewUserInfoService, userservice.NewSessionService, userservice.NewMessageService, userservice.NewFileService, userservice.NewAIChatService, userservice.NewKnowledgeService, userservice.NewDiscoverPostService, userservice.NewDiscoverFeedService, userservice.NewDiscoverInteractionService, userservice.NewDiscoverProfileService, userservice.NewDiscoverAnalyticsService, userservice.NewFollowService, userservice.NewNotificationService, userservice.NewSupportService, userservice.NewBlockService)
 
 // controllerProviderSet — 所有控制器依赖
 var controllerProviderSet = wire.NewSet(admin.NewAdminController, user.NewAuthController, user.NewUserInfoController, user.NewSessionController, user.NewMessageController, user.NewFileController, user.NewWsController, user.NewAIChatController, user.NewKnowledgeController, user.NewDiscoverController, user.NewFollowController, user.NewNotificationController, user.NewSupportController, user.NewBlockController)

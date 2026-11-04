@@ -15,13 +15,27 @@ import (
 
 // DiscoverController 发现页内容与互动请求控制器。
 type DiscoverController struct {
-	discoverService userservice.DiscoverService
+	discoverPostService        userservice.DiscoverPostService
+	discoverFeedService        userservice.DiscoverFeedService
+	discoverInteractionService userservice.DiscoverInteractionService
+	discoverProfileService     userservice.DiscoverProfileService
+	discoverAnalyticsService   userservice.DiscoverAnalyticsService
 }
 
 // NewDiscoverController 创建发现页控制器。
-func NewDiscoverController(discoverService userservice.DiscoverService) *DiscoverController {
+func NewDiscoverController(
+	discoverPostService userservice.DiscoverPostService,
+	discoverFeedService userservice.DiscoverFeedService,
+	discoverInteractionService userservice.DiscoverInteractionService,
+	discoverProfileService userservice.DiscoverProfileService,
+	discoverAnalyticsService userservice.DiscoverAnalyticsService,
+) *DiscoverController {
 	return &DiscoverController{
-		discoverService: discoverService,
+		discoverPostService:        discoverPostService,
+		discoverFeedService:        discoverFeedService,
+		discoverInteractionService: discoverInteractionService,
+		discoverProfileService:     discoverProfileService,
+		discoverAnalyticsService:   discoverAnalyticsService,
 	}
 }
 
@@ -34,7 +48,7 @@ func (c *DiscoverController) SuggestCreation(ctx *gin.Context) {
 		resp.Error(ctx, "图片创作建议参数错误", http.StatusBadRequest)
 		return
 	}
-	result, err := c.discoverService.SuggestDiscoverCreation(ctx.Request.Context(), ctx.GetString("Uuid"), req)
+	result, err := c.discoverPostService.SuggestDiscoverCreation(ctx.Request.Context(), ctx.GetString("Uuid"), req)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -69,7 +83,7 @@ func (c *DiscoverController) CreatePost(ctx *gin.Context) {
 		resp.Error(ctx, "媒体尺寸与文件数量不一致", http.StatusBadRequest)
 		return
 	}
-	postInfo, err := c.discoverService.CreatePost(ctx.Request.Context(), userId, req)
+	postInfo, err := c.discoverPostService.CreatePost(ctx.Request.Context(), userId, req)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -101,7 +115,7 @@ func (c *DiscoverController) ListFeed(ctx *gin.Context) {
 		resp.Error(ctx, "信息流参数错误", http.StatusBadRequest)
 		return
 	}
-	result, err := c.discoverService.ListFeed(ctx.Request.Context(), ctx.GetString("Uuid"), req)
+	result, err := c.discoverFeedService.ListFeed(ctx.Request.Context(), ctx.GetString("Uuid"), req)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -135,7 +149,7 @@ func (c *DiscoverController) ListFeed(ctx *gin.Context) {
 
 // FollowingUpdates 返回关注栏作者和有更新的作者数。
 func (c *DiscoverController) FollowingUpdates(ctx *gin.Context) {
-	result, err := c.discoverService.FollowingUpdates(ctx.Request.Context(), ctx.GetString("Uuid"))
+	result, err := c.discoverFeedService.FollowingUpdates(ctx.Request.Context(), ctx.GetString("Uuid"))
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -150,7 +164,7 @@ func (c *DiscoverController) ReadFollowingUpdates(ctx *gin.Context) {
 		resp.Error(ctx, "作者更新参数错误", http.StatusBadRequest)
 		return
 	}
-	if err := c.discoverService.ReadFollowingUpdates(ctx.Request.Context(), ctx.GetString("Uuid"), req.Token); err != nil {
+	if err := c.discoverFeedService.ReadFollowingUpdates(ctx.Request.Context(), ctx.GetString("Uuid"), req.Token); err != nil {
 		if errors.Is(err, userservice.ErrFollowingReadExpired) {
 			resp.Error(ctx, err.Error(), http.StatusGone)
 		} else {
@@ -178,7 +192,7 @@ func (c *DiscoverController) SearchPosts(ctx *gin.Context) {
 		req.PageSize = 12
 	}
 
-	posts, total, err := c.discoverService.SearchPosts(ctx.Request.Context(), userId, req.Keyword, req.Page, req.PageSize)
+	posts, total, err := c.discoverProfileService.SearchPosts(ctx.Request.Context(), userId, req.Keyword, req.Page, req.PageSize)
 	if err != nil {
 		zlog.Error("搜索帖子失败: " + err.Error())
 		respondDiscoverError(ctx, err)
@@ -237,7 +251,7 @@ func (c *DiscoverController) ListLikedPosts(ctx *gin.Context) {
 		req.PageSize = 12
 	}
 
-	posts, total, err := c.discoverService.ListLikedPosts(ctx.Request.Context(), userId, req.Page, req.PageSize)
+	posts, total, err := c.discoverInteractionService.ListLikedPosts(ctx.Request.Context(), userId, req.Page, req.PageSize)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -293,7 +307,7 @@ func (c *DiscoverController) GetPostDetail(ctx *gin.Context) {
 		return
 	}
 
-	detail, err := c.discoverService.GetPostDetail(ctx.Request.Context(), userId, req.Uuid)
+	detail, err := c.discoverPostService.GetPostDetail(ctx.Request.Context(), userId, req.Uuid)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -341,7 +355,7 @@ func (c *DiscoverController) setDiscoverLike(ctx *gin.Context, isComment bool) {
 		resp.Error(ctx, "请提供目标和明确的点赞状态", http.StatusBadRequest)
 		return
 	}
-	liked, count, err := c.discoverService.SetLike(ctx.Request.Context(), userId, req.TargetUuid, *req.IsLiked, isComment)
+	liked, count, err := c.discoverInteractionService.SetLike(ctx.Request.Context(), userId, req.TargetUuid, *req.IsLiked, isComment)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -369,7 +383,7 @@ func (c *DiscoverController) AddComment(ctx *gin.Context) {
 		return
 	}
 
-	comment, err := c.discoverService.AddComment(ctx.Request.Context(), userId, req.PostUuid, req.ParentUuid, req.ReplyToUserId, req.Content)
+	comment, err := c.discoverInteractionService.AddComment(ctx.Request.Context(), userId, req.PostUuid, req.ParentUuid, req.ReplyToUserId, req.Content)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -403,7 +417,7 @@ func (c *DiscoverController) AddAIComment(ctx *gin.Context) {
 		return
 	}
 
-	comment, err := c.discoverService.AddAIComment(ctx.Request.Context(), userId, req.PostUuid, req.Content, req.AIQuestion, req.ParentUuid, req.ReplyToUserId, req.ReplyToContent)
+	comment, err := c.discoverInteractionService.AddAIComment(ctx.Request.Context(), userId, req.PostUuid, req.Content, req.AIQuestion, req.ParentUuid, req.ReplyToUserId, req.ReplyToContent)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -443,7 +457,7 @@ func (c *DiscoverController) ListComments(ctx *gin.Context) {
 		req.PageSize = 20
 	}
 
-	comments, err := c.discoverService.ListComments(ctx.Request.Context(), userId, req.PostUuid, req.Page, req.PageSize)
+	comments, err := c.discoverInteractionService.ListComments(ctx.Request.Context(), userId, req.PostUuid, req.Page, req.PageSize)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -501,7 +515,7 @@ func (c *DiscoverController) listDiscoverCommentThread(ctx *gin.Context, replies
 	if req.PageSize <= 0 || req.PageSize > 50 {
 		req.PageSize = 20
 	}
-	comments, hasMore, err := c.discoverService.ListCommentThread(ctx.Request.Context(), ctx.GetString("Uuid"), req.PostUuid, req.ParentUuid, req.Page, req.PageSize)
+	comments, hasMore, err := c.discoverInteractionService.ListCommentThread(ctx.Request.Context(), ctx.GetString("Uuid"), req.PostUuid, req.ParentUuid, req.Page, req.PageSize)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -533,7 +547,7 @@ func (c *DiscoverController) CreateFolder(ctx *gin.Context) {
 		return
 	}
 
-	folder, err := c.discoverService.CreateFolder(ctx.Request.Context(), userId, req.Name, req.Description, req.IsPublic)
+	folder, err := c.discoverInteractionService.CreateFolder(ctx.Request.Context(), userId, req.Name, req.Description, req.IsPublic)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -567,7 +581,7 @@ func (c *DiscoverController) UpdateFolder(ctx *gin.Context) {
 		return
 	}
 
-	if err := c.discoverService.UpdateFolder(ctx.Request.Context(), userId, req.Uuid, req.Name, req.Description, req.IsPublic); err != nil {
+	if err := c.discoverInteractionService.UpdateFolder(ctx.Request.Context(), userId, req.Uuid, req.Name, req.Description, req.IsPublic); err != nil {
 		respondDiscoverError(ctx, err)
 		return
 	}
@@ -593,7 +607,7 @@ func (c *DiscoverController) DeleteFolder(ctx *gin.Context) {
 		return
 	}
 
-	if err := c.discoverService.DeleteFolder(ctx.Request.Context(), userId, req.Uuid); err != nil {
+	if err := c.discoverInteractionService.DeleteFolder(ctx.Request.Context(), userId, req.Uuid); err != nil {
 		respondDiscoverError(ctx, err)
 		return
 	}
@@ -621,7 +635,7 @@ func (c *DiscoverController) ListFolders(ctx *gin.Context) {
 	if ownerId == "" {
 		ownerId = userId
 	}
-	folders, err := c.discoverService.ListFolders(ctx.Request.Context(), ownerId, userId)
+	folders, err := c.discoverInteractionService.ListFolders(ctx.Request.Context(), ownerId, userId)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -661,7 +675,7 @@ func (c *DiscoverController) GetFolderDetail(ctx *gin.Context) {
 		return
 	}
 
-	folder, err := c.discoverService.GetFolderDetail(ctx.Request.Context(), userId, req.Uuid)
+	folder, err := c.discoverInteractionService.GetFolderDetail(ctx.Request.Context(), userId, req.Uuid)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -704,7 +718,7 @@ func (c *DiscoverController) ListCollectedPosts(ctx *gin.Context) {
 	if req.Offset != nil {
 		offset = append(offset, *req.Offset)
 	}
-	posts, total, err := c.discoverService.ListCollectedPosts(ctx.Request.Context(), userId, req.FolderUuid, req.Page, req.PageSize, offset...)
+	posts, total, err := c.discoverInteractionService.ListCollectedPosts(ctx.Request.Context(), userId, req.FolderUuid, req.Page, req.PageSize, offset...)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -759,7 +773,7 @@ func (c *DiscoverController) CollectPost(ctx *gin.Context) {
 		return
 	}
 
-	isCollected, collectCount, err := c.discoverService.CollectPost(ctx.Request.Context(), userId, req.PostUuid, req.FolderUuid)
+	isCollected, collectCount, err := c.discoverInteractionService.CollectPost(ctx.Request.Context(), userId, req.PostUuid, req.FolderUuid)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -786,7 +800,7 @@ func (c *DiscoverController) UncollectPost(ctx *gin.Context) {
 		return
 	}
 
-	isCollected, collectCount, err := c.discoverService.UncollectPost(ctx.Request.Context(), userId, req.PostUuid, req.FolderUuid)
+	isCollected, collectCount, err := c.discoverInteractionService.UncollectPost(ctx.Request.Context(), userId, req.PostUuid, req.FolderUuid)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -813,7 +827,7 @@ func (c *DiscoverController) CheckCollected(ctx *gin.Context) {
 		return
 	}
 
-	isCollected, folderUuid, err := c.discoverService.CheckCollected(ctx.Request.Context(), userId, req.PostUuid)
+	isCollected, folderUuid, err := c.discoverInteractionService.CheckCollected(ctx.Request.Context(), userId, req.PostUuid)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -845,7 +859,7 @@ func (c *DiscoverController) GetUserProfile(ctx *gin.Context) {
 		req.PageSize = 12
 	}
 
-	profile, err := c.discoverService.GetUserProfile(ctx.Request.Context(), req.UserId, userId, req.Page, req.PageSize)
+	profile, err := c.discoverProfileService.GetUserProfile(ctx.Request.Context(), req.UserId, userId, req.Page, req.PageSize)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -902,7 +916,7 @@ func (c *DiscoverController) UpdatePost(ctx *gin.Context) {
 		resp.Error(ctx, "作品参数错误", http.StatusBadRequest)
 		return
 	}
-	post, err := c.discoverService.UpdatePost(ctx.Request.Context(), ctx.GetString("Uuid"), req.PostUuid, req.CreatePostRequest)
+	post, err := c.discoverPostService.UpdatePost(ctx.Request.Context(), ctx.GetString("Uuid"), req.PostUuid, req.CreatePostRequest)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -919,7 +933,7 @@ func (c *DiscoverController) DeletePost(ctx *gin.Context) {
 		resp.Error(ctx, "请选择需要删除的作品", http.StatusBadRequest)
 		return
 	}
-	if err := c.discoverService.DeletePost(ctx.Request.Context(), ctx.GetString("Uuid"), req.PostUuid); err != nil {
+	if err := c.discoverPostService.DeletePost(ctx.Request.Context(), ctx.GetString("Uuid"), req.PostUuid); err != nil {
 		respondDiscoverError(ctx, err)
 		return
 	}
@@ -945,7 +959,7 @@ func (c *DiscoverController) RecordClick(ctx *gin.Context) {
 		resp.Error(ctx, "帖子点击参数错误", http.StatusBadRequest)
 		return
 	}
-	if err := c.discoverService.RecordDiscoverClick(ctx.Request.Context(), ctx.GetString("Uuid"), input); err != nil {
+	if err := c.discoverFeedService.RecordDiscoverClick(ctx.Request.Context(), ctx.GetString("Uuid"), input); err != nil {
 		respondDiscoverError(ctx, err)
 		return
 	}
@@ -959,7 +973,7 @@ func (c *DiscoverController) SetFeedback(ctx *gin.Context) {
 		resp.Error(ctx, "不感兴趣参数错误", http.StatusBadRequest)
 		return
 	}
-	authorId, err := c.discoverService.SetDiscoverFeedback(ctx.Request.Context(), ctx.GetString("Uuid"), input)
+	authorId, err := c.discoverFeedService.SetDiscoverFeedback(ctx.Request.Context(), ctx.GetString("Uuid"), input)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -975,7 +989,7 @@ func (c *DiscoverController) ListOwnWorks(ctx *gin.Context) {
 		resp.Error(ctx, "作品筛选参数错误", http.StatusBadRequest)
 		return
 	}
-	posts, total, counts, err := c.discoverService.ListOwnWorks(ctx.Request.Context(), ctx.GetString("Uuid"), req)
+	posts, total, counts, err := c.discoverPostService.ListOwnWorks(ctx.Request.Context(), ctx.GetString("Uuid"), req)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -994,7 +1008,7 @@ func (c *DiscoverController) SetPostVisibility(ctx *gin.Context) {
 		resp.Error(ctx, "作品可见性参数错误", http.StatusBadRequest)
 		return
 	}
-	version, err := c.discoverService.SetPostVisibility(ctx.Request.Context(), ctx.GetString("Uuid"), req)
+	version, err := c.discoverPostService.SetPostVisibility(ctx.Request.Context(), ctx.GetString("Uuid"), req)
 	if err != nil {
 		respondDiscoverError(ctx, err)
 		return
@@ -1011,7 +1025,7 @@ func (c *DiscoverController) CreatorAnalytics(ctx *gin.Context) {
 		resp.Error(ctx, "统计时间仅支持近7、30或90天", http.StatusBadRequest)
 		return
 	}
-	result, err := c.discoverService.GetCreatorAnalytics(ctx.Request.Context(), ctx.GetString("Uuid"), req)
+	result, err := c.discoverAnalyticsService.GetCreatorAnalytics(ctx.Request.Context(), ctx.GetString("Uuid"), req)
 	if err != nil {
 		zlog.Error("查询创作者数据失败，用户=" + ctx.GetString("Uuid") + ": " + err.Error())
 		resp.Error(ctx, "读取数据中心失败，请稍后重试", http.StatusInternalServerError)
@@ -1027,7 +1041,7 @@ func (c *DiscoverController) RecordShare(ctx *gin.Context) {
 		resp.Error(ctx, "分享参数错误", http.StatusBadRequest)
 		return
 	}
-	if err := c.discoverService.RecordCreatorShare(ctx.Request.Context(), ctx.GetString("Uuid"), req); err != nil {
+	if err := c.discoverAnalyticsService.RecordCreatorShare(ctx.Request.Context(), ctx.GetString("Uuid"), req); err != nil {
 		respondDiscoverError(ctx, err)
 		return
 	}
