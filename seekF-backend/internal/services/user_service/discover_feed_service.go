@@ -757,7 +757,7 @@ func (s *DiscoverFeedServiceImpl) listRedisFollowingFeed(ctx context.Context, us
 	if len(posts) < input.PageSize+1 {
 		return fallback("insufficient")
 	}
-	// 若分发在读取索引后完成，pending分支可能已消失；检测变更后全拉避免这段切换漏帖。
+	// 候选查询期间发生分发或缓存失效时回源，避免使用已变化的收件箱快照。
 	attempt, cancel = context.WithTimeout(ctx, constants.DiscoverInboxReadTimeout)
 	unchanged, err := discoverInboxUnchanged(attempt, userID, snapshot.Revision)
 	cancel()
