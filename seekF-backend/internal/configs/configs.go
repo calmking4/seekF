@@ -172,9 +172,8 @@ type Config struct {
 	GiteeOAuthConfig        `toml:"giteeOAuthConfig"`
 }
 
-// DiscoverFeedConfig 关注流分发开关、作者阈值与有界批次配置。
+// DiscoverFeedConfig 关注流分发的作者阈值与保留窗口。
 type DiscoverFeedConfig struct {
-	Enabled           bool  `toml:"enabled"`
 	FollowerThreshold int64 `toml:"followerThreshold"`
 	RetentionDays     int   `toml:"retentionDays"`
 }

@@ -36,7 +36,6 @@ type DiscoverEventReader interface {
 // discoverEventConsumer 发现页事件消费者，负责持久化事件的投递、消费和重试。
 type discoverEventConsumer struct {
 	target   int8
-	posts    userdao.DiscoverDAO
 	database *gorm.DB
 	writer   DiscoverEventWriter
 	reader   DiscoverEventReader
@@ -47,8 +46,8 @@ var discoverCons *discoverEventConsumer
 var discoverFeedCons *discoverEventConsumer
 
 // InitDiscoverFeedConsumer 初始化关注分发消费者，复用现有数据库与Kafka生命周期。
-func InitDiscoverFeedConsumer(discoverDAO userdao.DiscoverDAO) {
-	discoverFeedCons = &discoverEventConsumer{database: db.GormDB, writer: mykafka.KafkaServiceInstance.DiscoverFeedWriter, reader: mykafka.KafkaServiceInstance.DiscoverFeedReader, target: constants.DiscoverTargetFeed, posts: discoverDAO}
+func InitDiscoverFeedConsumer() {
+	discoverFeedCons = &discoverEventConsumer{database: db.GormDB, writer: mykafka.KafkaServiceInstance.DiscoverFeedWriter, reader: mykafka.KafkaServiceInstance.DiscoverFeedReader, target: constants.DiscoverTargetFeed}
 }
 
 // InitDiscoverConsumer 初始化发现页消费者，Kafka和数据库沿用项目全局连接。

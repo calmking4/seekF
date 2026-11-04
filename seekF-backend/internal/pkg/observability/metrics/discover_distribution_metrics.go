@@ -14,25 +14,26 @@ var distributionOnce sync.Once
 var distributionEvent *prometheus.HistogramVec
 var distributionWrites prometheus.Counter
 var followingQuery *prometheus.HistogramVec
+var inboxReads *prometheus.CounterVec
 
 // initDistributionMetrics 创建进程内共享的分发与关注读取指标。
 func initDistributionMetrics() {
 	distributionOnce.Do(func() {
 		distributionEvent = prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "seekf_discover_distribution_event_seconds", Help: "关注分发事件处理耗时，单位秒。", Buckets: prometheus.DefBuckets}, []string{"result"})
-		distributionWrites = prometheus.NewCounter(prometheus.CounterOpts{Name: "seekf_discover_distribution_inbox_writes_total", Help: "消费事务已提交的收件箱新增行数，单位行。"})
+		distributionWrites = prometheus.NewCounter(prometheus.CounterOpts{Name: "seekf_discover_distribution_inbox_writes_total", Help: "成功完成分发事件时统计的Redis收件箱新增成员数，重试前已写入的成员不重复累计。"})
 		followingQuery = prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "seekf_discover_following_query_seconds", Help: "关注流候选查询耗时，单位秒。", Buckets: prometheus.DefBuckets}, []string{"mode", "result"})
+		inboxReads = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "seekf_discover_inbox_reads_total", Help: "Redis关注收件箱命中、缺失及回源原因计数。"}, []string{"result"})
 	})
 }
 
-// distributionCollector 合并分发积压、收件箱规模及共享运行指标。
-type distributionCollector struct{ pending, inbox, success *prometheus.Desc }
+// distributionCollector 合并分发积压、Redis收件箱读取及共享运行指标。
+type distributionCollector struct{ pending, success *prometheus.Desc }
 
 // NewDiscoverDistributionCollector 创建关注分发采集器，统一由路由注册。
 func NewDiscoverDistributionCollector() prometheus.Collector {
 	initDistributionMetrics()
 	return &distributionCollector{
 		pending: prometheus.NewDesc("seekf_discover_distribution_pending_events", "关注分发未完成事件数。", nil, nil),
-		inbox:   prometheus.NewDesc("seekf_discover_distribution_inbox_rows", "关注收件箱当前候选行数。", nil, nil),
 		success: prometheus.NewDesc("seekf_discover_distribution_collect_success", "关注分发存储采集是否成功。", nil, nil),
 	}
 }
@@ -40,32 +41,31 @@ func NewDiscoverDistributionCollector() prometheus.Collector {
 // Describe 声明分发存储与进程运行指标。
 func (c *distributionCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.pending
-	ch <- c.inbox
 	ch <- c.success
 	distributionEvent.Describe(ch)
 	distributionWrites.Describe(ch)
 	followingQuery.Describe(ch)
+	inboxReads.Describe(ch)
 }
 
-// Collect 查询分发积压和收件箱规模，失败时显式报告采集失败。
+// Collect 查询持久化分发积压并导出Redis读取计数，不再依赖MySQL收件箱表。
 func (c *distributionCollector) Collect(ch chan<- prometheus.Metric) {
 	distributionEvent.Collect(ch)
 	distributionWrites.Collect(ch)
 	followingQuery.Collect(ch)
+	inboxReads.Collect(ch)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	var row struct {
 		Pending int64
-		Inbox   int64
 	}
-	err := db.GormDB.WithContext(ctx).Raw(`SELECT (SELECT COUNT(*) FROM discover_outbox WHERE target=1 AND status IN (0,1)) AS pending,(SELECT COUNT(*) FROM discover_feed_inbox) AS inbox`).Scan(&row).Error
+	err := db.GormDB.WithContext(ctx).Raw(`SELECT COUNT(*) AS pending FROM discover_outbox WHERE target=1 AND status IN (0,1)`).Scan(&row).Error
 	if err != nil {
 		ch <- prometheus.MustNewConstMetric(c.success, prometheus.GaugeValue, 0)
 		return
 	}
 	ch <- prometheus.MustNewConstMetric(c.success, prometheus.GaugeValue, 1)
 	ch <- prometheus.MustNewConstMetric(c.pending, prometheus.GaugeValue, float64(row.Pending))
-	ch <- prometheus.MustNewConstMetric(c.inbox, prometheus.GaugeValue, float64(row.Inbox))
 }
 
 // ObserveDiscoverDistributionEvent 记录完整分发事件提交结果，失败事务不累计写入数量。
@@ -88,4 +88,10 @@ func ObserveDiscoverFollowingQuery(mode string, elapsed time.Duration, err error
 		result = "error"
 	}
 	followingQuery.WithLabelValues(mode, result).Observe(elapsed.Seconds())
+}
+
+// RecordDiscoverInboxRead 记录固定枚举的缓存命中及回源原因，避免用户标识产生高基数标签。
+func RecordDiscoverInboxRead(result string) {
+	initDistributionMetrics()
+	inboxReads.WithLabelValues(result).Inc()
 }

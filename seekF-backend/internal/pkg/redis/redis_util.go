@@ -260,3 +260,8 @@ func DeleteAllRedisKeys() error {
 func EvalRateLimit(ctx context.Context, script string, keys []string, args ...any) (int64, error) {
 	return redisClient.Eval(ctx, script, keys, args...).Int64()
 }
+
+// GetClient 返回共用Redis连接，供业务模块执行公共工具未封装的存储操作。
+func GetClient() *redis.Client {
+	return redisClient
+}

@@ -333,22 +333,13 @@ func (s *DiscoverServiceImpl) listTimeFeed(ctx context.Context, userId string, i
 		posts, err = s.discoverDAO.ListFollowingAuthorFeed(ctx, userId, input.AuthorUuid, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
 	} else if input.Source == "recommended" {
 		posts, err = s.discoverDAO.ListRecommendationFeed(ctx, userId, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
-	} else if following && configs.GetConfig().DiscoverFeedConfig.Enabled {
+	} else if following {
 		started := time.Now()
-		posts, err = s.discoverDAO.ListHybridFeed(ctx, userId, input.MediaType, discoverDistributionFrom(configs.GetConfig().DiscoverFeedConfig), boundary.CreatedAt, boundary.Id, input.PageSize+1)
-		mode := "hybrid"
-		if err != nil {
-			zlog.Warn("关注混合流查询失败，回退读时查询，userId=" + userId + ": " + err.Error())
-			mode = "fallback"
-			posts, err = s.discoverDAO.ListFeed(ctx, userId, true, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
-		}
+		var mode string
+		posts, mode, err = s.listRedisFollowingFeed(ctx, userId, input, boundary)
 		businessmetrics.ObserveDiscoverFollowingQuery(mode, time.Since(started), err)
 	} else {
-		started := time.Now()
 		posts, err = s.discoverDAO.ListFeed(ctx, userId, following, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
-		if following {
-			businessmetrics.ObserveDiscoverFollowingQuery("pull", time.Since(started), err)
-		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("查询信息流失败: %w", err)

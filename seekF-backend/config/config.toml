@@ -147,6 +147,5 @@ redirectURL = "http://localhost:8080/user/gitee/callback"
 frontendRedirectURL = "http://localhost:3000/oauth/gitee/callback"
 
 [discoverFeedConfig]
-enabled = true
 followerThreshold = 500
 retentionDays = 30

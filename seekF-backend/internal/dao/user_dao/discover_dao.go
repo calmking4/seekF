@@ -49,10 +49,10 @@ type DiscoverDAO interface {
 	FollowingUpdates(ctx context.Context, userId string) ([]FollowingAuthorUpdate, error)
 	// 在当前关注与公开权限内查询指定作者的时间流。
 	ListFollowingAuthorFeed(ctx context.Context, userId, author string, mediaType *int8, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
-	// 清理过期或当前已不可见的收件箱候选。
-	CleanupFeedInbox(ctx context.Context, from time.Time, limit int) error
-	// 有界合并收件箱、拉模式作品、未完成分发及窗口外历史，排除关注前作品。
-	ListHybridFeed(ctx context.Context, userId string, mediaType *int8, from, before time.Time, beforeId int64, limit int) ([]models.DiscoverPost, error)
+	// 从当前关注作者的近期推模式作品重建有界收件箱索引。
+	ListInboxPosts(ctx context.Context, userId string, from time.Time, limit int) ([]models.DiscoverPost, error)
+	// 合并Redis候选、拉模式作品、新关注作品及待分发作品，统一检查当前权限。
+	ListHybridFeed(ctx context.Context, userId string, inboxIDs []int64, mediaType *int8, from, floor, before time.Time, floorID, beforeId int64, limit int) ([]models.DiscoverPost, error)
 	// 幂等保存当天首次点击，返回是否实际新增。
 	SaveClick(click *models.DiscoverClick) (bool, error)
 	// 设置帖子或作者不感兴趣状态。

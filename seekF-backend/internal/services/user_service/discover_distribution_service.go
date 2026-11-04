@@ -4,15 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"seekF-backend/internal/configs"
 	userdao "seekF-backend/internal/dao/user_dao"
+	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
 	businessmetrics "seekF-backend/internal/pkg/observability/metrics"
+	redispkg "seekF-backend/internal/pkg/redis"
 	"seekF-backend/internal/pkg/zlog"
 
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -34,7 +40,7 @@ func discoverDistributionThreshold(cfg configs.DiscoverFeedConfig) int64 {
 	return threshold
 }
 
-// processFeedOnce 在一个事务内写完普通作者全部粉丝候选并完成任务，失败整笔回滚。
+// processFeedOnce 锁定事件和作品，Redis幂等分发成功后才完成任务，失败保留事件以供重试。
 func (s *discoverEventConsumer) processFeedOnce(ctx context.Context, id int64, cfg configs.DiscoverFeedConfig) (int64, error) {
 	var inserted int64
 	err := s.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -57,9 +63,7 @@ func (s *discoverEventConsumer) processFeedOnce(ctx context.Context, id int64, c
 		if post != nil && event.PostVersion != post.Version {
 			// 旧任务不覆盖新发布的收件箱，最新公开版本有自己的分发任务。
 		} else if post == nil || post.DeletedAt.Valid || post.Status != constants.DiscoverPostPublished || post.Visibility != 0 || post.CreatedAt.Before(discoverDistributionFrom(cfg)) || post.FeedMode == constants.DiscoverFeedPull {
-			if err := dao.DeletePostInbox(event.PostUuid); err != nil {
-				return err
-			}
+			// 失效索引由TTL淘汰；读取时始终复核MySQL当前状态，不因缓存残留泄露内容。
 		} else {
 			threshold := discoverDistributionThreshold(cfg)
 			fans, err := dao.ListFans(post.UserId, post.CreatedAt, int(threshold))
@@ -71,15 +75,15 @@ func (s *discoverEventConsumer) processFeedOnce(ctx context.Context, id int64, c
 				if err := dao.SetPostFeedMode(post.Id, constants.DiscoverFeedPull); err != nil {
 					return err
 				}
-				if err := dao.DeletePostInbox(post.Uuid); err != nil {
-					return err
-				}
 			} else {
-				rows := make([]models.DiscoverFeedInbox, 0, len(fans))
+				users := make([]string, 0, len(fans))
 				for _, fan := range fans {
-					rows = append(rows, models.DiscoverFeedInbox{UserId: fan.UserId, PostUuid: post.Uuid, PostCreatedAt: post.CreatedAt})
+					users = append(users, fan.UserId)
 				}
-				inserted, err = dao.InsertInbox(rows)
+				attempt, cancel := context.WithTimeout(ctx, constants.DiscoverInboxWriteTimeout)
+				defer cancel()
+				// Redis无法参与MySQL事务；部分成功后重试ZADD不会重复，事件状态提交失败也可安全重放。
+				inserted, err = fanoutDiscoverInbox(attempt, users, discoverInboxMember(*post), post.CreatedAt.Unix(), uuid.NewString())
 				if err != nil {
 					return err
 				}
@@ -122,13 +126,7 @@ func (s *discoverEventConsumer) processFeedEvent(ctx context.Context, id int64) 
 	return nil
 }
 
-// MaintainDistribution 仅清理过期及当前不可见候选，不再回填任何历史帖子。
-func (s *discoverEventConsumer) MaintainDistribution(ctx context.Context) error {
-	cfg := configs.GetConfig().DiscoverFeedConfig
-	return s.posts.CleanupFeedInbox(ctx, discoverDistributionFrom(cfg).Add(-constants.DiscoverInboxCleanupGrace), constants.DiscoverInboxCleanupLimit)
-}
-
-// StartDiscoverFeedConsumer 启动关注消费者，完整分发事务提交后显式提交Kafka位点。
+// StartDiscoverFeedConsumer 启动关注消费者，Redis分发及事件状态提交完成后才提交Kafka位点。
 func StartDiscoverFeedConsumer() {
 	if discoverFeedCons == nil {
 		zlog.Error("关注分发消费者未初始化")
@@ -137,7 +135,7 @@ func StartDiscoverFeedConsumer() {
 	go discoverFeedCons.consume(context.Background())
 }
 
-// StartDiscoverFeedPublisher 启动候选清理与可靠投递，不进行新关注或存量关系历史回填。
+// StartDiscoverFeedPublisher 启动关注分发事件可靠投递，Redis收件箱由容量限制及TTL自动维护。
 func StartDiscoverFeedPublisher() {
 	if discoverFeedCons == nil {
 		zlog.Error("关注分发投递器未初始化")
@@ -147,9 +145,6 @@ func StartDiscoverFeedPublisher() {
 	go func() {
 		ctx := context.Background()
 		for ctx.Err() == nil {
-			if err := s.MaintainDistribution(ctx); err != nil {
-				zlog.Warn("维护关注分发失败: " + err.Error())
-			}
 			if err := s.PublishDue(ctx); err != nil {
 				zlog.Warn("投递关注分发失败: " + err.Error())
 			}
@@ -158,4 +153,266 @@ func StartDiscoverFeedPublisher() {
 			}
 		}
 	}()
+}
+
+// discoverInboxMember 将时间和主键编码为索引，同秒成员按数值主键排序，与MySQL游标一致。
+func discoverInboxMember(post models.DiscoverPost) string {
+	return fmt.Sprintf("%020d:%020d:%s", post.CreatedAt.Unix(), post.Id, post.Uuid)
+}
+
+// parseDiscoverInboxMember 校验索引并解析游标边界，格式损坏时回源而不返回不完整分页。
+func parseDiscoverInboxMember(member string) (int64, time.Time, error) {
+	parts := strings.Split(member, ":")
+	if len(parts) != 3 || len(parts[0]) != 20 || len(parts[1]) != 20 || parts[2] == "" {
+		return 0, time.Time{}, fmt.Errorf("Redis收件箱索引格式无效")
+	}
+	seconds, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || seconds < 0 {
+		return 0, time.Time{}, fmt.Errorf("Redis收件箱时间无效")
+	}
+	id, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || id < 1 {
+		return 0, time.Time{}, fmt.Errorf("Redis收件箱帖子ID无效")
+	}
+	return id, time.Unix(seconds, 0), nil
+}
+
+// rebuildDiscoverInbox 从帖子和当前关注关系重建近期索引，变更冲突时放弃发布并由请求回源。
+func (s *DiscoverServiceImpl) rebuildDiscoverInbox(ctx context.Context, userID string, from time.Time) (bool, error) {
+	token := uuid.NewString()
+	attempt, cancel := context.WithTimeout(ctx, constants.DiscoverInboxReadTimeout)
+	revision, acquired, err := beginDiscoverInboxBuild(attempt, userID, token)
+	cancel()
+	if err != nil || !acquired {
+		return false, err
+	}
+	defer func() {
+		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), constants.DiscoverInboxReadTimeout)
+		defer releaseCancel()
+		if err := releaseDiscoverInboxBuild(releaseCtx, userID, token); err != nil {
+			zlog.Warn("释放关注收件箱重建锁失败，userId=" + userID + ": " + err.Error())
+		}
+	}()
+	// 不缓存拉黑过滤结果，解除拉黑后仍可从同一索引召回，权限统一在最终查询检查。
+	buildCtx, buildCancel := context.WithTimeout(ctx, constants.DiscoverInboxBuildTimeout)
+	defer buildCancel()
+	posts, err := s.discoverDAO.ListInboxPosts(buildCtx, userID, from, constants.DiscoverInboxCapacity)
+	if err != nil {
+		return false, err
+	}
+	members := make([]string, 0, len(posts))
+	scores := make([]int64, 0, len(posts))
+	for _, post := range posts {
+		members = append(members, discoverInboxMember(post))
+		scores = append(scores, post.CreatedAt.Unix())
+	}
+	attempt, cancel = context.WithTimeout(ctx, constants.DiscoverInboxReadTimeout)
+	defer cancel()
+	return publishDiscoverInboxBuild(attempt, userID, token, revision, members, scores)
+}
+
+// listRedisFollowingFeed 尝试Redis混合召回，缓存未就绪、窗口不足或并发变化时直接从MySQL全拉。
+func (s *DiscoverServiceImpl) listRedisFollowingFeed(ctx context.Context, userID string, input userreq.FeedRequest, boundary feedCursor) ([]models.DiscoverPost, string, error) {
+	mode := "redis"
+	fallback := func(reason string) ([]models.DiscoverPost, string, error) {
+		businessmetrics.RecordDiscoverInboxRead(reason)
+		posts, err := s.discoverDAO.ListFeed(ctx, userID, true, input.MediaType, boundary.CreatedAt, boundary.Id, input.PageSize+1)
+		return posts, "fallback", err
+	}
+	attempt, cancel := context.WithTimeout(ctx, constants.DiscoverInboxReadTimeout)
+	snapshot, err := readDiscoverInbox(attempt, userID)
+	cancel()
+	if err != nil {
+		return fallback("error")
+	}
+	from := discoverDistributionFrom(configs.GetConfig().DiscoverFeedConfig)
+	if !snapshot.Ready {
+		businessmetrics.RecordDiscoverInboxRead("miss")
+		rebuilt, err := s.rebuildDiscoverInbox(ctx, userID, from)
+		if err != nil || !rebuilt {
+			return fallback("rebuild_fallback")
+		}
+		attempt, cancel = context.WithTimeout(ctx, constants.DiscoverInboxReadTimeout)
+		snapshot, err = readDiscoverInbox(attempt, userID)
+		cancel()
+		if err != nil || !snapshot.Ready {
+			return fallback("error")
+		}
+		mode = "redis_rebuilt"
+	}
+	ids := make([]int64, 0, len(snapshot.Members))
+	floor, floorID := from, int64(0)
+	for i, member := range snapshot.Members {
+		id, created, err := parseDiscoverInboxMember(member)
+		if err != nil {
+			return fallback("invalid")
+		}
+		ids = append(ids, id)
+		if len(snapshot.Members) == constants.DiscoverInboxCapacity && i == len(snapshot.Members)-1 && !created.Before(from) {
+			floor, floorID = created, id
+		}
+	}
+	if !boundary.CreatedAt.IsZero() && (boundary.CreatedAt.Before(floor) || (boundary.CreatedAt.Equal(floor) && boundary.Id <= floorID)) {
+		return fallback("history")
+	}
+	posts, err := s.discoverDAO.ListHybridFeed(ctx, userID, ids, input.MediaType, from, floor, boundary.CreatedAt, floorID, boundary.Id, input.PageSize+1)
+	if err != nil {
+		return fallback("query_error")
+	}
+	if len(posts) < input.PageSize+1 {
+		return fallback("insufficient")
+	}
+	// 若分发在读取索引后完成，pending分支可能已消失；检测变更后全拉避免这段切换漏帖。
+	attempt, cancel = context.WithTimeout(ctx, constants.DiscoverInboxReadTimeout)
+	unchanged, err := discoverInboxUnchanged(attempt, userID, snapshot.Revision)
+	cancel()
+	if err != nil || !unchanged {
+		return fallback("changed")
+	}
+	businessmetrics.RecordDiscoverInboxRead("hit")
+	return posts, mode, nil
+}
+
+// discoverInboxSnapshot 保存同一次原子读取的完整性标记、变更标识和有序帖子索引。
+type discoverInboxSnapshot struct {
+	Ready    bool
+	Revision string
+	Members  []string
+}
+
+// discoverInboxKeys 返回同一用户的ZSet、元信息及重建锁键。
+func discoverInboxKeys(userID string) []string {
+	key := constants.DiscoverInboxKeyPrefix + "{" + userID + "}"
+	return []string{key, key + ":meta", key + ":build"}
+}
+
+// readDiscoverInbox 原子检查完整性并读取有界候选，哨兵用于区分合法空收件箱与ZSet被淘汰。
+func readDiscoverInbox(ctx context.Context, userID string) (discoverInboxSnapshot, error) {
+	const script = `
+local revision = redis.call('HGET', KEYS[2], 'revision') or ''
+if redis.call('HGET', KEYS[2], 'ready') ~= '1' or not redis.call('ZSCORE', KEYS[1], '!') then
+  return {revision, '0'}
+end
+local result = {revision, '1'}
+local members = redis.call('ZREVRANGE', KEYS[1], 0, tonumber(ARGV[1]) - 1)
+for _, member in ipairs(members) do
+  if member ~= '!' then table.insert(result, member) end
+end
+return result`
+	values, err := redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID)[:2], constants.DiscoverInboxCapacity).StringSlice()
+	if err != nil {
+		return discoverInboxSnapshot{}, err
+	}
+	if len(values) < 2 {
+		return discoverInboxSnapshot{}, errors.New("Redis收件箱返回格式无效")
+	}
+	return discoverInboxSnapshot{Revision: values[0], Ready: values[1] == "1", Members: values[2:]}, nil
+}
+
+// discoverInboxUnchanged 检查候选查询期间是否发生分发、失效或缓存淘汰，变化时交由MySQL兜底。
+func discoverInboxUnchanged(ctx context.Context, userID, revision string) (bool, error) {
+	const script = `
+if redis.call('HGET', KEYS[2], 'revision') == ARGV[1]
+and redis.call('HGET', KEYS[2], 'ready') == '1'
+and redis.call('ZSCORE', KEYS[1], '!') then return 1 end
+return 0`
+	result, err := redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID)[:2], revision).Int64()
+	return result == 1, err
+}
+
+// fanoutDiscoverInbox 批量幂等写入粉丝收件箱，失败允许重试，增量写入不能把不完整缓存标为完整。
+func fanoutDiscoverInbox(ctx context.Context, users []string, member string, score int64, revision string) (int64, error) {
+	const script = `
+local ttl = redis.call('PTTL', KEYS[2])
+if ttl < 1 then ttl = tonumber(ARGV[4]) end
+if not redis.call('ZSCORE', KEYS[1], '!') then redis.call('HSET', KEYS[2], 'ready', '0') end
+redis.call('ZADD', KEYS[1], -1, '!')
+local inserted = redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
+local excess = redis.call('ZCARD', KEYS[1]) - tonumber(ARGV[5]) - 1
+if excess > 0 then redis.call('ZREMRANGEBYRANK', KEYS[1], 1, excess) end
+redis.call('HSET', KEYS[2], 'revision', ARGV[3])
+redis.call('PEXPIRE', KEYS[1], ttl)
+redis.call('PEXPIRE', KEYS[2], ttl)
+return inserted`
+	if len(users) == 0 {
+		return 0, nil
+	}
+	pipe := redispkg.GetClient().Pipeline()
+	commands := make([]*redis.Cmd, 0, len(users))
+	for _, userID := range users {
+		commands = append(commands, pipe.Eval(ctx, script, discoverInboxKeys(userID)[:2], score, member, revision, constants.DiscoverInboxTTL.Milliseconds(), constants.DiscoverInboxCapacity))
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, fmt.Errorf("写入Redis关注收件箱失败: %w", err)
+	}
+	var inserted int64
+	for _, command := range commands {
+		count, err := command.Int64()
+		if err != nil {
+			return 0, fmt.Errorf("读取Redis收件箱分发结果失败: %w", err)
+		}
+		inserted += count
+	}
+	return inserted, nil
+}
+
+// beginDiscoverInboxBuild 领取短期重建锁并记录变更标识，其他请求不等待重建而直接回源。
+func beginDiscoverInboxBuild(ctx context.Context, userID, token string) (string, bool, error) {
+	const script = `
+if not redis.call('SET', KEYS[3], ARGV[1], 'NX', 'PX', ARGV[2]) then return false end
+local revision = redis.call('HGET', KEYS[2], 'revision')
+if not revision then
+  revision = ARGV[1]
+  redis.call('HSET', KEYS[2], 'revision', revision, 'ready', '0')
+  redis.call('PEXPIRE', KEYS[2], ARGV[3])
+end
+return revision`
+	revision, err := redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID), token, constants.DiscoverInboxBuildTimeout.Milliseconds(), constants.DiscoverInboxTTL.Milliseconds()).Text()
+	if errors.Is(err, redis.Nil) {
+		return "", false, nil
+	}
+	return revision, err == nil, err
+}
+
+// publishDiscoverInboxBuild 只在重建期间没有新分发或失效时原子发布，避免旧快照覆盖新消息。
+func publishDiscoverInboxBuild(ctx context.Context, userID, token, revision string, members []string, scores []int64) (bool, error) {
+	if len(members) != len(scores) || len(members) > constants.DiscoverInboxCapacity {
+		return false, errors.New("Redis收件箱重建参数无效")
+	}
+	const script = `
+if redis.call('GET', KEYS[3]) ~= ARGV[1] then return 0 end
+if redis.call('HGET', KEYS[2], 'revision') ~= ARGV[2] then
+  redis.call('DEL', KEYS[3])
+  return 0
+end
+redis.call('DEL', KEYS[1])
+redis.call('ZADD', KEYS[1], -1, '!')
+for i = 4, #ARGV, 2 do redis.call('ZADD', KEYS[1], ARGV[i], ARGV[i + 1]) end
+redis.call('HSET', KEYS[2], 'revision', ARGV[1], 'ready', '1')
+redis.call('PEXPIRE', KEYS[1], ARGV[3])
+redis.call('PEXPIRE', KEYS[2], ARGV[3])
+redis.call('DEL', KEYS[3])
+return 1`
+	args := []any{token, revision, constants.DiscoverInboxTTL.Milliseconds()}
+	for i, member := range members {
+		args = append(args, scores[i], member)
+	}
+	result, err := redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID), args...).Int64()
+	return result == 1, err
+}
+
+// releaseDiscoverInboxBuild 只释放本次持有的重建锁，避免误删其他请求的新锁。
+func releaseDiscoverInboxBuild(ctx context.Context, userID, token string) error {
+	const script = `if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0`
+	return redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID)[2:], token).Err()
+}
+
+// invalidateDiscoverInbox 在关注关系变更后标记重建，并使在途旧快照无法发布。
+func invalidateDiscoverInbox(ctx context.Context, userID, revision string) error {
+	const script = `
+redis.call('DEL', KEYS[1])
+redis.call('HSET', KEYS[2], 'revision', ARGV[1], 'ready', '0')
+redis.call('PEXPIRE', KEYS[2], ARGV[2])
+return 1`
+	return redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID)[:2], revision, constants.DiscoverInboxTTL.Milliseconds()).Err()
 }

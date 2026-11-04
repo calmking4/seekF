@@ -91,12 +91,20 @@ const (
 	DiscoverFeedPull int8 = 1
 )
 
-// 关注收件箱维护批量。
+// Redis关注收件箱的容量、有效期与操作时限。
 const (
-	// 每条清理语句最多删除的候选数量，单位行，与发帖分发无关。
-	DiscoverInboxCleanupLimit = 200
-	// 清理比读取窗口额外保留1小时，避免并发请求与清理计算时间边界不同而漏读。
-	DiscoverInboxCleanupGrace = time.Hour
+	// 每位用户最多保留1000条近期帖子索引。
+	DiscoverInboxCapacity = 1000
+	// 收件箱及完整性标记保留10分钟，读取不续期。
+	DiscoverInboxTTL = 10 * time.Minute
+	// 请求内Redis读取或重建发布最多等待100毫秒。
+	DiscoverInboxReadTimeout = 100 * time.Millisecond
+	// 一次最多500人的分发写入最多等待2秒。
+	DiscoverInboxWriteTimeout = 2 * time.Second
+	// 重建锁最多保留10秒，防止进程中断后长期占用。
+	DiscoverInboxBuildTimeout = 10 * time.Second
+	// 收件箱键使用用户哈希标签，使同用户的相关键位于同一Redis分片。
+	DiscoverInboxKeyPrefix = "discover:inbox:v1:"
 )
 
 // 帖子浏览量更新协程池。

@@ -10,6 +10,7 @@ import (
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/db"
+	"seekF-backend/internal/pkg/zlog"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -111,6 +112,12 @@ func (s *FollowServiceImpl) ToggleFollow(ctx context.Context, userId, followUser
 	})
 	if err != nil {
 		return false, fmt.Errorf("切换关注失败: %w", err)
+	}
+	// 关系已提交后使旧索引及在途重建失效；失败不回滚关注，近期作者补查与缓存TTL提供兜底。
+	cacheCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), constants.DiscoverInboxReadTimeout)
+	defer cancel()
+	if err := invalidateDiscoverInbox(cacheCtx, userId, uuid.NewString()); err != nil {
+		zlog.Warn("关注关系已更新但收件箱失效失败，userId=" + userId + ": " + err.Error())
 	}
 	return followed, nil
 }
