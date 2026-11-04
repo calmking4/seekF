@@ -75,7 +75,7 @@ const (
 
 // 关注流默认分发策略。
 const (
-	// 未配置时的大粉丝作者阈值，单位人。
+	// 未配置时作者升级为永久拉模式的粉丝阈值，单位人。
 	DiscoverDistributionThreshold = 500
 	// 未配置时收件箱候选保留窗口，单位天。
 	DiscoverDistributionDays = 30
@@ -83,7 +83,7 @@ const (
 	DiscoverRecentFollowWindow = 24 * time.Hour
 )
 
-// 作品发布时确定的关注流分发方式。
+// 作者及作品的关注流分发方式，作者只升级不降级，作品保留发布时的模式。
 const (
 	// 普通作者作品写入粉丝收件箱。
 	DiscoverFeedPush int8 = 0

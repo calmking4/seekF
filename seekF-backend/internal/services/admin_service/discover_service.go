@@ -148,19 +148,26 @@ func (s *AdminService) ReviewDiscoverPost(ctx context.Context, adminId string, r
 		if req.Status == constants.DiscoverPostPublished {
 			post.ReviewNote = ""
 			post.CreatedAt = time.Now()
-			post.FeedMode = constants.DiscoverFeedPull
-			if post.Visibility == 0 {
-				threshold := configs.GetConfig().DiscoverFeedConfig.FollowerThreshold
-				if threshold < 1 {
-					threshold = constants.DiscoverDistributionThreshold
-				}
-				// 最多读取阈值条真实关注关系，发布时固定策略，不依赖可能滞后的粉丝计数。
-				fans, err := userdao.NewDiscoverDistributionDAO(tx).ListFans(ctx, post.UserId, post.CreatedAt, int(threshold))
-				if err != nil {
-					return fmt.Errorf("确定作品关注流分发方式失败: %w", err)
-				}
-				if int64(len(fans)) < threshold {
-					post.FeedMode = constants.DiscoverFeedPush
+			post.FeedMode = constants.DiscoverFeedPush
+			threshold := configs.GetConfig().DiscoverFeedConfig.FollowerThreshold
+			if threshold < 1 {
+				threshold = constants.DiscoverDistributionThreshold
+			}
+			users := userdao.NewUserInfoDAO(tx)
+			author, err := users.FindUserByUuidForUpdate(ctx, post.UserId)
+			if err != nil {
+				return fmt.Errorf("确定作品关注流分发方式失败: %w", err)
+			}
+			if author == nil {
+				return fmt.Errorf("作品作者不存在")
+			}
+			// 私密作品也记录作者模式，之后公开时不误走推送；公开作品才会创建分发任务。
+			if author.FeedMode == constants.DiscoverFeedPull || author.FollowerCount >= threshold {
+				post.FeedMode = constants.DiscoverFeedPull
+				if author.FeedMode != constants.DiscoverFeedPull {
+					if err := users.SetFeedModePull(ctx, post.UserId); err != nil {
+						return err
+					}
 				}
 			}
 		}

@@ -29,7 +29,7 @@ func discoverDistributionFrom(cfg configs.DiscoverFeedConfig) time.Time {
 	return time.Now().AddDate(0, 0, -days).Truncate(time.Second)
 }
 
-// discoverDistributionThreshold 返回单篇作品推送人数的上限，默认500人。
+// discoverDistributionThreshold 返回作者升级为永久拉模式及分发安全上限的粉丝阈值，默认500人。
 func discoverDistributionThreshold(cfg configs.DiscoverFeedConfig) int64 {
 	threshold := cfg.FollowerThreshold
 	if threshold < 1 {
@@ -69,7 +69,18 @@ func (s *discoverEventConsumer) processFeedOnce(ctx context.Context, id int64, c
 				return err
 			}
 			if int64(len(fans)) >= threshold {
-				// 仅处理发布时符合时间条件的关注关系；异常达到上限时转拉，不能截断粉丝后报分发完成。
+				// 安全阈值触发时同时升级作者及作品，保证该作品能被大V拉取分支召回。
+				users := userdao.NewUserInfoDAO(tx)
+				author, err := users.FindUserByUuidForUpdate(ctx, post.UserId)
+				if err != nil {
+					return err
+				}
+				if author == nil {
+					return fmt.Errorf("关注分发作品的作者不存在")
+				}
+				if err := users.SetFeedModePull(ctx, post.UserId); err != nil {
+					return err
+				}
 				if err := dao.SetPostFeedMode(ctx, post.Id, constants.DiscoverFeedPull); err != nil {
 					return err
 				}

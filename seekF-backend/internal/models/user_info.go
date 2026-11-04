@@ -11,6 +11,7 @@ import (
 type UserInfo struct {
 	FollowingCount int64          `gorm:"column:following_count;not null;default:0;comment:关注用户数量，单位人，与关注关系同事务维护"`
 	FollowerCount  int64          `gorm:"column:follower_count;not null;default:0;comment:粉丝用户数量，单位人，用于主页展示和推拉判断"`
+	FeedMode       int8           `gorm:"column:feed_mode;type:tinyint;not null;default:0;comment:作者关注流分发模式，0推送，1拉取；达到粉丝阈值后保持拉取，不自动降级"`
 	Id             int64          `gorm:"column:id;primaryKey;comment:自增id"`
 	Uuid           string         `gorm:"column:uuid;uniqueIndex;type:char(20);comment:用户唯一id"`
 	Nickname       string         `gorm:"column:nickname;uniqueIndex;type:varchar(20);not null;comment:昵称"`

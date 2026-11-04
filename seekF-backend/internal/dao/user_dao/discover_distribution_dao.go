@@ -21,7 +21,7 @@ type DiscoverDistributionDAO interface {
 	SetPostFeedMode(ctx context.Context, id int64, mode int8) error
 	// 仅查询当前关注作者的近期推模式索引，不复制正文或缓存访问权限。
 	ListInboxPosts(ctx context.Context, userId string, from time.Time, limit int) ([]models.DiscoverPost, error)
-	// 将有界Redis候选与其他召回放入同一SQL快照，避免分发状态切换时漏读。
+	// 先定位关注的拉模式作者，再将其Pull作品与收件箱、新关注及待分发候选合并。
 	ListHybridFeed(ctx context.Context, userId string, inboxIDs []int64, mediaType *int8, from, floor, before time.Time, floorID, beforeId int64, limit int) ([]models.DiscoverPost, error)
 }
 
@@ -64,7 +64,7 @@ func (d *DiscoverDistributionDAOImpl) ListInboxPosts(ctx context.Context, userId
 	return rows, err
 }
 
-// ListHybridFeed 将有界Redis候选与其他召回放入同一SQL快照，避免分发状态切换时漏读。
+// ListHybridFeed 先定位关注的大V及其Pull作品，与其他召回在同一SQL快照中去重分页。
 func (d *DiscoverDistributionDAOImpl) ListHybridFeed(ctx context.Context, userId string, inboxIDs []int64, mediaType *int8, from, floor, before time.Time, floorID, beforeId int64, limit int) ([]models.DiscoverPost, error) {
 	rows := make([]models.DiscoverPost, 0)
 	if limit < 1 {
@@ -87,13 +87,14 @@ AND p.created_at>=? AND (p.created_at>? OR (p.created_at=? AND p.id>=?))`
 	branches := make([]string, 0, 4)
 	args := make([]any, 0)
 	// 每路在权限与游标过滤之后再截断，不让失效候选占用最终页名额。
-	addBranch := func(name, source, condition string, values []any, distinct bool) {
+	addBranch := func(name, source, condition string, values []any, distinct bool, sourceValues ...any) {
 		query := "SELECT p.id,p.created_at " + source + filters + condition
 		if distinct {
 			query += " GROUP BY p.id,p.created_at"
 		}
 		query += " ORDER BY p.created_at DESC,p.id DESC LIMIT ?"
 		branches = append(branches, "SELECT * FROM ("+query+") "+name)
+		args = append(args, sourceValues...)
 		args = append(args, filterArgs...)
 		args = append(args, values...)
 		args = append(args, limit)
@@ -102,8 +103,14 @@ AND p.created_at>=? AND (p.created_at>? OR (p.created_at=? AND p.id>=?))`
 		addBranch("pushed", "FROM discover_post p JOIN user_follow f ON f.follow_user_id=p.user_id",
 			" AND p.feed_mode=? AND p.id IN ?", []any{constants.DiscoverFeedPush, inboxIDs}, false)
 	}
-	addBranch("pulled", "FROM discover_post p JOIN user_follow f ON f.follow_user_id=p.user_id",
-		" AND p.feed_mode=?", []any{constants.DiscoverFeedPull}, false)
+	// GROUP BY阻止作者子查询合并；先走当前用户的关注索引，再按作者索引定位Pull作品。
+	addBranch("pulled", `FROM (
+SELECT relation.user_id,relation.follow_user_id
+FROM user_follow relation STRAIGHT_JOIN user_info author ON author.uuid=relation.follow_user_id
+WHERE relation.user_id=? AND author.feed_mode=? AND author.deleted_at IS NULL
+GROUP BY relation.user_id,relation.follow_user_id
+) f STRAIGHT_JOIN discover_post p FORCE INDEX (idx_discover_author_mode) ON p.user_id=f.follow_user_id`,
+		" AND p.feed_mode=?", []any{constants.DiscoverFeedPull}, false, userId, constants.DiscoverFeedPull)
 	addBranch("recent_followed", "FROM user_follow f JOIN discover_post p ON p.user_id=f.follow_user_id",
 		" AND f.created_at>=? AND p.feed_mode=?", []any{time.Now().Add(-constants.DiscoverRecentFollowWindow), constants.DiscoverFeedPush}, false)
 	addBranch("pending", `FROM discover_outbox o JOIN discover_post p ON p.uuid=CAST(o.post_uuid AS BINARY)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"seekF-backend/internal/models"
+	"seekF-backend/internal/pkg/constants"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -17,6 +18,8 @@ type UserInfoDAO interface {
 	FindUserByUuidForUpdate(ctx context.Context, uuid string) (*models.UserInfo, error)
 	// 原子维护关注及粉丝计数，拒绝减为负数。
 	UpdateFollowCounts(ctx context.Context, uuid string, followingDelta, followerDelta int64) error
+	// 将作者标记为拉模式，后续粉丝减少不自动降级。
+	SetFeedModePull(ctx context.Context, uuid string) error
 	// 创建用户
 	CreateUser(ctx context.Context, user *models.UserInfo) error
 	// 根据UUID查询用户，不存在时返回空。
@@ -125,8 +128,8 @@ func (d *UserInfoDAOImpl) FindUserByGiteeId(ctx context.Context, giteeId int64) 
 
 // UpdateUserInfo 更新用户信息
 func (d *UserInfoDAOImpl) UpdateUserInfo(ctx context.Context, user *models.UserInfo) error {
-	// 计数只由关注事务维护，资料更新不得用旧快照覆盖并发计数。
-	result := d.db.WithContext(ctx).Omit("following_count", "follower_count").Save(user)
+	// 计数及作者模式只由业务事务维护，资料更新不得用旧快照覆盖并发变化。
+	result := d.db.WithContext(ctx).Omit("following_count", "follower_count", "feed_mode").Save(user)
 	return result.Error
 }
 
@@ -152,4 +155,9 @@ func (d *UserInfoDAOImpl) UpdateFollowCounts(ctx context.Context, uuid string, f
 		return fmt.Errorf("用户不存在或关注计数异常，userId=%s", uuid)
 	}
 	return nil
+}
+
+// SetFeedModePull 在调用方锁定作者的事务内设置永久拉模式标记。
+func (d *UserInfoDAOImpl) SetFeedModePull(ctx context.Context, uuid string) error {
+	return d.db.WithContext(ctx).Model(&models.UserInfo{}).Where("uuid = ?", uuid).UpdateColumn("feed_mode", constants.DiscoverFeedPull).Error
 }

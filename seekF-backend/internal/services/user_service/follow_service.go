@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"seekF-backend/internal/configs"
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/constants"
@@ -63,6 +64,7 @@ func (s *FollowServiceImpl) ToggleFollow(ctx context.Context, userId, followUser
 		// 相互关注也以相同顺序加锁，避免两个事务反向等待。
 		ids := []string{userId, followUserId}
 		sort.Strings(ids)
+		var author *models.UserInfo
 		for _, id := range ids {
 			user, err := users.FindUserByUuidForUpdate(ctx, id)
 			if err != nil {
@@ -70,6 +72,9 @@ func (s *FollowServiceImpl) ToggleFollow(ctx context.Context, userId, followUser
 			}
 			if user == nil {
 				return fmt.Errorf("用户不存在")
+			}
+			if id == followUserId {
+				author = user
 			}
 		}
 		follows := userdao.NewFollowDAO(tx)
@@ -98,6 +103,12 @@ func (s *FollowServiceImpl) ToggleFollow(ctx context.Context, userId, followUser
 		if err := users.UpdateFollowCounts(ctx, followUserId, 0, delta); err != nil {
 			return err
 		}
+		// 达到阈值即升级；取消关注只减少计数，不清除已经生效的拉模式。
+		if author.FeedMode != constants.DiscoverFeedPull && author.FollowerCount+delta >= discoverDistributionThreshold(configs.GetConfig().DiscoverFeedConfig) {
+			if err := users.SetFeedModePull(ctx, followUserId); err != nil {
+				return fmt.Errorf("升级作者关注流分发模式失败: %w", err)
+			}
+		}
 		if delta > 0 {
 			if err := userdao.NewNotificationDAO(tx).CreateNotification(ctx, &models.Notification{UserId: followUserId, ActorId: userId, Type: NotificationTypeFollow, TargetUuid: userId, Content: "关注了你"}); err != nil {
 				return err
@@ -113,7 +124,7 @@ func (s *FollowServiceImpl) ToggleFollow(ctx context.Context, userId, followUser
 	if err != nil {
 		return false, fmt.Errorf("切换关注失败: %w", err)
 	}
-	// 关系已提交后使旧索引及在途重建失效；失败不回滚关注，近期作者补查与缓存TTL提供兜底。
+	// 关系已提交后使旧索引及在途重建失效；失败不回滚关注，新关注补查和MySQL权限过滤继续兜底。
 	cacheCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), constants.DiscoverInboxReadTimeout)
 	defer cancel()
 	if err := invalidateDiscoverInbox(cacheCtx, userId, uuid.NewString()); err != nil {
