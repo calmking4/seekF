@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"seekF-backend/internal/configs"
@@ -62,7 +61,7 @@ func (s *discoverEventConsumer) processFeedOnce(ctx context.Context, id int64, c
 		if post != nil && event.PostVersion != post.Version {
 			// 旧任务不覆盖新发布的收件箱，最新公开版本有自己的分发任务。
 		} else if post == nil || post.DeletedAt.Valid || post.Status != constants.DiscoverPostPublished || post.Visibility != 0 || post.CreatedAt.Before(discoverDistributionFrom(cfg)) || post.FeedMode == constants.DiscoverFeedPull {
-			// 失效索引由TTL淘汰；读取时始终复核MySQL当前状态，不因缓存残留泄露内容。
+			// 失效索引由后续新增按容量淘汰；读取时始终复核MySQL当前状态，不因缓存残留泄露内容。
 		} else {
 			threshold := discoverDistributionThreshold(cfg)
 			fans, err := dao.ListFans(ctx, post.UserId, post.CreatedAt, int(threshold))
@@ -134,7 +133,7 @@ func StartDiscoverFeedConsumer() {
 	go discoverFeedCons.consume(context.Background())
 }
 
-// StartDiscoverFeedPublisher 启动关注分发事件可靠投递，Redis收件箱由容量限制及TTL自动维护。
+// StartDiscoverFeedPublisher 启动关注分发事件可靠投递，Redis收件箱新增时按容量淘汰最旧索引。
 func StartDiscoverFeedPublisher() {
 	if discoverFeedCons == nil {
 		zlog.Error("关注分发投递器未初始化")
@@ -154,26 +153,26 @@ func StartDiscoverFeedPublisher() {
 	}()
 }
 
-// discoverInboxMember 将时间和主键编码为索引，同秒成员按数值主键排序，与MySQL游标一致。
+// discoverInboxMember 将数据库ID补齐为20位，同秒成员按数值主键排序，与MySQL游标一致。
 func discoverInboxMember(post models.DiscoverPost) string {
-	return fmt.Sprintf("%020d:%020d:%s", post.CreatedAt.Unix(), post.Id, post.Uuid)
+	return fmt.Sprintf("%020d", post.Id)
 }
 
-// parseDiscoverInboxMember 校验索引并解析游标边界，格式损坏时回源而不返回不完整分页。
-func parseDiscoverInboxMember(member string) (int64, time.Time, error) {
-	parts := strings.Split(member, ":")
-	if len(parts) != 3 || len(parts[0]) != 20 || len(parts[1]) != 20 || parts[2] == "" {
-		return 0, time.Time{}, fmt.Errorf("Redis收件箱索引格式无效")
+// parseDiscoverInboxMember 解析固定长度的数据库ID，格式损坏时回源而不返回不完整分页。
+func parseDiscoverInboxMember(member string) (int64, error) {
+	if len(member) != 20 {
+		return 0, fmt.Errorf("Redis收件箱索引格式无效")
 	}
-	seconds, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil || seconds < 0 {
-		return 0, time.Time{}, fmt.Errorf("Redis收件箱时间无效")
+	for _, digit := range member {
+		if digit < '0' || digit > '9' {
+			return 0, fmt.Errorf("Redis收件箱帖子ID格式无效")
+		}
 	}
-	id, err := strconv.ParseInt(parts[1], 10, 64)
+	id, err := strconv.ParseInt(member, 10, 64)
 	if err != nil || id < 1 {
-		return 0, time.Time{}, fmt.Errorf("Redis收件箱帖子ID无效")
+		return 0, fmt.Errorf("Redis收件箱帖子ID无效")
 	}
-	return id, time.Unix(seconds, 0), nil
+	return id, nil
 }
 
 // discoverInboxSnapshot 保存同一次原子读取的完整性标记、变更标识和有序帖子索引。
@@ -181,6 +180,7 @@ type discoverInboxSnapshot struct {
 	Ready    bool
 	Revision string
 	Members  []string
+	Scores   []int64
 }
 
 // discoverInboxKeys 返回同一用户的ZSet、元信息及重建锁键。
@@ -189,27 +189,55 @@ func discoverInboxKeys(userID string) []string {
 	return []string{key, key + ":meta", key + ":build"}
 }
 
-// readDiscoverInbox 原子检查完整性并读取有界候选，哨兵用于区分合法空收件箱与ZSet被淘汰。
+// readDiscoverInbox 原子转换旧成员并读取有界ID及时间分数，哨兵用于区分合法空收件箱与ZSet被淘汰。
 func readDiscoverInbox(ctx context.Context, userID string) (discoverInboxSnapshot, error) {
 	const script = `
+redis.call('PERSIST', KEYS[1])
+redis.call('PERSIST', KEYS[2])
+local existing = redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')
+-- 兼容旧组合成员；同一ID已存在时保留较新的发布时间。
+for i = 1, #existing, 2 do
+  local timestamp, id = string.match(existing[i], '^(%d+):(%d+):.+$')
+  if timestamp and #timestamp == 20 and #id == 20 then
+    local current = redis.call('ZSCORE', KEYS[1], id)
+    if not current or tonumber(existing[i + 1]) > tonumber(current) then
+      redis.call('ZADD', KEYS[1], existing[i + 1], id)
+    end
+    redis.call('ZREM', KEYS[1], existing[i])
+  end
+end
+local excess = redis.call('ZCARD', KEYS[1]) - tonumber(ARGV[1]) - 1
+if redis.call('ZSCORE', KEYS[1], '!') and excess > 0 then redis.call('ZREMRANGEBYRANK', KEYS[1], 1, excess) end
 local revision = redis.call('HGET', KEYS[2], 'revision') or ''
 if redis.call('HGET', KEYS[2], 'ready') ~= '1' or not redis.call('ZSCORE', KEYS[1], '!') then
   return {revision, '0'}
 end
 local result = {revision, '1'}
-local members = redis.call('ZREVRANGE', KEYS[1], 0, tonumber(ARGV[1]) - 1)
-for _, member in ipairs(members) do
-  if member ~= '!' then table.insert(result, member) end
+local members = redis.call('ZREVRANGE', KEYS[1], 0, tonumber(ARGV[1]) - 1, 'WITHSCORES')
+for i = 1, #members, 2 do
+  if members[i] ~= '!' then
+    table.insert(result, members[i])
+    table.insert(result, members[i + 1])
+  end
 end
 return result`
 	values, err := redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID)[:2], constants.DiscoverInboxCapacity).StringSlice()
 	if err != nil {
 		return discoverInboxSnapshot{}, err
 	}
-	if len(values) < 2 {
+	if len(values) < 2 || (len(values)-2)%2 != 0 {
 		return discoverInboxSnapshot{}, errors.New("Redis收件箱返回格式无效")
 	}
-	return discoverInboxSnapshot{Revision: values[0], Ready: values[1] == "1", Members: values[2:]}, nil
+	snapshot := discoverInboxSnapshot{Revision: values[0], Ready: values[1] == "1"}
+	for i := 2; i < len(values); i += 2 {
+		seconds, err := strconv.ParseInt(values[i+1], 10, 64)
+		if err != nil || seconds < 0 {
+			return discoverInboxSnapshot{}, errors.New("Redis收件箱时间无效")
+		}
+		snapshot.Members = append(snapshot.Members, values[i])
+		snapshot.Scores = append(snapshot.Scores, seconds)
+	}
+	return snapshot, nil
 }
 
 // discoverInboxUnchanged 检查候选查询期间是否发生分发、失效或缓存淘汰，变化时交由MySQL兜底。
@@ -226,16 +254,26 @@ return 0`
 // fanoutDiscoverInbox 批量幂等写入粉丝收件箱，失败允许重试，增量写入不能把不完整缓存标为完整。
 func fanoutDiscoverInbox(ctx context.Context, users []string, member string, score int64, revision string) (int64, error) {
 	const script = `
-local ttl = redis.call('PTTL', KEYS[2])
-if ttl < 1 then ttl = tonumber(ARGV[4]) end
+local existing = redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')
+-- 转换后再追加及裁剪，避免新旧格式重复占用容量。
+for i = 1, #existing, 2 do
+  local timestamp, id = string.match(existing[i], '^(%d+):(%d+):.+$')
+  if timestamp and #timestamp == 20 and #id == 20 then
+    local current = redis.call('ZSCORE', KEYS[1], id)
+    if not current or tonumber(existing[i + 1]) > tonumber(current) then
+      redis.call('ZADD', KEYS[1], existing[i + 1], id)
+    end
+    redis.call('ZREM', KEYS[1], existing[i])
+  end
+end
 if not redis.call('ZSCORE', KEYS[1], '!') then redis.call('HSET', KEYS[2], 'ready', '0') end
 redis.call('ZADD', KEYS[1], -1, '!')
 local inserted = redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
-local excess = redis.call('ZCARD', KEYS[1]) - tonumber(ARGV[5]) - 1
+local excess = redis.call('ZCARD', KEYS[1]) - tonumber(ARGV[4]) - 1
 if excess > 0 then redis.call('ZREMRANGEBYRANK', KEYS[1], 1, excess) end
 redis.call('HSET', KEYS[2], 'revision', ARGV[3])
-redis.call('PEXPIRE', KEYS[1], ttl)
-redis.call('PEXPIRE', KEYS[2], ttl)
+redis.call('PERSIST', KEYS[1])
+redis.call('PERSIST', KEYS[2])
 return inserted`
 	if len(users) == 0 {
 		return 0, nil
@@ -243,7 +281,7 @@ return inserted`
 	pipe := redispkg.GetClient().Pipeline()
 	commands := make([]*redis.Cmd, 0, len(users))
 	for _, userID := range users {
-		commands = append(commands, pipe.Eval(ctx, script, discoverInboxKeys(userID)[:2], score, member, revision, constants.DiscoverInboxTTL.Milliseconds(), constants.DiscoverInboxCapacity))
+		commands = append(commands, pipe.Eval(ctx, script, discoverInboxKeys(userID)[:2], score, member, revision, constants.DiscoverInboxCapacity))
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return 0, fmt.Errorf("写入Redis关注收件箱失败: %w", err)
@@ -263,14 +301,15 @@ return inserted`
 func beginDiscoverInboxBuild(ctx context.Context, userID, token string) (string, bool, error) {
 	const script = `
 if not redis.call('SET', KEYS[3], ARGV[1], 'NX', 'PX', ARGV[2]) then return false end
+redis.call('PERSIST', KEYS[1])
+redis.call('PERSIST', KEYS[2])
 local revision = redis.call('HGET', KEYS[2], 'revision')
 if not revision then
   revision = ARGV[1]
   redis.call('HSET', KEYS[2], 'revision', revision, 'ready', '0')
-  redis.call('PEXPIRE', KEYS[2], ARGV[3])
 end
 return revision`
-	revision, err := redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID), token, constants.DiscoverInboxBuildTimeout.Milliseconds(), constants.DiscoverInboxTTL.Milliseconds()).Text()
+	revision, err := redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID), token, constants.DiscoverInboxBuildTimeout.Milliseconds()).Text()
 	if errors.Is(err, redis.Nil) {
 		return "", false, nil
 	}
@@ -290,13 +329,13 @@ if redis.call('HGET', KEYS[2], 'revision') ~= ARGV[2] then
 end
 redis.call('DEL', KEYS[1])
 redis.call('ZADD', KEYS[1], -1, '!')
-for i = 4, #ARGV, 2 do redis.call('ZADD', KEYS[1], ARGV[i], ARGV[i + 1]) end
+for i = 3, #ARGV, 2 do redis.call('ZADD', KEYS[1], ARGV[i], ARGV[i + 1]) end
 redis.call('HSET', KEYS[2], 'revision', ARGV[1], 'ready', '1')
-redis.call('PEXPIRE', KEYS[1], ARGV[3])
-redis.call('PEXPIRE', KEYS[2], ARGV[3])
+redis.call('PERSIST', KEYS[1])
+redis.call('PERSIST', KEYS[2])
 redis.call('DEL', KEYS[3])
 return 1`
-	args := []any{token, revision, constants.DiscoverInboxTTL.Milliseconds()}
+	args := []any{token, revision}
 	for i, member := range members {
 		args = append(args, scores[i], member)
 	}
@@ -315,7 +354,7 @@ func invalidateDiscoverInbox(ctx context.Context, userID, revision string) error
 	const script = `
 redis.call('DEL', KEYS[1])
 redis.call('HSET', KEYS[2], 'revision', ARGV[1], 'ready', '0')
-redis.call('PEXPIRE', KEYS[2], ARGV[2])
+redis.call('PERSIST', KEYS[2])
 return 1`
-	return redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID)[:2], revision, constants.DiscoverInboxTTL.Milliseconds()).Err()
+	return redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID)[:2], revision).Err()
 }

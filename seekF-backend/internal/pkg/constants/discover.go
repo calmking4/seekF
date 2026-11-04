@@ -91,12 +91,10 @@ const (
 	DiscoverFeedPull int8 = 1
 )
 
-// Redis关注收件箱的容量、有效期与操作时限。
+// Redis关注收件箱的容量与操作时限，索引及完整性标记不设置过期时间。
 const (
-	// 每位用户最多保留1000条近期帖子索引。
-	DiscoverInboxCapacity = 1000
-	// 收件箱及完整性标记保留10分钟，读取不续期。
-	DiscoverInboxTTL = 10 * time.Minute
+	// 每位用户最多保留200条近期帖子索引，新增时淘汰最旧成员。
+	DiscoverInboxCapacity = 200
 	// 请求内Redis读取或重建发布最多等待100毫秒。
 	DiscoverInboxReadTimeout = 100 * time.Millisecond
 	// 一次最多500人的分发写入最多等待2秒。

@@ -737,11 +737,12 @@ func (s *DiscoverFeedServiceImpl) listRedisFollowingFeed(ctx context.Context, us
 	ids := make([]int64, 0, len(snapshot.Members))
 	floor, floorID := from, int64(0)
 	for i, member := range snapshot.Members {
-		id, created, err := parseDiscoverInboxMember(member)
+		id, err := parseDiscoverInboxMember(member)
 		if err != nil {
 			return fallback("invalid")
 		}
 		ids = append(ids, id)
+		created := time.Unix(snapshot.Scores[i], 0)
 		if len(snapshot.Members) == constants.DiscoverInboxCapacity && i == len(snapshot.Members)-1 && !created.Before(from) {
 			floor, floorID = created, id
 		}
