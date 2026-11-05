@@ -1,11 +1,13 @@
 package user
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"seekF-backend/internal/configs"
 	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/pkg/auth"
@@ -22,6 +24,7 @@ type AuthController struct {
 	authService userservice.AuthService
 }
 
+// NewAuthController 构造认证控制器并注入业务服务。
 func NewAuthController(authService userservice.AuthService) *AuthController {
 	return &AuthController{
 		authService: authService,
@@ -72,20 +75,21 @@ func (c *AuthController) Login(ctx *gin.Context) {
 	// 设置cookie
 	cfg := configs.GetConfig()
 	expireSeconds := cfg.SessionExpireMinutes * 60
-	ctx.SetCookie("token", result.Token, int(expireSeconds), "/", "localhost", false, true)
+	c.setLoginCookie(ctx, result.Token, int(expireSeconds))
 
 	resp.Success(ctx, "登录成功", result)
 }
 
 // GithubLogin 跳转 GitHub OAuth 授权页
 func (c *AuthController) GithubLogin(ctx *gin.Context) {
-	authURL, err := c.authService.GithubAuthURL()
+	authURL, state, err := c.authService.GithubAuthURL(ctx.Request.Context())
 	if err != nil {
 		zlog.Error("生成 GitHub 授权地址失败: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	c.setOAuthCookie(ctx, constants.OAuthProviderGithub, state, int(constants.OAuthStateTTL.Seconds()))
 	ctx.Redirect(http.StatusFound, authURL)
 }
 
@@ -102,16 +106,22 @@ func (c *AuthController) GithubCallback(ctx *gin.Context) {
 		ctx.Redirect(http.StatusFound, target)
 	}
 
+	state := ctx.Query("state")
+	browserState, _ := ctx.Cookie(constants.OAuthStateCookiePrefix + constants.OAuthProviderGithub)
+	c.clearMatchingOAuthCookie(ctx, constants.OAuthProviderGithub, state, browserState)
 	if errMsg := strings.TrimSpace(ctx.Query("error")); errMsg != "" {
+		if err := c.authService.CancelOAuthLogin(ctx.Request.Context(), constants.OAuthProviderGithub, state, browserState); err != nil {
+			redirectWithError(err.Error())
+			return
+		}
 		zlog.Info("GitHub 授权被拒绝: " + errMsg)
 		redirectWithError("GitHub 授权已取消")
 		return
 	}
 
 	code := strings.TrimSpace(ctx.Query("code"))
-	state := strings.TrimSpace(ctx.Query("state"))
 
-	result, err := c.authService.LoginByGithub(ctx.Request.Context(), code, state)
+	result, err := c.authService.LoginByGithub(ctx.Request.Context(), code, state, browserState)
 	if err != nil {
 		zlog.Error("GitHub 登录失败: " + err.Error())
 		redirectWithError(err.Error())
@@ -119,7 +129,7 @@ func (c *AuthController) GithubCallback(ctx *gin.Context) {
 	}
 
 	expireSeconds := cfg.SessionExpireMinutes * 60
-	ctx.SetCookie("token", result.Token, int(expireSeconds), "/", "localhost", false, true)
+	c.setLoginCookie(ctx, result.Token, int(expireSeconds))
 
 	userBytes, err := json.Marshal(result.User)
 	if err != nil {
@@ -133,13 +143,14 @@ func (c *AuthController) GithubCallback(ctx *gin.Context) {
 
 // GiteeLogin 跳转 Gitee OAuth 授权页
 func (c *AuthController) GiteeLogin(ctx *gin.Context) {
-	authURL, err := c.authService.GiteeAuthURL()
+	authURL, state, err := c.authService.GiteeAuthURL(ctx.Request.Context())
 	if err != nil {
 		zlog.Error("生成 Gitee 授权地址失败: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	c.setOAuthCookie(ctx, constants.OAuthProviderGitee, state, int(constants.OAuthStateTTL.Seconds()))
 	ctx.Redirect(http.StatusFound, authURL)
 }
 
@@ -156,16 +167,22 @@ func (c *AuthController) GiteeCallback(ctx *gin.Context) {
 		ctx.Redirect(http.StatusFound, target)
 	}
 
+	state := ctx.Query("state")
+	browserState, _ := ctx.Cookie(constants.OAuthStateCookiePrefix + constants.OAuthProviderGitee)
+	c.clearMatchingOAuthCookie(ctx, constants.OAuthProviderGitee, state, browserState)
 	if errMsg := strings.TrimSpace(ctx.Query("error")); errMsg != "" {
+		if err := c.authService.CancelOAuthLogin(ctx.Request.Context(), constants.OAuthProviderGitee, state, browserState); err != nil {
+			redirectWithError(err.Error())
+			return
+		}
 		zlog.Info("Gitee 授权被拒绝: " + errMsg)
 		redirectWithError("Gitee 授权已取消")
 		return
 	}
 
 	code := strings.TrimSpace(ctx.Query("code"))
-	state := strings.TrimSpace(ctx.Query("state"))
 
-	result, err := c.authService.LoginByGitee(ctx.Request.Context(), code, state)
+	result, err := c.authService.LoginByGitee(ctx.Request.Context(), code, state, browserState)
 	if err != nil {
 		zlog.Error("Gitee 登录失败: " + err.Error())
 		redirectWithError(err.Error())
@@ -173,7 +190,7 @@ func (c *AuthController) GiteeCallback(ctx *gin.Context) {
 	}
 
 	expireSeconds := cfg.SessionExpireMinutes * 60
-	ctx.SetCookie("token", result.Token, int(expireSeconds), "/", "localhost", false, true)
+	c.setLoginCookie(ctx, result.Token, int(expireSeconds))
 
 	userBytes, err := json.Marshal(result.User)
 	if err != nil {
@@ -209,7 +226,7 @@ func (c *AuthController) Logout(ctx *gin.Context) {
 	}
 
 	// 清除 token cookie
-	ctx.SetCookie("token", "", -1, "/", "localhost", false, true)
+	c.setLoginCookie(ctx, "", -1)
 
 	resp.Success(ctx, "退出登录成功", nil)
 }
@@ -257,7 +274,31 @@ func (c *AuthController) LoginByCode(ctx *gin.Context) {
 	// 设置cookie
 	cfg := configs.GetConfig()
 	expireSeconds := cfg.SessionExpireMinutes * 60
-	ctx.SetCookie("token", result.Token, int(expireSeconds), "/", "localhost", false, true)
+	c.setLoginCookie(ctx, result.Token, int(expireSeconds))
 
 	resp.Success(ctx, "登录成功", result)
+}
+
+// userCookieSecure 使用显式部署配置或直接HTTPS连接决定是否仅通过HTTPS发送Cookie。
+func userCookieSecure(ctx *gin.Context) bool {
+	return ctx.Request.TLS != nil || strings.EqualFold(strings.TrimSpace(os.Getenv("USER_COOKIE_SECURE")), "true")
+}
+
+// setLoginCookie 统一设置或删除用户登录Cookie，默认仅绑定当前主机且禁止脚本读取。
+func (c *AuthController) setLoginCookie(ctx *gin.Context, token string, age int) {
+	ctx.SetSameSite(http.SameSiteLaxMode)
+	ctx.SetCookie("token", token, age, "/", "", userCookieSecure(ctx), true)
+}
+
+// setOAuthCookie 设置或删除平台独立的临时授权Cookie，Lax允许授权平台顶层GET返回。
+func (c *AuthController) setOAuthCookie(ctx *gin.Context, provider, state string, age int) {
+	ctx.SetSameSite(http.SameSiteLaxMode)
+	ctx.SetCookie(constants.OAuthStateCookiePrefix+provider, state, age, "/", "", userCookieSecure(ctx), true)
+}
+
+// clearMatchingOAuthCookie 仅清除当前回调对应的Cookie，错误或旧回调不干扰后发起的登录。
+func (c *AuthController) clearMatchingOAuthCookie(ctx *gin.Context, provider, state, browserState string) {
+	if len(state) == constants.OAuthStateLength && subtle.ConstantTimeCompare([]byte(state), []byte(browserState)) == 1 {
+		c.setOAuthCookie(ctx, provider, "", -1)
+	}
 }

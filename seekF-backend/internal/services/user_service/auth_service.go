@@ -3,6 +3,7 @@ package userservice
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/auth"
+	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/email"
 	"seekF-backend/internal/pkg/jwt"
 	"seekF-backend/internal/pkg/oauth"
@@ -62,10 +64,16 @@ type AuthService interface {
 	Logout(tokenString string) error
 	SendVerifyCode(telephone, email string) error
 	LoginByCode(ctx context.Context, telephone, email, code string) (*LoginRespond, error)
-	GithubAuthURL() (string, error)
-	LoginByGithub(ctx context.Context, code, state string) (*LoginRespond, error)
-	GiteeAuthURL() (string, error)
-	LoginByGitee(ctx context.Context, code, state string) (*LoginRespond, error)
+	// 生成GitHub授权地址及需要写入浏览器的临时状态。
+	GithubAuthURL(ctx context.Context) (authURL, state string, err error)
+	// 验证浏览器绑定并完成GitHub登录。
+	LoginByGithub(ctx context.Context, code, state, browserState string) (*LoginRespond, error)
+	// 生成Gitee授权地址及需要写入浏览器的临时状态。
+	GiteeAuthURL(ctx context.Context) (authURL, state string, err error)
+	// 验证浏览器绑定并完成Gitee登录。
+	LoginByGitee(ctx context.Context, code, state, browserState string) (*LoginRespond, error)
+	// 验证授权取消回调并消费对应的一次性状态。
+	CancelOAuthLogin(ctx context.Context, provider, state, browserState string) error
 }
 
 type AuthServiceImpl struct {
@@ -363,44 +371,26 @@ func (s *AuthServiceImpl) LoginByCode(ctx context.Context, telephone, emailAddr,
 }
 
 // GithubAuthURL 生成 GitHub OAuth 授权地址
-func (s *AuthServiceImpl) GithubAuthURL() (string, error) {
+func (s *AuthServiceImpl) GithubAuthURL(ctx context.Context) (authURL, state string, err error) {
 	cfg := configs.GetConfig()
 	if strings.TrimSpace(cfg.GithubOAuthConfig.ClientID) == "" {
-		return "", fmt.Errorf("GitHub OAuth 未配置")
+		return "", "", fmt.Errorf("GitHub OAuth 未配置")
 	}
 
-	state, err := generateOAuthState()
+	state, err = createOAuthState(ctx, constants.OAuthProviderGithub)
 	if err != nil {
-		return "", fmt.Errorf("生成 OAuth 状态码失败：%v", err)
+		return "", "", err
 	}
-
-	key := fmt.Sprintf("oauth_state:github:%s", state)
-	if err := redis.SetKeyEx(key, "1", 10*time.Minute); err != nil {
-		return "", fmt.Errorf("保存 OAuth 状态码失败：%v", err)
-	}
-
-	return oauth.GetAuthCodeURL(state), nil
+	return oauth.GetAuthCodeURL(state), state, nil
 }
 
 // LoginByGithub GitHub OAuth 登录
-func (s *AuthServiceImpl) LoginByGithub(ctx context.Context, code, state string) (*LoginRespond, error) {
+func (s *AuthServiceImpl) LoginByGithub(ctx context.Context, code, state, browserState string) (*LoginRespond, error) {
 	if strings.TrimSpace(code) == "" {
 		return nil, fmt.Errorf("授权码不能为空")
 	}
-	if strings.TrimSpace(state) == "" {
-		return nil, fmt.Errorf("OAuth 状态码不能为空")
-	}
-
-	key := fmt.Sprintf("oauth_state:github:%s", state)
-	stored, err := redis.GetKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("校验 OAuth 状态码失败：%v", err)
-	}
-	if stored == "" {
-		return nil, fmt.Errorf("OAuth 状态码无效或已过期")
-	}
-	if err := redis.DelKeyIfExists(key); err != nil {
-		return nil, fmt.Errorf("清理 OAuth 状态码失败：%v", err)
+	if err := consumeOAuthState(ctx, constants.OAuthProviderGithub, state, browserState); err != nil {
+		return nil, err
 	}
 
 	githubUser, err := oauth.ExchangeAndGetUser(ctx, code)
@@ -463,44 +453,26 @@ func (s *AuthServiceImpl) LoginByGithub(ctx context.Context, code, state string)
 }
 
 // GiteeAuthURL 生成 Gitee OAuth 授权地址
-func (s *AuthServiceImpl) GiteeAuthURL() (string, error) {
+func (s *AuthServiceImpl) GiteeAuthURL(ctx context.Context) (authURL, state string, err error) {
 	cfg := configs.GetConfig()
 	if strings.TrimSpace(cfg.GiteeOAuthConfig.ClientID) == "" {
-		return "", fmt.Errorf("Gitee OAuth 未配置")
+		return "", "", fmt.Errorf("Gitee OAuth 未配置")
 	}
 
-	state, err := generateOAuthState()
+	state, err = createOAuthState(ctx, constants.OAuthProviderGitee)
 	if err != nil {
-		return "", fmt.Errorf("生成 OAuth 状态码失败：%v", err)
+		return "", "", err
 	}
-
-	key := fmt.Sprintf("oauth_state:gitee:%s", state)
-	if err := redis.SetKeyEx(key, "1", 10*time.Minute); err != nil {
-		return "", fmt.Errorf("保存 OAuth 状态码失败：%v", err)
-	}
-
-	return oauth.GetGiteeAuthCodeURL(state), nil
+	return oauth.GetGiteeAuthCodeURL(state), state, nil
 }
 
 // LoginByGitee Gitee OAuth 登录
-func (s *AuthServiceImpl) LoginByGitee(ctx context.Context, code, state string) (*LoginRespond, error) {
+func (s *AuthServiceImpl) LoginByGitee(ctx context.Context, code, state, browserState string) (*LoginRespond, error) {
 	if strings.TrimSpace(code) == "" {
 		return nil, fmt.Errorf("授权码不能为空")
 	}
-	if strings.TrimSpace(state) == "" {
-		return nil, fmt.Errorf("OAuth 状态码不能为空")
-	}
-
-	key := fmt.Sprintf("oauth_state:gitee:%s", state)
-	stored, err := redis.GetKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("校验 OAuth 状态码失败：%v", err)
-	}
-	if stored == "" {
-		return nil, fmt.Errorf("OAuth 状态码无效或已过期")
-	}
-	if err := redis.DelKeyIfExists(key); err != nil {
-		return nil, fmt.Errorf("清理 OAuth 状态码失败：%v", err)
+	if err := consumeOAuthState(ctx, constants.OAuthProviderGitee, state, browserState); err != nil {
+		return nil, err
 	}
 
 	giteeUser, err := oauth.ExchangeAndGetGiteeUser(ctx, code)
@@ -608,8 +580,49 @@ func (s *AuthServiceImpl) buildLoginRespond(user *models.UserInfo, token string)
 	}
 }
 
+// CancelOAuthLogin 验证取消授权的请求属于当前浏览器，并消费一次性状态。
+func (s *AuthServiceImpl) CancelOAuthLogin(ctx context.Context, provider, state, browserState string) error {
+	return consumeOAuthState(ctx, provider, state, browserState)
+}
+
+// createOAuthState 创建有时限的平台独立授权记录，等待回调与浏览器Cookie核对。
+func createOAuthState(ctx context.Context, provider string) (string, error) {
+	state, err := generateOAuthState()
+	if err != nil {
+		return "", fmt.Errorf("生成 OAuth 状态码失败: %w", err)
+	}
+	key := constants.OAuthStateKeyPrefix + provider + ":" + state
+	if err := redis.GetClient().Set(ctx, key, "1", constants.OAuthStateTTL).Err(); err != nil {
+		return "", fmt.Errorf("保存 OAuth 状态码失败: %w", err)
+	}
+	return state, nil
+}
+
+// consumeOAuthState 先验证浏览器与回调匹配，再原子消费记录，拒绝跨浏览器和重复回调。
+func consumeOAuthState(ctx context.Context, provider, state, browserState string) error {
+	if provider != constants.OAuthProviderGithub && provider != constants.OAuthProviderGitee {
+		return fmt.Errorf("OAuth 授权平台无效")
+	}
+	if len(state) != constants.OAuthStateLength || len(browserState) != constants.OAuthStateLength || subtle.ConstantTimeCompare([]byte(state), []byte(browserState)) != 1 {
+		return fmt.Errorf("OAuth 状态与当前浏览器不匹配，请重新发起登录")
+	}
+	if _, err := hex.DecodeString(state); err != nil {
+		return fmt.Errorf("OAuth 状态码格式无效")
+	}
+	key := constants.OAuthStateKeyPrefix + provider + ":" + state
+	consumed, err := redis.CompareAndDeleteString(ctx, key, "1")
+	if err != nil {
+		return fmt.Errorf("校验 OAuth 状态码失败: %w", err)
+	}
+	if !consumed {
+		return fmt.Errorf("OAuth 状态码无效、已过期或已使用")
+	}
+	return nil
+}
+
+// generateOAuthState 使用密码学随机数生成一次授权的状态标识。
 func generateOAuthState() (string, error) {
-	buf := make([]byte, 16)
+	buf := make([]byte, constants.OAuthStateLength/2)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
