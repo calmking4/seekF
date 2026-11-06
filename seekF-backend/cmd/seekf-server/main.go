@@ -27,9 +27,6 @@ func main() {
 	// 初始化AI模型池
 	ai.GetModelPool()
 
-	// 启动AI消息Kafka消费者
-	ai.StartAIConsumer()
-
 	// 初始化并启动AI评论回复Kafka消费者
 	ai.InitAICommentConsumer(app.DiscoverDAO, app.UserInfoDAO)
 	ai.StartAICommentConsumer()

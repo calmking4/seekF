@@ -1,7 +1,5 @@
 # AI Chat 实现详解
 
-> 面向有 Web 开发经验但第一次接触 AI 应用的开发者。所有 AI 相关概念都会用 Web 开发中的对应概念做类比。
-
 ---
 
 ## 一、整体架构
@@ -27,9 +25,9 @@
 └──────────────────────┬──────────────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────────────┐
-│  存储层（MySQL + Redis + Kafka + Qdrant）                     │
+│  存储层（MySQL + Redis + Qdrant）                     │
 │  所有聊天记录存数据库，绝对不放在结构体里                        │
-│  Kafka 异步持久化 AI 响应，避免阻塞 SSE 流                     │
+│  AI 响应完成后直接写入 MySQL                                │
 │  Qdrant 向量数据库，支持知识库 RAG 检索                        │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -212,28 +210,9 @@ fetch(url, { method: 'POST', body: formData, credentials: 'include' })
 3. 把知识块注入到 system prompt 中
 4. AI 基于知识库内容回答
 
-### 2.6 为什么要用 Kafka 异步持久化？
+### 2.6 AI 回答如何持久化？
 
-**问题**：AI 响应通过 SSE 流式推送时，如果同步写数据库，会阻塞推送流，导致用户体验卡顿。
-
-**解决方案**：
-1. SSE 流式推送（实时，用户体验好）
-2. 完整响应写 DB（如果 DB 写入慢或失败，发到 Kafka）
-3. Kafka 消费者异步从队列读取并写入 MySQL
-
-```
-用户发送消息
-    ↓
-保存用户消息到 DB（同步，用户立刻看到自己发的消息）
-    ↓
-调用 AI 模型，流式推送 SSE（不阻塞）
-    ↓
-AI 响应完成
-    ↓
-尝试写 DB ──成功──→ 更新会话
-    │
-    └─失败──→ 发到 Kafka ──→ 消费者异步写 DB
-```
+SSE 流式输出结束后，Service 在同一个 MySQL 事务中保存回答、搜索来源、关联帖子和会话摘要。成功后发送完成信号，失败时回滚并返回错误。该链路不使用 Kafka。
 
 ---
 
@@ -434,7 +413,7 @@ chatMessages = [SystemMessage(systemPrompt), ...历史消息]
 
 **Step 8：推送搜索来源** → 如果有 `sources`，通过 `onSources` 回调发送 SSE `sources` 事件
 
-**Step 9：持久化 AI 响应** → 通过 Kafka 异步写 DB，触发 `onComplete` 回调
+**Step 9：持久化 AI 响应** → 通过 MySQL 事务直接写 DB，触发 `onComplete` 回调
 
 #### 3.3.2 其他方法
 
@@ -506,7 +485,6 @@ func (c *AIChatController) SendMessage(ctx *gin.Context) {
 
 ```toml
 [kafkaConfig]
-aiChatTopic = "ai_chat_message"    # AI 消息持久化
 aiCommentTopic = "ai_comment"      # AI 评论回复
 ```
 
@@ -554,7 +532,7 @@ aiCommentTopic = "ai_comment"      # AI 评论回复
    data: {"done": true}
 
 6. 异步持久化
-   - 发送 AI 响应到 Kafka
+   - 直接保存 AI 响应到 MySQL
    - 更新会话最后消息
 ```
 
@@ -703,7 +681,6 @@ Request:
 
 ```toml
 [kafkaConfig]
-aiChatTopic = "ai_chat_message"
 aiCommentTopic = "ai_comment"
 
 [aiModelConfig]
@@ -838,7 +815,7 @@ v1 不持久化。来源数据仅在当前会话的 SSE 流中推送一次，刷
 | 消息来源 | 另一个用户 | AI 模型推理 |
 | 上下文 | 不需要 | 需要历史对话 |
 | 响应时间 | 即时 | 几秒~几十秒 |
-| 持久化 | 同步写 DB | 同步 + Kafka 降级 |
+| 持久化 | 同步写 DB | MySQL 事务直接保存 |
 | 工具调用 | 不支持 | 支持 MCP 工具 |
 | 联网搜索 | 不支持 | 支持（Tavily） |
 
@@ -875,7 +852,6 @@ seekF-backend/
 │   │   └── knowledge_controller.go           # 知识库端点
 │   ├── pkg/ai/
 │   │   ├── model_pool.go                     # 模型单例池
-│   │   ├── ai_kafka.go                       # AI 消息 Kafka 消费者
 │   │   ├── ai_comment_kafka.go               # AI 评论回复 Kafka
 │   │   ├── mcp/
 │   │   │   ├── server.go                     # MCP Server（进程内备用，仅参考）

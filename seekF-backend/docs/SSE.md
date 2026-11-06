@@ -1,6 +1,4 @@
-# SSE 详解 - 新手入门指南
-
-> 面向第一次接触 Server-Sent Events 的开发者，用你熟悉的 Web 概念来类比解释。
+# SSE 详解
 
 ---
 
@@ -250,8 +248,7 @@ func (s *AIChatServiceImpl) SendMessageStream(
         onChunk(finalContent)
     }
 
-    // 13. 发送 AI 响应到 Kafka 异步持久化
-    aipkg.SendAIMessage(aipkg.AIMessagePayload{...})
+    // 13. 在 MySQL 事务中保存 AI 回答及会话摘要，成功后触发完成回调
 
     // 14. 流式结束后，调用 onComplete 回调
     if onComplete != nil {
@@ -433,7 +430,6 @@ fetch('/user/aichat/sendMessage', {
 | `controllers/user/aichat_controller.go` | 设置 SSE 响应头、定义回调函数、支持图片上传 |
 | `services/user_service/aichat_service.go` | 调用模型流式推理、执行回调、多模态支持 |
 | `pkg/ai/model_pool.go` | 管理 AI 模型单例 |
-| `pkg/ai/ai_kafka.go` | Kafka 消费者异步持久化 |
 | `dto/user/user_req/send_ai_message_request.go` | 请求参数（支持 image_url）|
 
 ---

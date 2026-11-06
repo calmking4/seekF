@@ -509,22 +509,34 @@ func (s *AIChatServiceImpl) persistAndCompleteAIMessage(ctx context.Context, req
 		}
 	}
 
-	aiSendId := "A" + util.GetNowAndLenRandomString(11)
-	aipkg.SendAIMessage(aipkg.AIMessagePayload{
-		SessionId: req.SessionId,
-		SendId:    aiSendId,
-		SendName:  "AI助手",
-		ReceiveId: userId,
-		Content:   finalContent,
-		ModelType: req.ModelType,
-		Sources:   sourcesJSON,
-		Posts:     postsJSON,
-	})
-
-	s.sessionDAO.UpdateSessionLastMessage(ctx, req.SessionId, finalContent, userMessage.CreatedAt)
+	aiMessage := &models.Message{
+		Uuid:       "M" + util.GetNowAndLenRandomString(11),
+		SessionId:  req.SessionId,
+		SendId:     "A" + util.GetNowAndLenRandomString(11),
+		SendName:   "AI助手",
+		SendAvatar: constants.AIAssistantAvatar,
+		ReceiveId:  userId,
+		Content:    finalContent,
+		Sources:    sourcesJSON,
+		Posts:      postsJSON,
+		Status:     1,
+	}
+	// 回答及会话摘要一起提交，写入失败时不发送完成信号。
+	if err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := userdao.NewMessageDAO(tx).CreateMessage(ctx, aiMessage); err != nil {
+			return fmt.Errorf("保存AI回答失败: %w", err)
+		}
+		if err := userdao.NewSessionDAO(tx).UpdateSessionLastMessage(ctx, req.SessionId, finalContent, userMessage.CreatedAt); err != nil {
+			return fmt.Errorf("更新AI会话摘要失败: %w", err)
+		}
+		return nil
+	}); err != nil {
+		zlog.Error("持久化AI回答失败，sessionId=" + req.SessionId + ": " + err.Error())
+		return err
+	}
 
 	if onComplete != nil {
-		onComplete(finalContent)
+		return onComplete(finalContent)
 	}
 
 	return nil

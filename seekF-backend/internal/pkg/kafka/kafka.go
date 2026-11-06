@@ -14,8 +14,6 @@ var Ctx = context.Background()
 
 // KafkaService Kafka服务（全局单例）
 type KafkaService struct {
-	AIChatWriter       *kafka.Writer
-	AIChatReader       *kafka.Reader
 	AICommentWriter    *kafka.Writer
 	AICommentReader    *kafka.Reader
 	DiscoverWriter     *kafka.Writer
@@ -51,7 +49,7 @@ func (k *KafkaService) Ping(ctx context.Context) error {
 	return nil
 }
 
-// Init 初始化Kafka的AI聊天、AI评论和发现页事件的Writer/Reader。
+// Init 初始化Kafka的AI评论和发现页事件的Writer/Reader。
 func (k *KafkaService) Init() {
 	if err := k.CreateTopic(); err != nil {
 		zlog.Warn("Kafka主题初始化失败，将后台重试: " + err.Error())
@@ -67,23 +65,6 @@ func (k *KafkaService) Init() {
 		}()
 	}
 	kafkaConfig := configs.GetConfig().KafkaConfig
-
-	// AI聊 Writer/Reader
-	k.AIChatWriter = &kafka.Writer{
-		Addr:                   kafka.TCP(kafkaConfig.HostPort),
-		Topic:                  kafkaConfig.AIChatTopic,
-		Balancer:               &kafka.Hash{},
-		WriteTimeout:           kafkaConfig.Timeout * time.Second,
-		RequiredAcks:           kafka.RequireOne,
-		AllowAutoTopicCreation: false,
-	}
-	k.AIChatReader = kafka.NewReader(kafka.ReaderConfig{
-		Brokers:        []string{kafkaConfig.HostPort},
-		Topic:          kafkaConfig.AIChatTopic,
-		CommitInterval: kafkaConfig.Timeout * time.Second,
-		GroupID:        "ai_chat",
-		StartOffset:    kafka.LastOffset,
-	})
 
 	// AI评论回复 Writer/Reader
 	k.AICommentWriter = &kafka.Writer{
@@ -140,21 +121,11 @@ func (k *KafkaService) Init() {
 		StartOffset:    kafka.FirstOffset,
 	})
 
-	zlog.Info("Kafka服务初始化完成，AI聊天主题: " + kafkaConfig.AIChatTopic)
+	zlog.Info("Kafka服务初始化完成")
 }
 
 // Close 关闭Kafka连接
 func (k *KafkaService) Close() {
-	if k.AIChatWriter != nil {
-		if err := k.AIChatWriter.Close(); err != nil {
-			zlog.Error(err.Error())
-		}
-	}
-	if k.AIChatReader != nil {
-		if err := k.AIChatReader.Close(); err != nil {
-			zlog.Error(err.Error())
-		}
-	}
 	if k.AICommentWriter != nil {
 		if err := k.AICommentWriter.Close(); err != nil {
 			zlog.Error(err.Error())
@@ -187,7 +158,7 @@ func (k *KafkaService) Close() {
 	}
 }
 
-// CreateTopic 统一创建AI聊天、AI评论和发现页事件主题。
+// CreateTopic 统一创建AI评论和发现页事件主题。
 func (k *KafkaService) CreateTopic() error {
 	kafkaConfig := configs.GetConfig().KafkaConfig
 
@@ -208,11 +179,6 @@ func (k *KafkaService) CreateTopic() error {
 		partitions = 1
 	}
 	topicConfigs := []kafka.TopicConfig{
-		{
-			Topic:             kafkaConfig.AIChatTopic,
-			NumPartitions:     partitions,
-			ReplicationFactor: 1,
-		},
 		{
 			Topic:             kafkaConfig.AICommentTopic,
 			NumPartitions:     partitions,

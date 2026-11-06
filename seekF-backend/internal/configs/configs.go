@@ -87,11 +87,8 @@ type KafkaConfig struct {
 	DiscoverFeedTopic string        `toml:"discoverFeedTopic"`
 	MessageMode       string        `toml:"messageMode"`
 	HostPort          string        `toml:"hostPort"`
-	LoginTopic        string        `toml:"loginTopic"`
-	AIChatTopic       string        `toml:"aiChatTopic"`
 	AICommentTopic    string        `toml:"aiCommentTopic"`
 	DiscoverTopic     string        `toml:"discoverTopic"`
-	LogoutTopic       string        `toml:"logoutTopic"`
 	Partition         int           `toml:"partition"`
 	Timeout           time.Duration `toml:"timeout"`
 }
