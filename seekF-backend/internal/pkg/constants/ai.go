@@ -2,12 +2,6 @@ package constants
 
 import "time"
 
-// AI消息搜索索引后台同步时限。
-const (
-	// 单次索引写入或会话索引删除最多等待5秒。
-	AIMessageIndexTimeout = 5 * time.Second
-)
-
 // AI助手身份与展示信息。
 const (
 	// AI评论使用的助手用户编号。

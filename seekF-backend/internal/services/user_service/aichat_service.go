@@ -313,17 +313,6 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		return err
 	}
 
-	// 异步索引用户消息到ES（搜索用）
-	go func() {
-		// 后台索引不随请求结束取消，但必须有明确的执行时限。
-		indexCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), constants.AIMessageIndexTimeout)
-		defer cancel()
-		esDAO := userdao.NewESMessageDAO()
-		if err := esDAO.IndexMessage(indexCtx, userMessage); err != nil {
-			zlog.Error("索引AI用户消息到ES失败: " + err.Error())
-		}
-	}()
-
 	// 从DB读取历史消息构建上下文（最近100条）
 	// 使用DESC排序获取最近的消息，然后反转为正序
 	messages, err := s.messageDAO.GetMessagesBySessionIdDesc(ctx, req.SessionId, 100, 0)
@@ -740,16 +729,6 @@ func (s *AIChatServiceImpl) DeleteSession(ctx context.Context, sessionId string)
 	if err != nil {
 		return err
 	}
-
-	// 异步删除ES中的消息索引
-	go func() {
-		indexCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), constants.AIMessageIndexTimeout)
-		defer cancel()
-		esDAO := userdao.NewESMessageDAO()
-		if err := esDAO.DeleteMessagesBySessionId(indexCtx, sessionId); err != nil {
-			zlog.Error("删除ES中的AI会话消息失败: " + err.Error())
-		}
-	}()
 
 	zlog.Info("删除AI会话成功: " + sessionId)
 	return nil

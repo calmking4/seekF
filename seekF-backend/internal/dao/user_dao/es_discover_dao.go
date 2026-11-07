@@ -51,7 +51,7 @@ func (d *ESDiscoverDAOImpl) SyncPost(ctx context.Context, post *models.DiscoverP
 	if post.Version == 0 || post.Version > math.MaxInt64 {
 		return fmt.Errorf("作品搜索版本无效，postUuid=%s", post.Uuid)
 	}
-	if err := db.EnsureDiscoverSearchIndex(ctx); err != nil {
+	if err := db.EnsureSearchIndex(ctx); err != nil {
 		return err
 	}
 	doc := esPostDoc{Id: post.Id, Status: 1}

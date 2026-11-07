@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 // ESClient Elasticsearch客户端单例
 var ESClient *elasticsearch.Client
 
+// init 初始化帖子搜索使用的ES连接及索引。
 func init() {
 	cfg := configs.GetConfig()
 
@@ -48,8 +50,8 @@ func init() {
 
 	zlog.Info(fmt.Sprintf("已连接到Elasticsearch: %s", cfg.ESConfig.Addresses))
 
-	// 自动创建索引
-	if err := EnsureESIndices(); err != nil {
+	// 仅自动创建发现页帖子搜索索引。
+	if err := EnsureSearchIndex(context.Background()); err != nil {
 		zlog.Error("创建ES索引失败: " + err.Error())
 	}
 }
