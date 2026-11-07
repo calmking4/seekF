@@ -203,35 +203,35 @@ func discoverInboxKeys(userID string) []string {
 // readDiscoverInbox 原子转换旧成员并读取有界ID及时间分数，哨兵用于区分合法空收件箱与ZSet被淘汰。
 func readDiscoverInbox(ctx context.Context, userID string) (discoverInboxSnapshot, error) {
 	const script = `
-redis.call('PERSIST', KEYS[1])
-redis.call('PERSIST', KEYS[2])
-local existing = redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')
--- 兼容旧组合成员；同一ID已存在时保留较新的发布时间。
-for i = 1, #existing, 2 do
-  local timestamp, id = string.match(existing[i], '^(%d+):(%d+):.+$')
-  if timestamp and #timestamp == 20 and #id == 20 then
-    local current = redis.call('ZSCORE', KEYS[1], id)
-    if not current or tonumber(existing[i + 1]) > tonumber(current) then
-      redis.call('ZADD', KEYS[1], existing[i + 1], id)
-    end
-    redis.call('ZREM', KEYS[1], existing[i])
-  end
-end
-local excess = redis.call('ZCARD', KEYS[1]) - tonumber(ARGV[1]) - 1
-if redis.call('ZSCORE', KEYS[1], '!') and excess > 0 then redis.call('ZREMRANGEBYRANK', KEYS[1], 1, excess) end
-local revision = redis.call('HGET', KEYS[2], 'revision') or ''
-if redis.call('HGET', KEYS[2], 'ready') ~= '1' or not redis.call('ZSCORE', KEYS[1], '!') then
-  return {revision, '0'}
-end
-local result = {revision, '1'}
-local members = redis.call('ZREVRANGE', KEYS[1], 0, tonumber(ARGV[1]) - 1, 'WITHSCORES')
-for i = 1, #members, 2 do
-  if members[i] ~= '!' then
-    table.insert(result, members[i])
-    table.insert(result, members[i + 1])
-  end
-end
-return result`
+	redis.call('PERSIST', KEYS[1])
+	redis.call('PERSIST', KEYS[2])
+	local existing = redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')
+	-- 兼容旧组合成员；同一ID已存在时保留较新的发布时间。
+	for i = 1, #existing, 2 do
+		local timestamp, id = string.match(existing[i], '^(%d+):(%d+):.+$')
+		if timestamp and #timestamp == 20 and #id == 20 then
+			local current = redis.call('ZSCORE', KEYS[1], id)
+			if not current or tonumber(existing[i + 1]) > tonumber(current) then
+				redis.call('ZADD', KEYS[1], existing[i + 1], id)
+			end
+			redis.call('ZREM', KEYS[1], existing[i])
+		end
+	end
+	local excess = redis.call('ZCARD', KEYS[1]) - tonumber(ARGV[1]) - 1
+	if redis.call('ZSCORE', KEYS[1], '!') and excess > 0 then redis.call('ZREMRANGEBYRANK', KEYS[1], 1, excess) end
+	local revision = redis.call('HGET', KEYS[2], 'revision') or ''
+	if redis.call('HGET', KEYS[2], 'ready') ~= '1' or not redis.call('ZSCORE', KEYS[1], '!') then
+		return {revision, '0'}
+	end
+	local result = {revision, '1'}
+	local members = redis.call('ZREVRANGE', KEYS[1], 0, tonumber(ARGV[1]) - 1, 'WITHSCORES')
+	for i = 1, #members, 2 do
+		if members[i] ~= '!' then
+			table.insert(result, members[i])
+			table.insert(result, members[i + 1])
+		end
+	end
+	return result`
 	values, err := redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID)[:2], constants.DiscoverInboxCapacity).StringSlice()
 	if err != nil {
 		return discoverInboxSnapshot{}, err
@@ -254,10 +254,10 @@ return result`
 // discoverInboxUnchanged 检查候选查询期间是否发生分发、失效或缓存淘汰，变化时交由MySQL兜底。
 func discoverInboxUnchanged(ctx context.Context, userID, revision string) (bool, error) {
 	const script = `
-if redis.call('HGET', KEYS[2], 'revision') == ARGV[1]
-and redis.call('HGET', KEYS[2], 'ready') == '1'
-and redis.call('ZSCORE', KEYS[1], '!') then return 1 end
-return 0`
+	if redis.call('HGET', KEYS[2], 'revision') == ARGV[1]
+		and redis.call('HGET', KEYS[2], 'ready') == '1'
+		and redis.call('ZSCORE', KEYS[1], '!') then return 1 end
+	return 0`
 	result, err := redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID)[:2], revision).Int64()
 	return result == 1, err
 }
@@ -265,27 +265,27 @@ return 0`
 // fanoutDiscoverInbox 批量幂等写入粉丝收件箱，失败允许重试，增量写入不能把不完整缓存标为完整。
 func fanoutDiscoverInbox(ctx context.Context, users []string, member string, score int64, revision string) (int64, error) {
 	const script = `
-local existing = redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')
--- 转换后再追加及裁剪，避免新旧格式重复占用容量。
-for i = 1, #existing, 2 do
-  local timestamp, id = string.match(existing[i], '^(%d+):(%d+):.+$')
-  if timestamp and #timestamp == 20 and #id == 20 then
-    local current = redis.call('ZSCORE', KEYS[1], id)
-    if not current or tonumber(existing[i + 1]) > tonumber(current) then
-      redis.call('ZADD', KEYS[1], existing[i + 1], id)
-    end
-    redis.call('ZREM', KEYS[1], existing[i])
-  end
-end
-if not redis.call('ZSCORE', KEYS[1], '!') then redis.call('HSET', KEYS[2], 'ready', '0') end
-redis.call('ZADD', KEYS[1], -1, '!')
-local inserted = redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
-local excess = redis.call('ZCARD', KEYS[1]) - tonumber(ARGV[4]) - 1
-if excess > 0 then redis.call('ZREMRANGEBYRANK', KEYS[1], 1, excess) end
-redis.call('HSET', KEYS[2], 'revision', ARGV[3])
-redis.call('PERSIST', KEYS[1])
-redis.call('PERSIST', KEYS[2])
-return inserted`
+	local existing = redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')
+	-- 转换后再追加及裁剪，避免新旧格式重复占用容量。
+	for i = 1, #existing, 2 do
+		local timestamp, id = string.match(existing[i], '^(%d+):(%d+):.+$')
+		if timestamp and #timestamp == 20 and #id == 20 then
+			local current = redis.call('ZSCORE', KEYS[1], id)
+			if not current or tonumber(existing[i + 1]) > tonumber(current) then
+				redis.call('ZADD', KEYS[1], existing[i + 1], id)
+			end
+			redis.call('ZREM', KEYS[1], existing[i])
+		end
+	end
+	if not redis.call('ZSCORE', KEYS[1], '!') then redis.call('HSET', KEYS[2], 'ready', '0') end
+	redis.call('ZADD', KEYS[1], -1, '!')
+	local inserted = redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
+	local excess = redis.call('ZCARD', KEYS[1]) - tonumber(ARGV[4]) - 1
+	if excess > 0 then redis.call('ZREMRANGEBYRANK', KEYS[1], 1, excess) end
+	redis.call('HSET', KEYS[2], 'revision', ARGV[3])
+	redis.call('PERSIST', KEYS[1])
+	redis.call('PERSIST', KEYS[2])
+	return inserted`
 	if len(users) == 0 {
 		return 0, nil
 	}
@@ -311,15 +311,15 @@ return inserted`
 // beginDiscoverInboxBuild 领取短期重建锁并记录变更标识，其他请求不等待重建而直接回源。
 func beginDiscoverInboxBuild(ctx context.Context, userID, token string) (string, bool, error) {
 	const script = `
-if not redis.call('SET', KEYS[3], ARGV[1], 'NX', 'PX', ARGV[2]) then return false end
-redis.call('PERSIST', KEYS[1])
-redis.call('PERSIST', KEYS[2])
-local revision = redis.call('HGET', KEYS[2], 'revision')
-if not revision then
-  revision = ARGV[1]
-  redis.call('HSET', KEYS[2], 'revision', revision, 'ready', '0')
-end
-return revision`
+	if not redis.call('SET', KEYS[3], ARGV[1], 'NX', 'PX', ARGV[2]) then return false end
+	redis.call('PERSIST', KEYS[1])
+	redis.call('PERSIST', KEYS[2])
+	local revision = redis.call('HGET', KEYS[2], 'revision')
+	if not revision then
+		revision = ARGV[1]
+		redis.call('HSET', KEYS[2], 'revision', revision, 'ready', '0')
+	end
+	return revision`
 	revision, err := redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID), token, constants.DiscoverInboxBuildTimeout.Milliseconds()).Text()
 	if errors.Is(err, redis.Nil) {
 		return "", false, nil
@@ -333,19 +333,19 @@ func publishDiscoverInboxBuild(ctx context.Context, userID, token, revision stri
 		return false, errors.New("Redis收件箱重建参数无效")
 	}
 	const script = `
-if redis.call('GET', KEYS[3]) ~= ARGV[1] then return 0 end
-if redis.call('HGET', KEYS[2], 'revision') ~= ARGV[2] then
-  redis.call('DEL', KEYS[3])
-  return 0
-end
-redis.call('DEL', KEYS[1])
-redis.call('ZADD', KEYS[1], -1, '!')
-for i = 3, #ARGV, 2 do redis.call('ZADD', KEYS[1], ARGV[i], ARGV[i + 1]) end
-redis.call('HSET', KEYS[2], 'revision', ARGV[1], 'ready', '1')
-redis.call('PERSIST', KEYS[1])
-redis.call('PERSIST', KEYS[2])
-redis.call('DEL', KEYS[3])
-return 1`
+	if redis.call('GET', KEYS[3]) ~= ARGV[1] then return 0 end
+	if redis.call('HGET', KEYS[2], 'revision') ~= ARGV[2] then
+		redis.call('DEL', KEYS[3])
+		return 0
+	end
+	redis.call('DEL', KEYS[1])
+	redis.call('ZADD', KEYS[1], -1, '!')
+	for i = 3, #ARGV, 2 do redis.call('ZADD', KEYS[1], ARGV[i], ARGV[i + 1]) end
+	redis.call('HSET', KEYS[2], 'revision', ARGV[1], 'ready', '1')
+	redis.call('PERSIST', KEYS[1])
+	redis.call('PERSIST', KEYS[2])
+	redis.call('DEL', KEYS[3])
+	return 1`
 	args := []any{token, revision}
 	for i, member := range members {
 		args = append(args, scores[i], member)
@@ -363,9 +363,9 @@ func releaseDiscoverInboxBuild(ctx context.Context, userID, token string) error 
 // invalidateDiscoverInbox 在关注关系变更后标记重建，并使在途旧快照无法发布。
 func invalidateDiscoverInbox(ctx context.Context, userID, revision string) error {
 	const script = `
-redis.call('DEL', KEYS[1])
-redis.call('HSET', KEYS[2], 'revision', ARGV[1], 'ready', '0')
-redis.call('PERSIST', KEYS[2])
-return 1`
+	redis.call('DEL', KEYS[1])
+	redis.call('HSET', KEYS[2], 'revision', ARGV[1], 'ready', '0')
+	redis.call('PERSIST', KEYS[2])
+	return 1`
 	return redispkg.GetClient().Eval(ctx, script, discoverInboxKeys(userID)[:2], revision).Err()
 }

@@ -1,17 +1,15 @@
 package user
 
 import (
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
-	"time"
 
 	userreq "seekF-backend/internal/dto/user/user_req"
 	"seekF-backend/internal/pkg/ai/asr"
-	tool "seekF-backend/internal/pkg/ai/mcp/tool"
+	"seekF-backend/internal/pkg/ratelimit"
 	"seekF-backend/internal/pkg/resp"
 	"seekF-backend/internal/pkg/upload/oss"
 	"seekF-backend/internal/pkg/zlog"
@@ -83,7 +81,7 @@ func (c *AIChatController) GetMessageHistory(ctx *gin.Context) {
 		return
 	}
 
-	messageList, total, err := c.aiChatService.GetMessageHistory(ctx.Request.Context(), req.SessionId, req.PageSize, req.Cursor, req.Direction)
+	messageList, total, err := c.aiChatService.GetMessageHistory(ctx.Request.Context(), ctx.GetString("Uuid"), req.SessionId, req.PageSize, req.Cursor, req.Direction)
 	if err != nil {
 		zlog.Info("获取消息历史服务错误: " + err.Error())
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
@@ -96,91 +94,130 @@ func (c *AIChatController) GetMessageHistory(ctx *gin.Context) {
 	})
 }
 
-// SendMessage 发送文本或图片消息，通过SSE返回AI回答和参考来源。
-func (c *AIChatController) SendMessage(ctx *gin.Context) {
+// aiStreamError 返回初始化或恢复失败的明确状态，不将失败伪装成正常完成。
+func aiStreamError(ctx *gin.Context, err error) {
+	status := http.StatusBadRequest
+	var limitErr *ratelimit.Error
+	switch {
+	case errors.Is(err, userservice.ErrAIStreamMissing):
+		status = http.StatusGone
+	case errors.Is(err, userservice.ErrAIStreamForbidden):
+		status = http.StatusForbidden
+	case errors.As(err, &limitErr):
+		status = limitErr.Status
+	}
+	resp.Error(ctx, err.Error(), status)
+}
+
+// StartGeneration 保存提问并启动独立生成任务，仅返回可订阅的streamId。
+func (c *AIChatController) StartGeneration(ctx *gin.Context) {
 	var req userreq.SendAIMessageRequest
 	if err := ctx.ShouldBind(&req); err != nil {
-		zlog.Error(err.Error())
-		resp.Error(ctx, "参数错误", http.StatusBadRequest)
+		resp.Error(ctx, "消息参数错误", http.StatusBadRequest)
 		return
 	}
-
-	// 如果有图片文件，上传到 OSS
 	if file, err := ctx.FormFile("image"); err == nil {
 		result, err := c.fileService.UploadFile(ctx.Request.Context(), ctx.GetString("Uuid"), file, oss.MessageImage)
 		if err != nil {
-			zlog.Error("上传图片失败: " + err.Error())
+			zlog.Error("上传AI消息图片失败: " + err.Error())
 			resp.Error(ctx, "图片上传失败", http.StatusInternalServerError)
 			return
 		}
 		req.ImageURL = result.URL
 	}
+	info, err := c.aiChatService.StartMessageStream(ctx.Request.Context(), ctx.GetString("Uuid"), req)
+	if err != nil {
+		aiStreamError(ctx, err)
+		return
+	}
+	resp.Success(ctx, "AI回答任务已启动", info)
+}
 
-	// 设置SSE响应头，启用服务器发送事件
+// GetStreamInfo 查询回答是否已落库，刷新时先决定加载历史还是恢复回放。
+func (c *AIChatController) GetStreamInfo(ctx *gin.Context) {
+	var req userreq.AIStreamRequest
+	if err := ctx.ShouldBindQuery(&req); err != nil {
+		resp.Error(ctx, "回答任务参数错误", http.StatusBadRequest)
+		return
+	}
+	info, err := c.aiChatService.GetMessageStream(ctx.Request.Context(), ctx.GetString("Uuid"), req.SessionId, req.StreamId)
+	if err != nil {
+		aiStreamError(ctx, err)
+		return
+	}
+	resp.Success(ctx, "查询AI回答状态成功", info)
+}
+
+// StreamGeneration 回放Redis事件并等待后续片段，断开只终止订阅，不取消生成。
+func (c *AIChatController) StreamGeneration(ctx *gin.Context) {
+	var req userreq.AIStreamRequest
+	if err := ctx.ShouldBindQuery(&req); err != nil {
+		resp.Error(ctx, "回答订阅参数错误", http.StatusBadRequest)
+		return
+	}
+	if req.After == "" {
+		req.After = "0-0"
+	}
+	info, err := c.aiChatService.GetMessageStream(ctx.Request.Context(), ctx.GetString("Uuid"), req.SessionId, req.StreamId)
+	if err != nil {
+		aiStreamError(ctx, err)
+		return
+	}
+	// 首次读取同时验证游标，在发送SSE响应头之前返回参数和存储错误。
+	events, err := c.aiChatService.ReadMessageStream(ctx.Request.Context(), req.StreamId, req.After)
+	if err != nil {
+		aiStreamError(ctx, err)
+		return
+	}
 	ctx.Header("Content-Type", "text/event-stream")
 	ctx.Header("Cache-Control", "no-cache")
 	ctx.Header("Connection", "keep-alive")
+	ctx.Header("X-Accel-Buffering", "no")
 	ctx.Status(http.StatusOK)
 	ctx.Writer.Flush()
-
-	userId := ctx.GetString("Uuid")
-
-	// 推送AI回答的文本片段。
-	onChunk := func(chunk string) error {
-		// 对内容进行转义处理，防止换行符和引号破坏JSON格式
-		escaped := strings.ReplaceAll(chunk, "\n", "\\n")
-		escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
-		// 将数据块以SSE格式写入响应流  \n\n（两个连续的换行符）是SSE协议中消息边界标记
-		_, err := fmt.Fprintf(ctx.Writer, "data: {\"content\": \"%s\"}\n\n", escaped)
-		if err != nil {
-			return err
-		}
-		// 立即刷新响应缓冲区，确保数据实时发送到前端
+	writeTerminal := func(kind string, data any) {
+		payload, _ := json.Marshal(data)
+		fmt.Fprintf(ctx.Writer, "event: %s\ndata: %s\n\n", kind, payload)
 		ctx.Writer.Flush()
-		return nil
 	}
-
-	// 推送网页搜索来源。
-	onSources := func(sources []tool.SearchSource) error {
-		sourcesJSON, _ := json.Marshal(sources)
-		_, err := fmt.Fprintf(ctx.Writer, "data: {\"sources\": %s}\n\n", sourcesJSON)
-		if err != nil {
-			return err
+	for ctx.Request.Context().Err() == nil {
+		for _, event := range events {
+			if _, err := fmt.Fprintf(ctx.Writer, "id: %s\nevent: %s\ndata: %s\n\n", event.Id, event.Type, event.Data); err != nil {
+				return
+			}
+			ctx.Writer.Flush()
+			req.After = event.Id
+			if event.Type == "done" || event.Type == "error" {
+				return
+			}
 		}
-		ctx.Writer.Flush()
-		return nil
-	}
-
-	// 推送搜索到的相关帖子。
-	onPosts := func(posts []tool.DiscoverPostItem) error {
-		postsJSON, _ := json.Marshal(posts)
-		_, err := fmt.Fprintf(ctx.Writer, "data: {\"posts\": %s}\n\n", postsJSON)
-		if err != nil {
-			return err
+		if len(events) == 0 {
+			// 缺失终态时以MySQL补偿完成信号；心跳过期时明确报告进程中断。
+			info, err = c.aiChatService.GetMessageStream(ctx.Request.Context(), ctx.GetString("Uuid"), req.SessionId, req.StreamId)
+			if err != nil {
+				writeTerminal("error", gin.H{"error": err.Error()})
+				return
+			}
+			if info.Status == "finished" {
+				writeTerminal("done", gin.H{"message_id": info.MessageId})
+				return
+			}
+			if info.Status != "running" {
+				writeTerminal("error", gin.H{"error": info.Error})
+				return
+			}
+			if _, err := fmt.Fprint(ctx.Writer, ": heartbeat\n\n"); err != nil {
+				return
+			}
+			ctx.Writer.Flush()
 		}
-		ctx.Writer.Flush()
-		return nil
-	}
-
-	// 通知前端回答生成完成。
-	onComplete := func(fullContent string) error {
-		_, err := fmt.Fprintf(ctx.Writer, "data: {\"done\": true}\n\n")
+		events, err = c.aiChatService.ReadMessageStream(ctx.Request.Context(), req.StreamId, req.After)
 		if err != nil {
-			return err
+			if ctx.Request.Context().Err() == nil {
+				writeTerminal("error", gin.H{"error": err.Error()})
+			}
+			return
 		}
-		ctx.Writer.Flush()
-		return nil
-	}
-
-	// 与 HTTP 连接解耦：用户切换会话导致连接断开时，仍继续生成并持久化
-	genCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), 15*time.Minute)
-	defer cancel()
-
-	err := c.aiChatService.SendMessageStream(genCtx, userId, req, onChunk, onSources, onPosts, onComplete)
-	if err != nil {
-		zlog.Info("发送消息服务错误: " + err.Error())
-		fmt.Fprintf(ctx.Writer, "data: {\"error\": \"%s\"}\n\n", err.Error())
-		ctx.Writer.Flush()
 	}
 }
 
@@ -294,7 +331,7 @@ func (c *AIChatController) DeleteSession(ctx *gin.Context) {
 		return
 	}
 
-	if err := c.aiChatService.DeleteSession(ctx.Request.Context(), req.SessionId); err != nil {
+	if err := c.aiChatService.DeleteSession(ctx.Request.Context(), ctx.GetString("Uuid"), req.SessionId); err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}

@@ -269,10 +269,10 @@ func GetClient() *redis.Client {
 // CompareAndDeleteString 原子比较字符串值并删除，仅匹配的调用方可以消费一次性记录。
 func CompareAndDeleteString(ctx context.Context, key, expected string) (bool, error) {
 	const script = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
-end
-return 0`
+	if redis.call('GET', KEYS[1]) == ARGV[1] then
+		return redis.call('DEL', KEYS[1])
+	end
+	return 0`
 	deleted, err := redisClient.Eval(ctx, script, []string{key}, expected).Int64()
 	return deleted == 1, err
 }

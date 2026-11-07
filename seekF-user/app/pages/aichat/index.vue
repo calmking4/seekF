@@ -97,7 +97,7 @@
             </div>
 
             <!-- 未选择会话时的占位 -->
-            <div v-if="activeIndex === -1" class="flex-1 flex flex-col items-center justify-center text-gray-400">
+            <div v-if="!currentSession" class="flex-1 flex flex-col items-center justify-center text-gray-400">
                 <Icon name="uil:robot" class="text-6xl w-16 h-16 mb-4 text-gray-300" />
                 <p class="text-lg text-gray-700 mb-2">选择一个 AI 会话开始对话</p>
                 <p class="text-sm text-gray-400">支持 DeepSeek / Qwen / GLM</p>
@@ -312,7 +312,7 @@
                                 />
                                 <button
                                     class="send-btn"
-                                    :disabled="isStreaming || voiceBusy || (!inputMessage.trim() && !selectedImage)"
+                                    :disabled="creatingSession || isStreaming || voiceBusy || (!inputMessage.trim() && !selectedImage)"
                                     @click="sendMessage"
                                 >
                                     <Icon name="uil:message" class="text-xl" />
@@ -379,6 +379,8 @@ useSeoMeta({
 })
 
 const aiChat = useAIChat()
+const route = useRoute()
+const router = useRouter()
 const knowledge = useKnowledge()
 const tts = useTTS()
 const aiAvatarUrl = 'https://seekf.oss-cn-shenzhen.aliyuncs.com/common/ai_avatar/AI%E5%8A%A9%E6%89%8B%E5%A4%B4%E5%83%8F.png'
@@ -428,8 +430,11 @@ function copyMessage(msg) {
 }
 
 const currentUserAvatar = ref('')
+const currentUserId = ref('')
 const sessionList = ref([])
 const activeIndex = ref(-1)
+const draftSession = ref(null)
+const creatingSession = ref(false)
 const messageList = ref([])
 const inputMessage = ref('')
 const voiceBusy = ref(false)
@@ -441,9 +446,10 @@ const appendVoiceText = async (text) => {
     textareaRef.value?.focus()
 }
 const activeStreamSessions = ref(new Set())
+const restoringStreamSession = ref('')
 const isStreaming = computed(() => {
     const sid = currentSession.value?.sessionId
-    return sid ? activeStreamSessions.value.has(sid) : false
+    return sid ? activeStreamSessions.value.has(sid) || restoringStreamSession.value === sid : false
 })
 const selectedImage = ref(null)
 const useKnowledgeBase = ref(false)
@@ -500,6 +506,7 @@ const currentModelName = computed(() => {
 
 // 当前会话标题
 const currentSessionTitle = computed(() => {
+    if (draftSession.value) return '新会话'
     if (activeIndex.value === -1) return 'AI 助手'
     const session = sessionList.value[activeIndex.value]
     return session?.firstMessage || '新会话'
@@ -557,6 +564,45 @@ const totalMessages = ref(0)
 const oldestCursor = ref('') // 最旧消息的时间戳游标
 /** @type {Map<string, { close: () => void }>} */
 const activeStreams = new Map()
+const streamTasks = new Map()
+let pageDisposed = false
+
+// 按用户和会话隔离本标签页的任务编号，刷新保留，关闭标签页后自动清除。
+const streamStorageKey = (sessionId) => `seekf:ai:stream:${currentUserId.value}:${sessionId}`
+
+const getSessionStreamId = (sessionId) => {
+    const inMemory = streamTasks.get(sessionId)?.stream_id
+    if (inMemory) return inMemory
+    if (typeof window === 'undefined' || !currentUserId.value) return ''
+    try {
+        return window.sessionStorage.getItem(streamStorageKey(sessionId)) || ''
+    } catch (error) {
+        console.warn('读取AI回答恢复记录失败:', error)
+        return ''
+    }
+}
+
+const rememberSessionStream = (info) => {
+    streamTasks.set(info.session_id, info)
+    if (typeof window === 'undefined' || !currentUserId.value) return
+    try {
+        window.sessionStorage.setItem(streamStorageKey(info.session_id), info.stream_id)
+    } catch (error) {
+        console.warn('保存AI回答恢复记录失败:', error)
+    }
+}
+
+const forgetSessionStream = (sessionId, streamId = '') => {
+    if (!streamId || streamTasks.get(sessionId)?.stream_id === streamId) streamTasks.delete(sessionId)
+    if (typeof window === 'undefined' || !currentUserId.value) return
+    try {
+        const key = streamStorageKey(sessionId)
+        if (!streamId || window.sessionStorage.getItem(key) === streamId) window.sessionStorage.removeItem(key)
+    } catch (error) {
+        console.warn('清理AI回答恢复记录失败:', error)
+    }
+}
+
 /** @type {Map<string, { messages: any[], oldestCursor: string, hasMore: boolean, totalMessages: number }>} */
 const sessionCaches = new Map()
 
@@ -569,7 +615,7 @@ const cloneSessionMessages = (messages) =>
 
 const saveCurrentSessionCache = () => {
     const session = currentSession.value
-    if (!session) return
+    if (!session?.sessionId) return
     sessionCaches.set(session.sessionId, {
         messages: cloneSessionMessages(messageList.value),
         oldestCursor: oldestCursor.value,
@@ -586,23 +632,6 @@ const restoreSessionCache = (sessionId) => {
     hasMore.value = cache.hasMore
     totalMessages.value = cache.totalMessages
     return true
-}
-
-const mergeCacheTailIfNewer = (sessionId) => {
-    const cache = sessionCaches.get(sessionId)
-    if (!cache?.messages?.length) return
-    const lastCache = cache.messages[cache.messages.length - 1]
-    if (!lastCache || lastCache.isSelf || !lastCache.content) return
-    const lastLocal = messageList.value[messageList.value.length - 1]
-    const cacheLen = lastCache.content.length
-    const localLen = lastLocal?.isSelf ? 0 : (lastLocal?.content?.length || 0)
-    if (cacheLen > localLen) {
-        if (lastLocal && !lastLocal.isSelf) {
-            messageList.value[messageList.value.length - 1] = { ...lastCache }
-        } else {
-            messageList.value.push({ ...lastCache })
-        }
-    }
 }
 
 const updateCachedMessage = (sessionId, aiMessageId, updater) => {
@@ -633,6 +662,7 @@ const stopSessionStream = (sessionId) => {
 }
 
 const currentSession = computed(() => {
+    if (draftSession.value) return draftSession.value
     if (activeIndex.value === -1) return null
     return sessionList.value[activeIndex.value]
 })
@@ -747,6 +777,7 @@ const getCurrentUserInfo = async () => {
         const data = await useApi$('/user/userinfo/getMyInfo', { method: 'POST' })
         if (data?.code === 200) {
             currentUserAvatar.value = data.data.avatar
+            currentUserId.value = data.data.uuid
         }
     } catch (error) {
         console.error('获取用户信息失败:', error)
@@ -754,10 +785,17 @@ const getCurrentUserInfo = async () => {
 }
 
 // 加载会话列表
-const loadSessionList = async () => {
+const loadSessionList = async (requestedSessionId = '') => {
     try {
         const data = await aiChat.getSessionList()
-        sessionList.value = (data.list || []).map(item => ({
+        const list = [...(data.list || [])]
+        // 刷新较旧会话时继续查找后续页，避免会话被新记录挤出首屏后无法恢复。
+        for (let page = 2; requestedSessionId && !list.some(item => item.session_id === requestedSessionId) && list.length < data.total; page++) {
+            const next = await aiChat.getSessionList(page)
+            if (!next.list?.length) break
+            list.push(...next.list)
+        }
+        sessionList.value = list.map(item => ({
             sessionId: item.session_id,
             modelType: 'deepseek',
             firstMessage: item.first_message || '',
@@ -768,23 +806,39 @@ const loadSessionList = async () => {
     }
 }
 
+// 将当前会话编号写入地址，刷新后可重新加载同一会话。
+const syncSessionRoute = async (sessionId) => {
+    const query = { ...route.query }
+    if (sessionId) query.session_id = sessionId
+    else delete query.session_id
+    delete query.stream_id
+    await router.replace({ path: route.path, query, hash: route.hash })
+}
+
 // 选择会话
 const selectSession = async (index) => {
-    saveCurrentSessionCache()
-    activeIndex.value = index
+    if (creatingSession.value) return
     const session = sessionList.value[index]
     if (!session) return
+    saveCurrentSessionCache()
+    draftSession.value = null
+    activeIndex.value = index
 
     const sessionId = session.sessionId
+    const streamId = getSessionStreamId(sessionId)
+    restoringStreamSession.value = streamId ? sessionId : ''
+    await syncSessionRoute(sessionId)
+    if (currentSession.value?.sessionId !== sessionId) return
 
     if (sessionCaches.has(sessionId)) {
         restoreSessionCache(sessionId)
         scrollToBottom()
         if (!activeStreams.has(sessionId)) {
             await loadMessageList(sessionId)
-            mergeCacheTailIfNewer(sessionId)
             saveCurrentSessionCache()
+            if (streamId) await resumeSessionStream(sessionId, streamId)
         }
+        if (restoringStreamSession.value === sessionId) restoringStreamSession.value = ''
         return
     }
 
@@ -796,21 +850,25 @@ const selectSession = async (index) => {
 
     await loadMessageList(sessionId)
     saveCurrentSessionCache()
+    if (streamId) await resumeSessionStream(sessionId, streamId)
+    if (restoringStreamSession.value === sessionId) restoringStreamSession.value = ''
     scrollToBottom()
 }
 
 // 加载消息历史（游标分页）
 const loadMessageList = async (sessionId, cursor = '', direction = 'prev') => {
+    const requestedStreamId = streamTasks.get(sessionId)?.stream_id
     try {
         if (!sessionId) return
 
         const data = await aiChat.getMessageHistory(sessionId, pageSize, cursor, direction)
         if (currentSession.value?.sessionId !== sessionId) return
+        if (streamTasks.get(sessionId)?.stream_id !== requestedStreamId) return
         const list = data.list || []
         totalMessages.value = data.total || 0
 
         const messages = list.map(msg => ({
-            messageId: msg.session_id + '_' + msg.send_id + '_' + msg.created_at,
+            messageId: msg.uuid || msg.session_id + '_' + msg.send_id + '_' + msg.created_at,
             content: msg.content,
             senderName: msg.send_name,
             sendTime: msg.created_at,
@@ -835,8 +893,10 @@ const loadMessageList = async (sessionId, cursor = '', direction = 'prev') => {
         }
 
         hasMore.value = messageList.value.length < totalMessages.value
+        return true
     } catch (error) {
         console.error('获取消息历史失败:', error)
+        return false
     }
 }
 
@@ -862,160 +922,141 @@ const loadMoreMessages = async () => {
 }
 
 // 发送消息
-const sendMessage = async () => {
-    if (activeIndex.value === -1 || isStreaming.value || voiceBusy.value) return
-
-    const session = currentSession.value
-    if (!session) return
-
-    const content = inputMessage.value.trim()
-    const imageFile = selectedImage.value
-
-    if (!content && !imageFile) return
-
-    // 添加用户消息
-    const userMsgData = {
-        messageId: 'user_' + Date.now(),
-        content: content || '图片',
-        senderName: '我',
-        sendTime: new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
-        isSelf: true,
-        type: imageFile ? 2 : 0,
-        url: imageFile ? URL.createObjectURL(imageFile) : ''
+// attachSessionStream 绑定一次回答，回放与实时输出始终更新同一个正式消息编号。
+const attachSessionStream = (info) => {
+    const sessionId = info.session_id
+    const aiMessageId = info.message_id
+    stopSessionStream(sessionId)
+    rememberSessionStream(info)
+    const existing = messageList.value.find(message => message.messageId === aiMessageId)
+    const placeholder = {
+        messageId: aiMessageId, content: '', senderName: 'AI 助手', sendTime: '',
+        isSelf: false, isStreaming: true, sources: [], posts: []
     }
-    messageList.value.push(userMsgData)
-
-    if (imageFile) {
-        removeImage()
-    }
-
-    inputMessage.value = ''
-    // 重置 textarea 高度
-    if (textareaRef.value) {
-        textareaRef.value.style.height = 'auto'
-    }
-
-    // 添加 AI 流式消息占位
-    const aiMessageId = 'ai_' + Date.now()
-    messageList.value.push({
-        messageId: aiMessageId,
-        content: '',
-        senderName: 'AI 助手',
-        sendTime: '',
-        isSelf: false,
-        isStreaming: true,
-        sources: [],
-        posts: []
-    })
-
-    const sessionId = session.sessionId
-    const timeStr = () => new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-
+    if (existing) Object.assign(existing, placeholder)
+    else messageList.value.push(placeholder)
     saveCurrentSessionCache()
-    activeStreamSessions.value.add(sessionId)
-    activeStreamSessions.value = new Set(activeStreamSessions.value)
-    followLatest.value = true
-    scrollToBottom()
-
-    const streamHandle = aiChat.sendMessage(
-        sessionId,
-        content,
-        session.modelType,
-        imageFile,
-        useKnowledgeBase.value,
-        useWebSearch.value,
-        // onChunk
-        (chunk) => {
-            updateCachedMessage(sessionId, aiMessageId, (aiMsg) => {
-                aiMsg.content += chunk
-            })
-            if (currentSession.value?.sessionId === sessionId) {
-                scrollToBottom()
-            }
-        },
-        // onSources
-        (sources) => {
-            updateCachedMessage(sessionId, aiMessageId, (aiMsg) => {
-                aiMsg.sources = sources
-            })
-        },
-        // onPosts
-        (posts) => {
-            updateCachedMessage(sessionId, aiMessageId, (aiMsg) => {
-                aiMsg.posts = posts
-            })
-        },
-        // onComplete
-        () => {
-            updateCachedMessage(sessionId, aiMessageId, (aiMsg) => {
-                aiMsg.isStreaming = false
-                aiMsg.sendTime = timeStr()
-            })
-            activeStreams.delete(sessionId)
-            activeStreamSessions.value.delete(sessionId)
-            activeStreamSessions.value = new Set(activeStreamSessions.value)
-            const aiMsg = sessionCaches.get(sessionId)?.messages.find(msg => msg.messageId === aiMessageId)
-            const s = sessionList.value.find(item => item.sessionId === sessionId)
-            if (s && aiMsg) {
-                s.lastMessage = aiMsg.content
-            }
-            saveCurrentSessionCache()
-            if (currentSession.value?.sessionId === sessionId) {
-                scrollToBottom()
-            }
-        },
-        // onError
-        (error) => {
-            updateCachedMessage(sessionId, aiMessageId, (aiMsg) => {
-                aiMsg.isStreaming = false
-                if (!aiMsg.content) {
-                    aiMsg.content = '抱歉，响应出现错误：' + error
-                }
-                aiMsg.sendTime = timeStr()
-            })
-            activeStreams.delete(sessionId)
-            activeStreamSessions.value.delete(sessionId)
-            activeStreamSessions.value = new Set(activeStreamSessions.value)
-            saveCurrentSessionCache()
-            if (currentSession.value?.sessionId === sessionId) {
-                ElMessage.error('AI 响应失败')
-            }
-        }
-    )
-    activeStreams.set(sessionId, streamHandle)
-}
-
-// 创建新会话
-const handleCreateSession = async () => {
-    // 先保存当前会话的缓存（使用sessionId，不依赖activeIndex）
-    const currentSessionId = currentSession.value?.sessionId
-    if (currentSessionId) {
-        sessionCaches.set(currentSessionId, {
-            messages: cloneSessionMessages(messageList.value),
-            oldestCursor: oldestCursor.value,
-            hasMore: hasMore.value,
-            totalMessages: totalMessages.value
+    activeStreamSessions.value = new Set([...activeStreamSessions.value, sessionId])
+    const finish = () => {
+        activeStreams.delete(sessionId)
+        activeStreamSessions.value = new Set([...activeStreamSessions.value].filter(id => id !== sessionId))
+        updateCachedMessage(sessionId, aiMessageId, message => {
+            message.isStreaming = false
+            message.sendTime = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
         })
     }
-
-    const result = await aiChat.createSession('deepseek')
-    if (result) {
-        await loadSessionList()
-        const idx = sessionList.value.findIndex(s => s.sessionId === result.session_id)
-        if (idx !== -1) {
-            // 直接设置activeIndex，不调用selectSession避免重复保存
-            activeIndex.value = idx
-            // 新会话没有历史消息，发送消息时也不应显示加载更多
-            messageList.value = []
-            hasMore.value = false
-            loadingMore.value = false
-            oldestCursor.value = ''
-            totalMessages.value = 0
+    const handle = aiChat.subscribeStream(sessionId, info.stream_id, {
+        onChunk: chunk => {
+            updateCachedMessage(sessionId, aiMessageId, message => { message.content += chunk })
+            if (currentSession.value?.sessionId === sessionId) scrollToBottom()
+        },
+        onSources: sources => updateCachedMessage(sessionId, aiMessageId, message => { message.sources = sources }),
+        onPosts: posts => updateCachedMessage(sessionId, aiMessageId, message => { message.posts = posts }),
+        onComplete: async () => {
+            finish()
+            forgetSessionStream(sessionId, info.stream_id)
+            if (!pageDisposed && currentSession.value?.sessionId === sessionId) {
+                await loadMessageList(sessionId)
+                if (currentSession.value?.sessionId !== sessionId) return
+                saveCurrentSessionCache()
+                scrollToBottom()
+            } else {
+                // 返回此会话时从正式历史重新读取，避免缓存仍保留临时回答。
+                sessionCaches.delete(sessionId)
+            }
+        },
+        onError: error => {
+            finish()
+            updateCachedMessage(sessionId, aiMessageId, message => {
+                message.content += (message.content ? '\n\n' : '') + '回答中断：' + error
+            })
+            if (currentSession.value?.sessionId === sessionId) ElMessage.error(error)
+            // 保留本标签页的任务编号，网络恢复后刷新仍可回放同一任务。
         }
-        ElMessage.success('创建会话成功')
-    } else {
-        ElMessage.error('创建会话失败')
+    })
+    activeStreams.set(sessionId, handle)
+}
+
+// resumeSessionStream 整页恢复从头回放；已经保存的回答直接读取历史，不重复显示占位。
+const resumeSessionStream = async (sessionId, streamId) => {
+    try {
+        const info = await aiChat.getStreamInfo(sessionId, streamId)
+        if (pageDisposed || currentSession.value?.sessionId !== sessionId) return
+        if (info.status === 'finished' || messageList.value.some(message => message.messageId === info.message_id)) {
+            const loaded = await loadMessageList(sessionId)
+            if (currentSession.value?.sessionId !== sessionId) return
+            if (!loaded) return
+            forgetSessionStream(sessionId, streamId)
+            saveCurrentSessionCache()
+            return
+        }
+        currentSession.value.modelType = info.model_type
+        attachSessionStream(info)
+    } catch (error) {
+        if (currentSession.value?.sessionId !== sessionId) return
+        if ([403, 410].includes(error.status)) {
+            forgetSessionStream(sessionId, streamId)
+        }
+        ElMessage.warning(error.message || '恢复AI回答失败，请刷新重试')
     }
+}
+
+// sendMessage 首次发送才创建会话，启动任务成功后保存任务编号，再订阅同一条事件流。
+const sendMessage = async () => {
+    if (creatingSession.value || isStreaming.value || voiceBusy.value) return
+    let session = currentSession.value
+    if (!session) return
+    const content = inputMessage.value.trim()
+    const imageFile = selectedImage.value
+    if (!content && !imageFile) return
+    const modelType = session.modelType
+    const knowledgeEnabled = useKnowledgeBase.value
+    const webSearchEnabled = useWebSearch.value
+    creatingSession.value = true
+    try {
+        if (!session.sessionId) {
+            const result = await aiChat.createSession(modelType)
+            if (!result?.session_id) throw new Error('创建会话失败')
+            session = { sessionId: result.session_id, modelType, firstMessage: '', createdAt: '' }
+            sessionList.value.unshift(session)
+            activeIndex.value = 0
+            draftSession.value = null
+            await syncSessionRoute(session.sessionId)
+        }
+        const info = await aiChat.startGeneration(session.sessionId, content, modelType, imageFile, knowledgeEnabled, webSearchEnabled)
+        if (pageDisposed) return
+        rememberSessionStream(info)
+        session.firstMessage ||= content || '图片'
+        messageList.value.push({
+            messageId: info.user_message_id, content: content || '图片', senderName: '我',
+            sendTime: new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+            isSelf: true, type: imageFile ? 2 : 0, url: imageFile ? URL.createObjectURL(imageFile) : ''
+        })
+        inputMessage.value = ''
+        if (imageFile) removeImage()
+        if (textareaRef.value) textareaRef.value.style.height = 'auto'
+        attachSessionStream(info)
+        followLatest.value = true
+        scrollToBottom()
+    } catch (error) {
+        ElMessage.error(error.message || '启动AI回答失败，请确认会话历史后重试')
+    } finally {
+        creatingSession.value = false
+    }
+}
+
+// 打开本地空白会话，发送第一条消息前不写入后端或侧边栏。
+const handleCreateSession = async () => {
+    if (creatingSession.value) return
+    saveCurrentSessionCache()
+    activeIndex.value = -1
+    draftSession.value = { sessionId: '', modelType: 'deepseek' }
+    messageList.value = []
+    hasMore.value = false
+    loadingMore.value = false
+    oldestCursor.value = ''
+    totalMessages.value = 0
+    await syncSessionRoute('new')
 }
 
 // 删除会话
@@ -1030,11 +1071,13 @@ const handleDeleteSession = async (item, index) => {
         const success = await aiChat.deleteSession(item.sessionId)
         if (success) {
             stopSessionStream(item.sessionId)
+            forgetSessionStream(item.sessionId)
             sessionCaches.delete(item.sessionId)
             sessionList.value.splice(index, 1)
             if (activeIndex.value === index) {
                 activeIndex.value = -1
                 messageList.value = []
+                await syncSessionRoute()
             } else if (activeIndex.value > index) {
                 activeIndex.value--
             }
@@ -1048,13 +1091,30 @@ const handleDeleteSession = async (item, index) => {
 }
 
 onMounted(async () => {
+    const requestedSessionId = typeof route.query.session_id === 'string' ? route.query.session_id : ''
+    const legacyStreamId = typeof route.query.stream_id === 'string' ? route.query.stream_id : ''
     document.addEventListener('click', closeMenus)
     document.addEventListener('keydown', handleSourcesKeydown)
     await getCurrentUserInfo()
-    await loadSessionList()
+    // 兼容此前已打开的带stream_id地址，迁移后不再将任务编号放进URL。
+    if (legacyStreamId) {
+        if (requestedSessionId && requestedSessionId !== 'new' && !getSessionStreamId(requestedSessionId)) {
+            rememberSessionStream({ session_id: requestedSessionId, stream_id: legacyStreamId })
+        }
+        await syncSessionRoute(requestedSessionId)
+    }
+    await loadSessionList(requestedSessionId === 'new' ? '' : requestedSessionId)
+    if (requestedSessionId === 'new') {
+        await handleCreateSession()
+    } else if (requestedSessionId) {
+        const index = sessionList.value.findIndex(session => session.sessionId === requestedSessionId)
+        if (index !== -1) await selectSession(index)
+        else await syncSessionRoute()
+    }
 })
 
 onUnmounted(() => {
+    pageDisposed = true
     clearTimeout(highlightTimer)
     document.removeEventListener('click', closeMenus)
     document.removeEventListener('keydown', handleSourcesKeydown)

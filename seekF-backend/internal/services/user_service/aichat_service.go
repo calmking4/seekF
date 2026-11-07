@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"seekF-backend/internal/configs"
@@ -21,12 +24,16 @@ import (
 	"seekF-backend/internal/pkg/ai/tts"
 	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/db"
+	"seekF-backend/internal/pkg/ratelimit"
+	redispkg "seekF-backend/internal/pkg/redis"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"github.com/google/uuid"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -37,11 +44,15 @@ type AIChatService interface {
 	// GetSessionList 获取用户AI会话列表
 	GetSessionList(ctx context.Context, userId string, page int, pageSize int) (*userresp.GetAISessionListRespond, error)
 	// GetMessageHistory 游标分页获取AI消息历史
-	GetMessageHistory(ctx context.Context, sessionId string, pageSize int, cursor string, direction string) ([]userresp.GetAIMessageHistoryRespond, int64, error)
-	// SendMessageStream 流式发送消息，通过SSE推送实时响应
-	SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onPosts func(posts []toolpkg.DiscoverPostItem) error, onComplete func(fullContent string) error) error
+	GetMessageHistory(ctx context.Context, userId, sessionId string, pageSize int, cursor string, direction string) ([]userresp.GetAIMessageHistoryRespond, int64, error)
+	// 保存提问、初始化事件流并启动独立生成任务。
+	StartMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest) (*userresp.AIStreamInfo, error)
+	// 校验任务归属并查询回答是否已完成或中断。
+	GetMessageStream(ctx context.Context, userId, sessionId, streamId string) (*userresp.AIStreamInfo, error)
+	// 从指定事件之后读取一批事件，暂无事件时短暂阻塞。
+	ReadMessageStream(ctx context.Context, streamId, after string) ([]userresp.AIStreamEvent, error)
 	// DeleteSession 删除AI会话
-	DeleteSession(ctx context.Context, sessionId string) error
+	DeleteSession(ctx context.Context, userId, sessionId string) error
 	// TextToSpeech 流式文本转语音，返回流式结果
 	TextToSpeech(ctx context.Context, content string, voice string) (*tts.StreamResult, error)
 	// SpeechToText 使用GLM-ASR-2512流式识别录音。
@@ -131,7 +142,11 @@ func (s *AIChatServiceImpl) GetSessionList(ctx context.Context, userId string, p
 }
 
 // GetMessageHistory 游标分页获取指定AI会话的消息历史
-func (s *AIChatServiceImpl) GetMessageHistory(ctx context.Context, sessionId string, pageSize int, cursor string, direction string) ([]userresp.GetAIMessageHistoryRespond, int64, error) {
+func (s *AIChatServiceImpl) GetMessageHistory(ctx context.Context, userId, sessionId string, pageSize int, cursor string, direction string) ([]userresp.GetAIMessageHistoryRespond, int64, error) {
+	session, err := s.sessionDAO.GetAISessionByUuid(ctx, sessionId)
+	if err != nil || session == nil || session.SendId != userId {
+		return nil, 0, fmt.Errorf("会话不存在或无权访问")
+	}
 	if pageSize < 1 {
 		pageSize = 20
 	}
@@ -161,6 +176,7 @@ func (s *AIChatServiceImpl) GetMessageHistory(ctx context.Context, sessionId str
 			referencedPosts = append(referencedPosts, posts...)
 		}
 		rspList = append(rspList, userresp.GetAIMessageHistoryRespond{
+			Uuid:      msg.Uuid,
 			SessionId: msg.SessionId,
 			SendId:    msg.SendId,
 			SendName:  msg.SendName,
@@ -229,26 +245,278 @@ func refreshAIPostSupport(ctx context.Context, userId string, items []toolpkg.Di
 	return nil
 }
 
-// SendMessageStream 流式发送消息：
-// 1. 校验会话 → 2. 保存用户消息到DB → 3. 从DB读取历史构建上下文
-// 4. 调用模型单例获取流式响应 → 5. 通过onChunk回调推送SSE
-// 6. 完整响应保存到DB（失败则走Kafka异步持久化）
-func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onPosts func(posts []toolpkg.DiscoverPostItem) error, onComplete func(fullContent string) error) error {
+// aiStreamStart 保存在事件流首条记录中，绑定归属、消息编号和生成截止时间。
+type aiStreamStart struct {
+	UserId    string                `json:"user_id"`
+	StartedAt int64                 `json:"started_at"`
+	Info      userresp.AIStreamInfo `json:"info"`
+}
+
+// aiStreamWriter 串行写入同一回答，使用请求标识防止Redis客户端重试重复追加片段。
+type aiStreamWriter struct {
+	streamId string
+	mu       sync.Mutex
+}
+
+// ErrAIStreamMissing 表示回放记录已经过期或不存在。
+var ErrAIStreamMissing = errors.New("回答缓存已过期，请重新加载会话历史")
+
+// ErrAIStreamForbidden 表示当前用户无权读取该回答。
+var ErrAIStreamForbidden = errors.New("无权访问该回答")
+
+var aiStreamCursorPattern = regexp.MustCompile(`^[0-9]{1,20}-[0-9]{1,20}$`)
+
+// appendAIStreamEvent 原子追加事件并续期，只使用一个Stream键，不裁剪运行中的片段。
+func appendAIStreamEvent(ctx context.Context, writer *aiStreamWriter, kind string, payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("编码AI回答事件失败: %w", err)
+	}
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	attempt, cancel := context.WithTimeout(ctx, constants.AIStreamRedisTimeout)
+	defer cancel()
+	// 重试期间持有同一任务写锁，因此相同nonce只能出现在末条记录，不需要额外去重键。
+	const script = `
+	local last = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', 1)
+	if #last > 0 then
+		local fields = last[1][2]
+		for i = 1, #fields, 2 do
+			if fields[i] == 'nonce' and fields[i + 1] == ARGV[4] then return last[1][1] end
+		end
+	end
+	if ARGV[1] ~= 'start' and #last == 0 then return redis.error_reply('回答缓存已过期') end
+	local id = redis.call('XADD', KEYS[1], '*', 'type', ARGV[1], 'data', ARGV[2], 'nonce', ARGV[4])
+	redis.call('EXPIRE', KEYS[1], ARGV[3])
+	return id`
+	if err := redispkg.GetClient().Eval(attempt, script, []string{constants.AIStreamKeyPrefix + writer.streamId}, kind, string(data), int64(constants.AIStreamTTL/time.Second), uuid.NewString()).Err(); err != nil {
+		return fmt.Errorf("保存AI回答事件失败: %w", err)
+	}
+	return nil
+}
+
+// StartMessageStream 初始化回放日志并保存提问，后台任务接管并发名额后立即返回任务编号。
+func (s *AIChatServiceImpl) StartMessageStream(ctx context.Context, userId string, req userreq.SendAIMessageRequest) (*userresp.AIStreamInfo, error) {
+	req.Content = strings.TrimSpace(req.Content)
+	if req.Content == "" && req.ImageURL == "" {
+		return nil, fmt.Errorf("请输入消息或上传图片")
+	}
+	if aipkg.GetModelPool().GetModel(req.ModelType) == nil {
+		return nil, fmt.Errorf("模型不可用")
+	}
+	session, err := s.sessionDAO.GetAISessionByUuid(ctx, req.SessionId)
+	if err != nil || session == nil || session.SendId != userId {
+		return nil, fmt.Errorf("会话不存在或无权访问")
+	}
+	release, err := ratelimit.AcquireAI(ctx, userId)
+	if err != nil {
+		return nil, err
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			release()
+		}
+	}()
+	info := userresp.AIStreamInfo{
+		StreamId: uuid.NewString(), SessionId: req.SessionId, ModelType: req.ModelType,
+		MessageId: "M" + util.GetNowAndLenRandomString(11), UserMessageId: "M" + util.GetNowAndLenRandomString(11), Status: "running",
+	}
+	start := aiStreamStart{UserId: userId, StartedAt: time.Now().UnixMilli(), Info: info}
+	writer := &aiStreamWriter{streamId: info.StreamId}
+	if err := appendAIStreamEvent(ctx, writer, "start", start); err != nil {
+		return nil, err
+	}
+	// 初始化成功后不再随浏览器取消，确保提问保存与任务启动之间不会因断线被打断。
+	prepareCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	message, err := s.prepareAIMessage(prepareCtx, userId, req, info.UserMessageId)
+	if err != nil {
+		if cleanupErr := redispkg.GetClient().Del(prepareCtx, constants.AIStreamKeyPrefix+info.StreamId).Err(); cleanupErr != nil {
+			zlog.Warn("清理未启动AI回答缓存失败，streamId=" + info.StreamId + ": " + cleanupErr.Error())
+		}
+		return nil, err
+	}
+	genCtx, genCancel := context.WithTimeout(context.WithoutCancel(ctx), constants.AIStreamTimeout)
+	transferred = true
+	go s.runMessageStream(genCtx, genCancel, release, userId, req, message, info, writer)
+	return &info, nil
+}
+
+// runMessageStream 将模型事件写入Redis，心跳持续续期，失败终止生成并独立记录终态。
+func (s *AIChatServiceImpl) runMessageStream(ctx context.Context, cancel context.CancelFunc, release func(), userId string, req userreq.SendAIMessageRequest, message *models.Message, info userresp.AIStreamInfo, writer *aiStreamWriter) {
+	defer cancel()
+	defer release()
+	var resultErr error
+	stopHeartbeat, heartbeatDone := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		ticker := time.NewTicker(constants.AIStreamHeartbeat)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopHeartbeat:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := appendAIStreamEvent(ctx, writer, "heartbeat", struct{}{}); err != nil {
+					zlog.Error("AI回答心跳写入失败，streamId=" + info.StreamId + ": " + err.Error())
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			resultErr = fmt.Errorf("AI回答生成发生异常: %v", recovered)
+		}
+		close(stopHeartbeat)
+		<-heartbeatDone
+		// 即使生成已超时，也留出独立时间写终态；完成事件必须晚于数据库提交。
+		finishCtx, finishCancel := context.WithTimeout(context.Background(), constants.AIStreamRedisTimeout)
+		defer finishCancel()
+		kind, payload := "done", map[string]string{"message_id": info.MessageId}
+		if resultErr != nil {
+			kind, payload = "error", map[string]string{"error": resultErr.Error()}
+			zlog.Error("AI回答生成失败，streamId=" + info.StreamId + ": " + resultErr.Error())
+		}
+		if err := appendAIStreamEvent(finishCtx, writer, kind, payload); err != nil {
+			zlog.Error("保存AI回答终态失败，streamId=" + info.StreamId + ": " + err.Error())
+		}
+	}()
+	resultErr = s.generateAIMessage(ctx, userId, req, message, info.MessageId,
+		func(chunk string) error {
+			return appendAIStreamEvent(ctx, writer, "delta", map[string]string{"content": chunk})
+		},
+		func(sources []toolpkg.SearchSource) error {
+			return appendAIStreamEvent(ctx, writer, "sources", map[string]any{"sources": sources})
+		},
+		func(posts []toolpkg.DiscoverPostItem) error {
+			return appendAIStreamEvent(ctx, writer, "posts", map[string]any{"posts": posts})
+		})
+}
+
+// GetMessageStream 从首条事件校验归属，以数据库结果和末条事件判断终态及生成中断。
+func (s *AIChatServiceImpl) GetMessageStream(ctx context.Context, userId, sessionId, streamId string) (*userresp.AIStreamInfo, error) {
+	if _, err := uuid.Parse(streamId); err != nil {
+		return nil, ErrAIStreamMissing
+	}
+	attempt, cancel := context.WithTimeout(ctx, constants.AIStreamRedisTimeout)
+	defer cancel()
+	client, key := redispkg.GetClient(), constants.AIStreamKeyPrefix+streamId
+	first, err := client.XRangeN(attempt, key, "-", "+", 1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("查询AI回答缓存失败: %w", err)
+	}
+	if len(first) == 0 {
+		return nil, ErrAIStreamMissing
+	}
+	var start aiStreamStart
+	data, ok := first[0].Values["data"].(string)
+	if !ok || first[0].Values["type"] != "start" || json.Unmarshal([]byte(data), &start) != nil || start.Info.StreamId != streamId {
+		return nil, fmt.Errorf("AI回答缓存格式无效")
+	}
+	if start.UserId != userId || start.Info.SessionId != sessionId {
+		return nil, ErrAIStreamForbidden
+	}
+	session, err := s.sessionDAO.GetAISessionByUuid(attempt, sessionId)
+	if err != nil {
+		return nil, fmt.Errorf("查询AI会话失败: %w", err)
+	}
+	if session == nil || session.SendId != userId {
+		return nil, ErrAIStreamForbidden
+	}
+	info := start.Info
+	message, err := s.messageDAO.GetMessageByUuid(attempt, info.MessageId)
+	if err == nil && message.SessionId == sessionId && message.ReceiveId == userId {
+		info.Status = "finished"
+		return &info, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("查询AI回答保存状态失败: %w", err)
+	}
+	last, err := client.XRevRangeN(attempt, key, "+", "-", 1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("读取AI回答状态失败: %w", err)
+	}
+	if len(last) == 0 {
+		return nil, ErrAIStreamMissing
+	}
+	if last[0].Values["type"] == "error" {
+		info.Status = "error"
+		var failure struct {
+			Error string `json:"error"`
+		}
+		if payload, ok := last[0].Values["data"].(string); ok {
+			if err := json.Unmarshal([]byte(payload), &failure); err != nil {
+				return nil, fmt.Errorf("解析AI回答错误状态失败: %w", err)
+			}
+		}
+		info.Error = failure.Error
+	} else {
+		lastMillis, err := strconv.ParseInt(strings.SplitN(last[0].ID, "-", 2)[0], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("AI回答事件时间无效")
+		}
+		if time.Since(time.UnixMilli(lastMillis)) > constants.AIStreamStaleTimeout || time.Since(time.UnixMilli(start.StartedAt)) > constants.AIStreamTimeout+constants.AIStreamStaleTimeout {
+			info.Status, info.Error = "interrupted", "回答生成已中断，请重新发送消息"
+		}
+	}
+	return &info, nil
+}
+
+// ReadMessageStream 验证游标并使用普通XREAD回放，每个订阅者独立消费且不删除记录。
+func (s *AIChatServiceImpl) ReadMessageStream(ctx context.Context, streamId, after string) ([]userresp.AIStreamEvent, error) {
+	if !aiStreamCursorPattern.MatchString(after) {
+		return nil, fmt.Errorf("回答事件游标无效")
+	}
+	for _, part := range strings.Split(after, "-") {
+		if _, err := strconv.ParseUint(part, 10, 64); err != nil {
+			return nil, fmt.Errorf("回答事件游标超出范围")
+		}
+	}
+	attempt, cancel := context.WithTimeout(ctx, constants.AIStreamRedisTimeout)
+	defer cancel()
+	streams, err := redispkg.GetClient().XRead(attempt, &redis.XReadArgs{Streams: []string{constants.AIStreamKeyPrefix + streamId, after}, Count: constants.AIStreamReadCount, Block: time.Second}).Result()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("读取AI回答事件失败: %w", err)
+	}
+	var events []userresp.AIStreamEvent
+	for _, stream := range streams {
+		for _, message := range stream.Messages {
+			kind, kindOK := message.Values["type"].(string)
+			data, dataOK := message.Values["data"].(string)
+			if !kindOK || !dataOK || !json.Valid([]byte(data)) {
+				return nil, fmt.Errorf("AI回答事件格式无效")
+			}
+			events = append(events, userresp.AIStreamEvent{Id: message.ID, Type: kind, Data: data})
+		}
+	}
+	return events, nil
+}
+
+// prepareAIMessage 校验会话归属并在事务内保存提问和会话摘要。
+func (s *AIChatServiceImpl) prepareAIMessage(ctx context.Context, userId string, req userreq.SendAIMessageRequest, userMsgId string) (*models.Message, error) {
 	// 校验AI会话是否存在
 	session, err := s.sessionDAO.GetAISessionByUuid(ctx, req.SessionId)
 	if err != nil {
 		zlog.Error("获取AI会话失败: " + err.Error())
-		return fmt.Errorf("会话不存在")
+		return nil, fmt.Errorf("会话不存在")
 	}
-	if session == nil {
-		return fmt.Errorf("会话不存在")
+	if session == nil || session.SendId != userId {
+		return nil, fmt.Errorf("会话不存在或无权访问")
 	}
 
 	// 获取用户信息
 	user, err := s.userInfoDAO.FindUserByUuid(ctx, userId)
 	if err != nil {
 		zlog.Error("获取用户信息失败: " + err.Error())
-		return fmt.Errorf("系统错误")
+		return nil, fmt.Errorf("系统错误")
 	}
 
 	var userName, userAvatar string
@@ -270,7 +538,6 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	}
 
 	// 同步保存用户消息到DB
-	userMsgId := "M" + util.GetNowAndLenRandomString(11)
 	userMessage := &models.Message{
 		Uuid:       userMsgId,
 		SessionId:  req.SessionId,
@@ -287,6 +554,10 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txMessageDAO := userdao.NewMessageDAO(tx)
 		txSessionDAO := userdao.NewSessionDAO(tx)
+		current, err := txSessionDAO.GetOwnedSessionForUpdate(ctx, userId, req.SessionId)
+		if err != nil {
+			return fmt.Errorf("AI会话已失效: %w", err)
+		}
 
 		if err := txMessageDAO.CreateMessage(ctx, userMessage); err != nil {
 			zlog.Error("保存用户消息失败: " + err.Error())
@@ -300,7 +571,7 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		}
 
 		// 如果是第一消息，更新会话第一条消息
-		if session.FirstMessage == "" {
+		if current.FirstMessage == "" {
 			if err := txSessionDAO.UpdateSessionFirstMessage(ctx, req.SessionId, content); err != nil {
 				zlog.Error("更新会话首条消息失败: " + err.Error())
 				return fmt.Errorf("更新会话失败")
@@ -310,9 +581,15 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
+	return userMessage, nil
+}
+
+// generateAIMessage 复用模型和MCP流程，将输出交给事件存储后保存完整回答。
+func (s *AIChatServiceImpl) generateAIMessage(ctx context.Context, userId string, req userreq.SendAIMessageRequest, userMessage *models.Message, aiMessageID string, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onPosts func(posts []toolpkg.DiscoverPostItem) error) error {
+	content, userMsgId := userMessage.Content, userMessage.Uuid
 	// 从DB读取历史消息构建上下文（最近100条）
 	// 使用DESC排序获取最近的消息，然后反转为正序
 	messages, err := s.messageDAO.GetMessagesBySessionIdDesc(ctx, req.SessionId, 100, 0)
@@ -441,34 +718,34 @@ func (s *AIChatServiceImpl) SendMessageStream(ctx context.Context, userId string
 		// 如果有搜索来源数据，通过 onSources 回调推送给前端
 		if len(sources) > 0 && onSources != nil {
 			if err := onSources(sources); err != nil {
-				zlog.Error("发送搜索来源到客户端失败: " + err.Error())
+				return err
 			}
 		}
 		// 如果有帖子数据，通过 onPosts 回调推送给前端
 		if len(posts) > 0 && onPosts != nil {
 			if err := onPosts(posts); err != nil {
-				zlog.Error("发送帖子到客户端失败: " + err.Error())
+				return err
 			}
 		}
-		return s.persistAndCompleteAIMessage(ctx, req, userId, userMessage, finalContent, sources, posts, onChunk, onComplete)
+		return s.persistAndCompleteAIMessage(ctx, req, userId, userMessage, aiMessageID, finalContent, sources, posts, onChunk)
 	}
 
-	finalContent, err = streamChatModelToSSE(ctx, chatModel, chatMessages, onChunk)
+	finalContent, err = streamChatModel(ctx, chatModel, chatMessages, onChunk)
 	if err != nil {
 		zlog.Error("调用AI模型流失败: " + err.Error())
 		return fmt.Errorf("AI响应失败")
 	}
 
-	return s.persistAndCompleteAIMessage(ctx, req, userId, userMessage, finalContent, nil, nil, onChunk, onComplete)
+	return s.persistAndCompleteAIMessage(ctx, req, userId, userMessage, aiMessageID, finalContent, nil, nil, onChunk)
 }
 
-// persistAndCompleteAIMessage 负责将最终回复兜底、持久化，并触发完成回调。
-func (s *AIChatServiceImpl) persistAndCompleteAIMessage(ctx context.Context, req userreq.SendAIMessageRequest, userId string, userMessage *models.Message, finalContent string,
-	sources []toolpkg.SearchSource, posts []toolpkg.DiscoverPostItem, onChunk func(chunk string) error, onComplete func(fullContent string) error) error {
+// persistAndCompleteAIMessage 将完整回答和会话摘要一起提交，终态由后台任务统一写入。
+func (s *AIChatServiceImpl) persistAndCompleteAIMessage(ctx context.Context, req userreq.SendAIMessageRequest, userId string, userMessage *models.Message, aiMessageID string, finalContent string,
+	sources []toolpkg.SearchSource, posts []toolpkg.DiscoverPostItem, onChunk func(chunk string) error) error {
 	if finalContent == "" {
 		finalContent = "抱歉，我暂时无法回答这个问题。"
 		if err := onChunk(finalContent); err != nil {
-			zlog.Error("发送最终数据块失败: " + err.Error())
+			return err
 		}
 	}
 
@@ -499,7 +776,7 @@ func (s *AIChatServiceImpl) persistAndCompleteAIMessage(ctx context.Context, req
 	}
 
 	aiMessage := &models.Message{
-		Uuid:       "M" + util.GetNowAndLenRandomString(11),
+		Uuid:       aiMessageID,
 		SessionId:  req.SessionId,
 		SendId:     "A" + util.GetNowAndLenRandomString(11),
 		SendName:   "AI助手",
@@ -512,6 +789,10 @@ func (s *AIChatServiceImpl) persistAndCompleteAIMessage(ctx context.Context, req
 	}
 	// 回答及会话摘要一起提交，写入失败时不发送完成信号。
 	if err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 与会话删除使用同一行锁，避免删除期间生成出孤立回答。
+		if _, err := userdao.NewSessionDAO(tx).GetOwnedSessionForUpdate(ctx, userId, req.SessionId); err != nil {
+			return fmt.Errorf("AI会话已失效: %w", err)
+		}
 		if err := userdao.NewMessageDAO(tx).CreateMessage(ctx, aiMessage); err != nil {
 			return fmt.Errorf("保存AI回答失败: %w", err)
 		}
@@ -524,15 +805,11 @@ func (s *AIChatServiceImpl) persistAndCompleteAIMessage(ctx context.Context, req
 		return err
 	}
 
-	if onComplete != nil {
-		return onComplete(finalContent)
-	}
-
 	return nil
 }
 
-// streamChatModelToSSE 将模型的流式输出逐块透传给 SSE，并返回完整聚合后的文本。
-func streamChatModelToSSE(ctx context.Context, m einomodel.ToolCallingChatModel, messages []*schema.Message, onChunk func(chunk string) error) (string, error) {
+// streamChatModel 逐块交付模型输出，读取或保存失败立即结束，避免截断回答被标记为完成。
+func streamChatModel(ctx context.Context, m einomodel.ToolCallingChatModel, messages []*schema.Message, onChunk func(chunk string) error) (string, error) {
 	stream, err := m.Stream(ctx, messages)
 	if err != nil {
 		return "", err
@@ -550,15 +827,13 @@ func streamChatModelToSSE(ctx context.Context, m einomodel.ToolCallingChatModel,
 		}
 		if err != nil {
 			zlog.Error("读取流数据块失败: " + err.Error())
-			break
+			return fullContent.String(), fmt.Errorf("读取模型输出失败: %w", err)
 		}
 
 		if chunk != nil && len(chunk.Content) > 0 {
 			fullContent.WriteString(chunk.Content)
 			if err := onChunk(chunk.Content); err != nil {
-				// 客户端断开（如切换会话）时不中断模型生成，继续聚合完整回复以便持久化
-				zlog.Warn("发送数据块到客户端失败，继续生成: " + err.Error())
-				continue
+				return fullContent.String(), err
 			}
 		}
 	}
@@ -663,7 +938,7 @@ func runMCPAgentFlow(ctx context.Context, userId string, chatModel einomodel.Too
 		msgs2 = append(msgs2, schema.ToolMessage(out, tc.ID, schema.WithToolName(name)))
 	}
 
-	finalContent, err = streamChatModelToSSE(ctx, chatModel, msgs2, onChunk)
+	finalContent, err = streamChatModel(ctx, chatModel, msgs2, onChunk)
 	if err != nil {
 		return "", false, nil, nil, err
 	}
@@ -709,10 +984,17 @@ func (s *AIChatServiceImpl) TextToSpeech(ctx context.Context, content string, vo
 }
 
 // DeleteSession 删除AI会话及其所有消息
-func (s *AIChatServiceImpl) DeleteSession(ctx context.Context, sessionId string) error {
-	err := db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+func (s *AIChatServiceImpl) DeleteSession(ctx context.Context, userId, sessionId string) error {
+	session, err := s.sessionDAO.GetAISessionByUuid(ctx, sessionId)
+	if err != nil || session == nil || session.SendId != userId {
+		return fmt.Errorf("会话不存在或无权访问")
+	}
+	err = db.GormDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txMessageDAO := userdao.NewMessageDAO(tx)
 		txSessionDAO := userdao.NewSessionDAO(tx)
+		if _, err := txSessionDAO.GetOwnedSessionForUpdate(ctx, userId, sessionId); err != nil {
+			return fmt.Errorf("锁定AI会话失败: %w", err)
+		}
 
 		if err := txMessageDAO.DeleteMessagesBySessionId(ctx, sessionId); err != nil {
 			zlog.Error("删除AI会话消息失败: " + err.Error())
