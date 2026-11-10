@@ -28,7 +28,7 @@ var httpClient = &http.Client{
 // maxDownloadSize 最大下载大小 10MB
 const maxDownloadSize = 10 * 1024 * 1024
 
-// SearchResult 搜索结果，包含文本和相似度分数
+// SearchResult 搜索结果，包含正文和RRF融合排名分数（不是相似度）。
 type SearchResult struct {
 	Text  string
 	Score float32
@@ -106,10 +106,7 @@ func (s *KnowledgeServiceImpl) AddDocument(ctx context.Context, userId, fileName
 		return nil, fmt.Errorf("存储分块文本失败: %v", err)
 	}
 
-	// 2. 构建稀疏向量词汇表（用于混合检索）
-	ragInst.BuildSparseVocabulary(chunks)
-
-	// 3. 存储向量到 Qdrant（包含 Dense 和 Sparse 向量）
+	// 2. 存储GLM语义向量及Qdrant服务端生成的BM25向量
 	err = ragInst.UpsertChunks(ctx, collectionName, chunks, docUUID)
 	if err != nil {
 		// 回滚：删除已存储的分块文本

@@ -1,341 +1,236 @@
-# SeekF 项目 RAG 实现详解
+# seekF 项目 RAG 实现详解
 
-## 什么是 RAG？
+本文按当前代码说明知识库流程：**GLM Embedding 稠密向量 + Qdrant 内置 BM25 稀疏向量 + Qdrant RRF 融合**。Go 后端复用 Elasticsearch 的 IK 分词器处理中文，词项编号和 BM25 权重由 Qdrant 生成。
 
-RAG（Retrieval Augmented Generation，检索增强生成）是一种让 AI 模型能够访问私有知识库的技术。它的工作流程是：
+## 1. 整体流程
 
-1. **索引阶段**：将文档切分成小块，转换为向量，存入向量数据库
-2. **查询阶段**：将用户问题转换为向量，从数据库中检索最相关的文档片段
-3. **生成阶段**：将检索到的内容作为上下文，让 AI 生成答案
+### 文档入库
 
----
+~~~text
+文件地址 → 下载正文 → Markdown 清理 → 文本分块
+  → 确保用户集合存在
+  → 分块正文写入 MySQL
+  ├─ 原始分块 → GLM Embedding → dense 语义向量
+  └─ PrepareBM25Text → ES ik_max_word → 词项文本 → Qdrant 内置 BM25 → sparse 向量
+  → Qdrant 保存点，等待写入完成
+  → MySQL 保存文档元数据
+~~~
 
-## 整体架构
+### 提问与生成
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         用户上传文档                             │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  1. 下载文件                                                     │
-│  2. 文本分词 (Splitter)                                         │
-│  3. 向量化 (Embedding)                                          │
-│  4. 存储向量 (Qdrant)                                            │
-│  5. 保存元数据 (MySQL)                                           │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                         用户提问                                 │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  1. 问题向量化                                                   │
-│  2. 向量搜索 (Qdrant)                                            │
-│  3. 获取相关文档片段                                             │
-│  4. 构建提示词 + 调用 AI                                         │
-│  5. 流式返回答案                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+~~~text
+开启知识库的用户提问
+  ├─ 原始问题 → GLM Embedding → dense 查询向量
+  └─ PrepareBM25Text → ES ik_max_word → BM25 Document → sparse 查询
+                          ↓
+             两路分别召回，Qdrant RRF 融合
+                          ↓
+             返回 doc_uuid、chunk_idx 和融合分数
+                          ↓
+             回 MySQL 批量读取匹配分块正文
+                          ↓
+             按排名最多选择5块，拼入 system 提示词
+                          ↓
+             模型生成 → Redis Stream → SSE → 浏览器
+~~~
 
----
+| 模块 | 职责 | 代码 |
+| --- | --- | --- |
+| KnowledgeService | 下载、入库、删除、回查正文 | [knowledge_service.go](../internal/services/user_service/knowledge_service.go) |
+| RAG | 组合分块、GLM Embedding 和混合检索 | [init.go](../internal/pkg/ai/rag/init.go) |
+| TextSplitter | 文档分块 | [splitter.go](../internal/pkg/ai/rag/splitter.go) |
+| PrepareBM25Text | 调用ES的IK分词，文档与问题使用相同分析器 | [sparse.go](../internal/pkg/ai/rag/sparse.go) |
+| AnalyzeText | 调用通用ES文本分析接口 | [es_util.go](../internal/pkg/db/es_util.go) |
+| Embedding | 调用 GLM Embedding API | [embedding.go](../internal/pkg/ai/rag/embedding.go) |
+| QdrantUtil | BM25 推理、向量存储、RRF、索引检查和迁移 | [qdrant_util.go](../internal/pkg/db/qdrant_util.go) |
+| AIChatService | 选择上下文、生成并缓存回答事件 | [aichat_service.go](../internal/services/user_service/aichat_service.go) |
+| 常量 | 向量字段、BM25 参数、上下文数量 | [ai.go](../internal/pkg/constants/ai.go) |
 
-## 核心组件
+## 2. 文档分块与词项切分
 
-### 1. 文本分词器 (Splitter)
+分块决定一次检索返回哪段正文；词项切分用于 BM25 关键词匹配，两者是不同步骤。
 
-**文件**: `seekF-backend/internal/pkg/ai/rag/splitter.go`
+### 文档分块：TextSplitter
 
-负责将长文档拆分成小片段，便于后续向量化和检索。
+初始化使用 NewTextSplitter(500, 50)。实现会统一换行符、合并过多空行，按空行组织段落，再尝试合并到目标长度，相邻块保留部分尾部内容。
 
-```go
-// 创建分词器：每块 500 字符，重叠 50 字符
-splitter := NewTextSplitter(500, 50)
+分块长度与重叠长度通过 Go 的 len(string) 和字节切片计算，500、50的单位是字节。段落是合并分块的基本单元，长段落会整体进入分块，重叠部分取前一块的尾部字节。
 
-// 分词
-chunks := splitter.SplitText(content)
-```
+### BM25 预处理：PrepareBM25Text
 
-**分词逻辑**:
-- 按段落分割，保留段落结构
-- 每块最大 500 字符
-- 相邻块之间有 50 字符重叠（保持上下文连贯性）
-- 过滤多余空行，清理换行符
+文档分块和用户问题都通过 PrepareBM25Text 调用 ES 的文本分析接口：
 
-### 2. 向量化 (Embedding)
+~~~http
+POST /_analyze
+Content-Type: application/json
+Accept: application/json
 
-**文件**: `seekF-backend/internal/pkg/ai/rag/embedding.go`
-
-调用 GLM 模型将文本转换为 2048 维向量。
-
-```go
-emb := NewEmbedding(apiKey, model, baseURL)
-vectors, err := emb.EmbedTexts(ctx, chunks)
-```
-
-**调用流程**:
-```
-请求 → POST {baseURL}/embeddings
-      {
-        "input": "文本内容",
-        "model": "embedding-3"
-      }
-
-响应 ←
-      {
-        "data": [{
-          "embedding": [0.1, 0.2, ...],  // 2048 维向量
-          "index": 0
-        }]
-      }
-```
-
-### 3. 向量存储 (Qdrant)
-
-**文件**: `seekF-backend/internal/pkg/db/qdrant_util.go`
-
-向量数据库，负责存储和检索向量。
-
-**核心操作**:
-
-| 操作 | 说明 |
-|------|------|
-| `EnsureCollection` | 创建 collection（向量库） |
-| `UpsertChunks` | 批量插入向量 + 文本 + 元数据 |
-| `Search` | 向量相似度搜索 |
-| `DeleteByDocUUID` | 按 doc_uuid 删除向量 |
-
-**存储结构**:
-```go
-PointStruct{
-    Id:      uint64,           // 随机生成的唯一 ID
-    Vectors: []float32,       // 2048 维向量
-    Payload: {
-        "text": "...",        // 文档片段内容
-        "doc_uuid": "K..."    // 关联的文档 ID
-    }
+{
+  "analyzer": "ik_max_word",
+  "text": "人工智能与向量数据库"
 }
-```
+~~~
 
----
+ES 使用已安装的 IK 插件及其词典返回 tokens。后端读取 token 字段，去除空词项、转小写，保留原有顺序和重复词项，再用空格连接交给 Qdrant。知识库正文仍由 MySQL 保存，调用分析接口不需要把正文写入 ES 索引。
 
-## 核心流程
+当前 IK 输出示例（具体结果由插件词典决定）：
 
-### 文档上传流程 (AddDocument)
+~~~text
+人工智能与向量数据库
+→ 人工智能 人工 智能 能与 向量 数据库 数据 库
 
-**调用链**:
-```
-Controller → Service → RAG → Qdrant + MySQL
-```
+人工智能 人工智能
+→ 人工智能 人工 智能 人工智能 人工 智能
 
-**代码位置**: `knowledge_service.go:48-97`
+错误HTTP500重试 E_CONN_42 useApi
+→ 错误 http500 http 500 重试 重 试 e_conn_42 e conn 42 useapi
+~~~
 
-```go
-func (s *KnowledgeServiceImpl) AddDocument(...) (*DocInfo, error) {
-    // 1. 从 OSS 下载文件内容
-    content, err := s.downloadFile(ctx, fileURL)
+ik_max_word 采用细粒度分词，会同时产生完整词和较短词项。重复出现的词不做全局去重，以便 BM25 计算词频。词典通过 IK 插件配置管理，文档入库与问题查询显式指定同一个分析器。
 
-    // 2. 如果是 Markdown，移除标记
-    if fileType == "md" {
-        content = removeMarkdownMarkers(content)
-    }
+每次分词最多等待5秒，继承上层请求的取消信号。上传时先完成全部分块的分词，再调用 GLM；ES 分词失败时返回错误。查询分词失败时记录中文日志，使用 dense 语义候选继续检索。
 
-    // 3. 分词：将长文本拆分成小块
-    ragInst := rag.GetRAG()
-    chunks := ragInst.GetSplitter().SplitText(content)
+## 3. 两种向量如何生成
 
-    // 4. 确保用户的 collection 存在（向量库）
-    collectionName := "knowledge_" + userId
-    ragInst.EnsureCollection(ctx, collectionName)
+### Dense：GLM Embedding
 
-    // 5. 向量化 + 存储到 Qdrant
-    docUUID := "K" + randomString(11)
-    ragInst.UpsertChunks(ctx, collectionName, chunks, docUUID)
+Go 通过 EmbedTexts 调用 POST {GlmBaseUrl}/embeddings。请求示意：
 
-    // 6. 保存元数据到 MySQL
-    doc := &models.Knowledge{Uuid: docUUID, ...}
-    knowledgeDAO.Create(doc)
-
-    return DocInfo{ChunkCnt: len(chunks)}, nil
+~~~json
+{
+  "input": ["第一个分块正文", "第二个分块正文"],
+  "model": "配置的 GlmEmbeddingModel"
 }
-```
+~~~
 
-### 文档删除流程 (RemoveDocument)
+模型、地址和密钥读取配置，每批最多16条文本，响应按 index 还原顺序。当前集合创建时指定 dense 为2048维、距离为 Cosine，因此模型实际输出必须与2048维一致。
 
-**代码位置**: `knowledge_service.go:120-145`
+Dense 使用原始分块或原始问题，不使用 BM25 的词项拼接文本。
 
-```go
-func (s *KnowledgeServiceImpl) RemoveDocument(...) error {
-    // 1. 查询文档，确认权限
-    doc, _ := knowledgeDAO.FindByUuid(uuid)
+### Sparse：Qdrant 内置 BM25
 
-    // 2. 删除 Qdrant 中的向量（按 doc_uuid 过滤）
-    ragInst.DeleteChunks(ctx, collectionName, uuid)
+Go 将预处理文本封装为 Document，写入使用 NewVectorDocument，查询使用 NewQueryDocument：
 
-    // 3. 删除 MySQL 中的元数据记录
-    knowledgeDAO.Delete(uuid)
+~~~go
+document := &qdrant.Document{
+    Model: constants.KnowledgeBM25Model, // qdrant/bm25
+    Text:  text, // PrepareBM25Text 的输出
+    Options: qdrant.NewValueMap(map[string]any{
+        "language": "none",
+        "k":        constants.KnowledgeBM25K,
+        "b":        constants.KnowledgeBM25B,
+        "avg_len":  constants.KnowledgeBM25AvgLen,
+    }),
 }
-```
+~~~
 
----
+Qdrant 服务端将词项映射为编号，计算考虑词频饱和、长度归一化的权重，保存为 indices 和 values。集合启用 IDF modifier，由 Qdrant 维护集合内的词项文档频率，并在检索评分时应用 IDF；Go 不额外乘一次 IDF。
 
-## AI 对话中的 RAG 应用
+| 参数 | 当前值及含义 |
+| --- | --- |
+| 模型 | qdrant/bm25 |
+| language | none，禁用默认英文词干及停用词处理 |
+| k | 1.2，控制词频饱和 |
+| b | 0.75，控制长度归一化 |
+| avg_len | 256，IK词项数量的固定平均长度估计，不是实时语料平均值 |
 
-### 流程图
+文档和问题使用相同预处理与参数。调整IK词典、分析器、预处理、权重参数或平均长度估计时，需要重新处理已有稀疏向量，仅修改查询端会导致不一致。
 
-```
-用户问题
-    │
-    ▼
-┌───────────────────┐
-│  向量化问题        │
-│  emb.EmbedTexts   │
-└────────┬──────────┘
-         │
-         ▼
-┌───────────────────┐
-│  Qdrant 语义搜索   │  ←─ 从用户的知识库中检索
-│  rag.Search       │      相关文档片段
-└────────┬──────────┘
-         │
-         ▼
-┌───────────────────┐
-│  构建 Prompt      │
-│  [上下文] + 问题   │
-└────────┬──────────┘
-         │
-         ▼
-┌───────────────────┐
-│  调用 AI 模型     │
-│  生成回答          │
-└────────┬──────────┘
-         │
-         ▼
-     SSE 流式返回
-```
+预处理后没有词项的分块只存 dense；没有词项的问题只使用 dense 候选。稀疏向量链路不调用 GLM。
 
-### RAG 初始化
+## 4. 数据存储与标识
 
-**文件**: `seekF-backend/internal/pkg/ai/rag/init.go`
+### MySQL
 
-```go
-type RAG struct {
-    embedding *Embedding  // 向量化组件
-    splitter  *TextSplitter  // 分词器
-}
+knowledge 保存文档元数据，包括 uuid、user_id、file_name、file_url、file_type、chunk_count、created_at 等。
 
-func GetRAG() *RAG {
-    ragOnce.Do(func() {
-        // 使用 GLM 的 embedding-3 模型
-        emb := NewEmbedding(apiKey, "embedding-3", baseURL)
+knowledge_chunk 保存分块正文：
 
-        // 每块 500 字符，重叠 50
-        spl := NewTextSplitter(500, 50)
+| 字段 | 用途 |
+| --- | --- |
+| doc_uuid | 关联知识库文档 |
+| chunk_idx | 分块序号，从0开始 |
+| content | 分块正文 |
+| created_at | 创建时间 |
 
-        ragInstance = &RAG{embedding: emb, splitter: spl}
-    })
-    return ragInstance
-}
-```
+完整文件由 file_url 指向；Qdrant payload 不保存正文，检索后通过 doc_uuid + chunk_idx 从 MySQL 读取。
 
-### 搜索方法
+### Qdrant
 
-```go
-func (r *RAG) Search(ctx context.Context, collectionName, query string, topK int) ([]string, error) {
-    // 1. 将用户问题转换为向量
-    vectors, _ := r.embedding.EmbedTexts(ctx, []string{query})
+每个用户使用独立集合 knowledge_{userId}，名称由后端根据用户身份构造。
 
-    // 2. 在 Qdrant 中搜索最相似的 topK 个向量
-    return db.GetQdrant().Search(ctx, collectionName, vectors[0], topK)
-}
-```
+| 字段 | 当前实现 |
+| --- | --- |
+| id | 文档ID与分块序号生成的确定性 UUID |
+| vector.dense | GLM 生成的2048维语义向量 |
+| vector.sparse | Qdrant BM25 生成的稀疏向量，启用 IDF |
+| payload.doc_uuid | 文档ID |
+| payload.chunk_idx | 分块序号 |
 
----
+字段名统一使用 constants.KnowledgeDenseVector 和 constants.KnowledgeBM25Vector，实际分别为 dense、sparse。sparse 字段存储 BM25 词项权重。
 
-## 数据存储
+点 ID 的生成方式：
 
-### MySQL (元数据)
+~~~go
+name := fmt.Sprintf("%s-chunk-%d", docUUID, chunkIndex)
+pointID := uuid.NewSHA1(uuid.NameSpaceURL, []byte(name)).String()
+~~~
 
-表: `knowledge`
+文档 ID 以 K 开头，Qdrant 点 ID 是标准 UUID，两者不同。点 ID 当前不含文档版本；同一文档、同一序号重复写入会更新对应点。
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| uuid | varchar | 文档唯一ID (如 K2026041780625137333) |
-| user_id | varchar | 所属用户ID |
-| file_name | varchar | 文件名 |
-| file_url | varchar | OSS 地址 |
-| file_type | varchar | 文件类型 (md/txt等) |
-| chunk_count | int | 切片数量 |
-| created_at | datetime | 创建时间 |
+## 5. 混合检索与 RRF
 
-### Qdrant (向量)
+查询调用链：
 
-Collection: `knowledge_{userId}`
+~~~text
+KnowledgeService.Search
+→ RAG.HybridSearch
+→ GLM EmbedTexts + ES IK分词
+→ QdrantUtil.HybridSearch
+→ dense / sparse prefetch
+→ Qdrant 内置 RRF
+→ MySQL 批量查询正文
+~~~
 
-| 字段 | 说明 |
-|------|------|
-| id | 随机 uint64 |
-| vector | 2048 维向量 |
-| payload.text | 文档片段 |
-| payload.doc_uuid | 关联的文档ID |
+融合配置为：
 
----
+~~~go
+Query: qdrant.NewQueryFusion(qdrant.Fusion_RRF),
+~~~
 
-## 关键技术点
+RRF 按各路名次累计贡献，可用 Σ 1/(k + rank) 理解，具体排名起点及参数取服务端实现。项目没有自己实现融合算法。RRF 的平滑参数 k、BM25 的词频参数 k、返回数量 TopK 是不同概念。
 
-### 1. Collection 命名
-```go
-collectionName = "knowledge_" + userId
-```
-每个用户有独立的向量库，实现数据隔离。
+AI 对话当前将 topK 设为10：两路分别最多召回10条，融合最多返回10条，回查正文后按顺序最多取5块作为上下文。
 
-### 2. 文档 ID 生成
-```go
-docUUID = "K" + randomString(11)
-// 例: K2026041780625137333
-```
-- 前缀 "K" 标识为知识库文档
-- 后 11 位随机字符串
+**融合分数表示两路检索的排名贡献，不是余弦相似度或概率。** 上下文按返回排名选择。高度相关但只在一路命中的分块，可能具有较低融合分数；排名靠前也不保证正文相关。
 
-### 3. 文本预处理
-- Markdown 文件：移除 `#`、`````、`---` 等标记
-- 统一换行符：`\r\n` → `\n`
-- 合并连续空行
+## 6. 回答生成与失败处理
 
-### 4. 向量维度
-- 使用 **embedding-3** 模型，输出 **2048 维**向量
-- Qdrant collection 创建时指定 `vectorSize: 2048`
+开启知识库后，AIChatService 把选中正文拼入 system 提示词，要求模型参考资料回答；没有相关信息时允许忽略资料。ES分词失败时记录中文 Warn 日志，仅使用语义候选参与RRF排名；整体检索失败时沿用普通 AI 回答流程。
 
-### 5. 流式响应
-AI 对话使用 **SSE (Server-Sent Events)** 实现流式输出：
-```go
-ctx.Header("Content-Type", "text/event-stream")
-fmt.Fprintf(ctx.Writer, "data: {\"content\": \"...\"}\n\n")
-ctx.Writer.Flush()
-```
+模型回答事件写入 Redis Stream，SSE 订阅端读取并发送给浏览器，支持断线回放。Redis Stream 保存的是回答事件，不是 Qdrant 索引。
 
----
+上传和删除按以下顺序访问 MySQL 与 Qdrant：
 
-## 常见问题排查
+- 上传先保存分块，再写向量，最后保存文档元数据。向量写入失败时尝试删除已保存的分块，并向调用方返回错误。
+- 删除先校验归属，再删除向量、分块及文档记录；向量或分块删除失败时会记录日志并继续后续步骤。
+- 查询跳过无法在 MySQL 找到正文的命中并记录日志。
 
-### Q: 向量插入失败
-**错误**: `Unable to parse UUID: K2026041780625137333_0`
+## 7. 稀疏索引配置
 
-**原因**: Qdrant 默认要求 UUID 格式
+sparse 字段保存 BM25 词项权重，并启用 IDF modifier。词项文档频率由 Qdrant 按用户集合统计，文档与查询使用相同的 IK 分词规则和 BM25 参数。
 
-**解决**: 使用 `qdrant.NewIDNum()` 传入数值型 ID
+MigrateKnowledgeBM25 接收分块标识与预处理文本，先核对集合点数，再按确定性 ID 检查点存在。每批最多100块，只更新 sparse 向量并等待写入完成；dense 向量与分块关联保持原值，同一批可以重复提交。
 
----
+## 8. 问题排查
 
-## 总结
-
-SeekF 的 RAG 实现简洁高效：
-
-1. **文档上传** → 下载 → 分词 → 向量化 → 存入 Qdrant
-2. **用户提问** → 向量化 → 检索 → 构建 Prompt → AI 生成
-3. 每个用户有独立的 collection，实现数据隔离
-4. 使用 GLM embedding-3 生成 2048 维向量
-5. Markdown 文件自动清理标记符号
+| 现象 | 检查方向 |
+| --- | --- |
+| 稀疏向量查询报错 | 检查 sparse 字段、IDF配置及Qdrant的BM25推理参数 |
+| ES分词失败 | 检查ES连接、IK插件、ik_max_word分析器、权限及5秒超时 |
+| 中文关键词命中差 | 对比两端IK分析器、词典版本与返回词项 |
+| 维度不匹配 | 检查 GLM 模型输出与 dense 的2048维配置 |
+| 点 ID 格式错误 | 使用 generateChunkID 生成标准 UUID，不直接拼接 K 前缀文档ID |
+| 有向量却没有正文 | 检查 MySQL 的 doc_uuid 与 chunk_idx |
+| 回答使用无关资料 | 检查候选正文及两路排名，确认注入提示词的资料与问题匹配 |
+| 分块长度与预期不一致 | 检查段落长度、字节计量与尾部重叠的取值 |

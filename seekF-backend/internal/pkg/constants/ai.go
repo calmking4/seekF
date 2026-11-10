@@ -2,6 +2,30 @@ package constants
 
 import "time"
 
+// 知识库BM25索引参数，调整预处理或参数后需重新生成已有稀疏向量。
+const (
+	// GLM语义向量的命名字段。
+	KnowledgeDenseVector = "dense"
+	// Qdrant服务端内置的BM25模型。
+	KnowledgeBM25Model = "qdrant/bm25"
+	// 复用既有稀疏向量字段，兼容Qdrant 1.16.3不支持追加命名向量的限制。
+	KnowledgeBM25Vector = "sparse"
+	// 文档与问题共用的ES中文分析器。
+	KnowledgeBM25Analyzer = "ik_max_word"
+	// 单次ES分词最多等待5秒。
+	KnowledgeBM25AnalyzeTimeout = 5 * time.Second
+	// 词频饱和参数。
+	KnowledgeBM25K = 1.2
+	// 文档长度归一化参数。
+	KnowledgeBM25B = 0.75
+	// IK分词后的固定平均词项数估计，并非集合实时统计。
+	KnowledgeBM25AvgLen = 256.0
+	// 每批迁移的最大分块数量。
+	KnowledgeBM25BatchSize = 100
+	// 知识库最多注入模型的分块数量。
+	KnowledgeContextLimit = 5
+)
+
 // AI回答生成与回放时限。
 const (
 	// 单次后台生成最多运行15分钟。

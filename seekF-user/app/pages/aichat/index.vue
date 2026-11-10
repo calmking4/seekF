@@ -366,7 +366,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onActivated, onDeactivated, onUnmounted, nextTick } from 'vue'
 import AIPostSourcesPanel from '~/components/AIPostSourcesPanel.vue'
 import { discoverMediaURL } from '~/utils/discoverAccess'
 
@@ -566,6 +566,8 @@ const oldestCursor = ref('') // 最旧消息的时间戳游标
 const activeStreams = new Map()
 const streamTasks = new Map()
 let pageDisposed = false
+let pageActive = true
+let savedChatScrollTop = 0
 
 // 按用户和会话隔离本标签页的任务编号，刷新保留，关闭标签页后自动清除。
 const streamStorageKey = (sessionId) => `seekf:ai:stream:${currentUserId.value}:${sessionId}`
@@ -744,11 +746,14 @@ const openDiscoverDetail = (post) => {
     showDiscoverDetail.value = true
 }
 
-// 滚动到底部
+// 仅在页面可见且跟随最新消息时滚动，避免缓存页面在隐藏状态下丢失位置。
 const scrollToBottom = () => {
+    const sessionId = currentSession.value?.sessionId
     nextTick(() => {
-        if (chatContainerRef.value && followLatest.value) {
-            chatContainerRef.value.scrollTop = chatContainerRef.value.scrollHeight
+        const container = chatContainerRef.value
+        if (pageActive && !pageDisposed && container && followLatest.value && currentSession.value?.sessionId === sessionId) {
+            container.scrollTop = container.scrollHeight
+            savedChatScrollTop = container.scrollTop
         }
     })
 }
@@ -756,7 +761,8 @@ const scrollToBottom = () => {
 // 滚动到顶部加载更多
 const handleScroll = () => {
     const container = chatContainerRef.value
-    if (!container) return
+    if (!container || !pageActive) return
+    savedChatScrollTop = container.scrollTop
     followLatest.value = container.scrollHeight - container.scrollTop - container.clientHeight < 80
     const top = container.getBoundingClientRect().top + 80
     let visibleId = questionList.value[0]?.messageId || ''
@@ -1111,6 +1117,21 @@ onMounted(async () => {
         if (index !== -1) await selectSession(index)
         else await syncSessionRoute()
     }
+})
+
+// 从知识库等页面返回时，恢复缓存会话的最新位置或历史阅读位置。
+onActivated(async () => {
+    pageActive = true
+    await nextTick()
+    const container = chatContainerRef.value
+    if (!pageActive || pageDisposed || !container) return
+    if (followLatest.value) scrollToBottom()
+    else container.scrollTop = savedChatScrollTop
+})
+
+// 缓存期间保留流式任务，但暂停操作隐藏的消息滚动容器。
+onDeactivated(() => {
+    pageActive = false
 })
 
 onUnmounted(() => {

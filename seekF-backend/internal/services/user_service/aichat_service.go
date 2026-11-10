@@ -622,19 +622,25 @@ func (s *AIChatServiceImpl) generateAIMessage(ctx context.Context, userId string
 
 	// 如果启用知识库，搜索相关知识
 	if req.UseKnowledge && s.knowledgeService != nil {
-		// 搜索更多结果，后续用分数过滤
+		// 召回候选后按RRF融合排名选取上下文，不把融合分数当作相似度。
 		knowledgeResults, err := s.knowledgeService.Search(ctx, userId, content, 10)
+		if err != nil {
+			zlog.Warn("知识库检索失败，用户ID=" + userId + ": " + err.Error())
+		}
 		if err == nil && len(knowledgeResults) > 0 {
-			// 过滤低分结果（相似度 < 0.5），保留最多 5 条
-			filteredResults := filterByScore(knowledgeResults, 0.5, 5)
-			if len(filteredResults) > 0 {
+			// RRF分数只用于排序，最多保留5个分块。
+			selectedResults := knowledgeResults
+			if len(selectedResults) > constants.KnowledgeContextLimit {
+				selectedResults = selectedResults[:constants.KnowledgeContextLimit]
+			}
+			if len(selectedResults) > 0 {
 				knowledgeContext := "以下是你应该了解的知识库内容：\n"
-				for i, result := range filteredResults {
+				for i, result := range selectedResults {
 					knowledgeContext += fmt.Sprintf("%d. %s\n", i+1, result.Text)
 				}
 				knowledgeContext += "请根据以上知识库内容回答用户的问题。如果知识库没有相关信息，请忽略并按你原来的知识回答。"
 				systemPrompt = knowledgeContext + "\n\n" + systemPrompt
-				zlog.Info(fmt.Sprintf("知识库搜索找到 %d 条结果（过滤后）", len(filteredResults)))
+				zlog.Info(fmt.Sprintf("知识库搜索找到 %d 条结果（按融合排名选取）", len(selectedResults)))
 			}
 		}
 	}
@@ -1025,18 +1031,4 @@ func isMultiModalModel(modelType string) bool {
 		}
 	}
 	return false
-}
-
-// filterByScore 根据相似度分数过滤搜索结果，返回分数 >= minScore 的前 maxResults 条
-func filterByScore(results []SearchResult, minScore float32, maxResults int) []SearchResult {
-	var filtered []SearchResult
-	for _, result := range results {
-		if result.Score >= minScore {
-			filtered = append(filtered, result)
-			if len(filtered) >= maxResults {
-				break
-			}
-		}
-	}
-	return filtered
 }

@@ -250,7 +250,7 @@ return 0
 - **Client ID**: 填入 `config.toml` 或 `.env`
 - **Client Secret**: 填入 `.env`（敏感信息）
 
-## 安全措施与验证
+## 安全措施
 
 1. 浏览器绑定：URL state、临时 Cookie state 必须一致，缺失或跨浏览器拒绝。
 2. 一次性消费：Redis Lua 比较并删除，过期、重复及并发请求最多一个成功。
@@ -258,9 +258,7 @@ return 0
 4. 平台隔离：GitHub/Gitee 的 Cookie 与 Redis key 分开，不允许跨平台复用。
 5. 取消授权：验证绑定后清除 Cookie 并消费记录，不兑换 code、不生成 seekF token。
 6. 外部请求失败：state 已消费、临时 Cookie 已清理，需重新点击登录，不重复使用原回调地址。
-7. 业务日志不主动打印 code、state、OAuth access_token、Client Secret 或登录 token。回调 URL 本身含临时参数，部署时还应对 Nginx/Gin 等访问日志中的这些查询参数脱敏；本次没有改写访问日志组件。
-
-验证覆盖缺失 Cookie、缺失 state、不匹配、过期、重复、并发消费、授权取消、两平台隔离，以及登录/登出 Cookie 的 HTTP/HTTPS 配置。真实 GitHub 授权需要配置 OAuth App 后由用户实际登录验收。
+7. 业务日志不主动打印 code、state、OAuth access_token、Client Secret 或登录 token。回调 URL 本身含临时参数，部署时还应对 Nginx/Gin 等访问日志中的这些查询参数脱敏。
 
 ## 错误处理
 
@@ -307,7 +305,3 @@ GitHub 用户可能设置了邮箱隐私，需要单独调用 `/user/emails` API
 
 - [GitHub OAuth Documentation](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)
 - [golang.org/x/oauth2](https://pkg.go.dev/golang.org/x/oauth2)
-
-## 本次变更
-
-2026-11-05：补齐 GitHub/Gitee state 浏览器绑定和原子消费，统一用户端 Cookie 为 host-only、HttpOnly、SameSite=Lax，新增 USER_COOKIE_SECURE 配置并保留管理端独立配置；修正浏览器重定向及登录 CSRF 的流程描述。

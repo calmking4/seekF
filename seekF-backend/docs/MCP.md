@@ -136,20 +136,11 @@ MCP（Model Context Protocol）可以理解为：
 
 ---
 
-## 7. 当前实现的优点与注意点
+## 7. 工具调用的组织方式
 
-### 优点
 - 工具接入清晰：Server（注册）+ Client（桥接）+ Service（编排）
 - 对前端体验友好：非工具场景也保持流式
 - 有降级能力：MCP 工具不可用时可回退普通聊天
-
-### 注意点（建议后续优化）
-1. `internal/pkg/ai/mcp/client.go` 中 `GetLastInitError()` 当前固定返回 `nil`  
-   - 建议返回真实 `toolsErr`，否则定位初始化失败原因不方便。
-2. `runMCPAgentFlow` 中 MCP 初始化失败时采用“静默降级”  
-   - 对可用性友好，但监控上要配合日志告警，不然不容易发现工具长期不可用。
-3. 目前工具只有天气  
-   - 如要扩展通用 Agent 能力，需要增加更多工具并优化 system prompt 的工具使用指引。
 
 ---
 
@@ -175,4 +166,3 @@ MCP（Model Context Protocol）可以理解为：
 
 这就是一个标准的“LLM + Tool Calling”工程化落地方式。  
 你现在这套代码已经具备可扩展基础，后面只需要不断加工具和提示词策略，就能从“天气助手”升级为“多工具 AI 助手”。
-
