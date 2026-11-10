@@ -80,6 +80,9 @@ func (s *KnowledgeServiceImpl) AddDocument(ctx context.Context, userId, fileName
 	}
 
 	ragInst := rag.GetRAG()
+	if ragInst == nil {
+		return nil, fmt.Errorf("知识库服务未初始化")
+	}
 	splitter := ragInst.GetSplitter()
 	chunks := splitter.SplitText(content)
 
@@ -174,6 +177,9 @@ func (s *KnowledgeServiceImpl) RemoveDocument(ctx context.Context, userId, uuid 
 	}
 
 	ragInst := rag.GetRAG()
+	if ragInst == nil {
+		return fmt.Errorf("知识库服务未初始化")
+	}
 	collectionName := s.collectionName(userId)
 
 	// 1. 删除向量数据
@@ -200,6 +206,9 @@ func (s *KnowledgeServiceImpl) RemoveDocument(ctx context.Context, userId, uuid 
 // Search 在知识库中搜索相关内容，使用混合检索（Dense + Sparse 向量）
 func (s *KnowledgeServiceImpl) Search(ctx context.Context, userId, query string, topK int) ([]SearchResult, error) {
 	ragInst := rag.GetRAG()
+	if ragInst == nil {
+		return nil, fmt.Errorf("知识库服务未初始化")
+	}
 	collectionName := s.collectionName(userId)
 
 	// 1. 混合检索，获取 docUUID 和 chunkIdx

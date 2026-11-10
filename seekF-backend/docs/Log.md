@@ -86,41 +86,18 @@ rotationTime = 24       # 轮转间隔（小时）
 
 ### 4.3 初始化流程
 
+主服务和MCP子进程均先调用`configs.InitConfig()`，再调用`zlog.InitLogger()`。日志初始化读取已加载的配置，创建应用日志与慢SQL日志的轮转输出器；控制台日志写入stderr，文件日志按日期保存。
+
 ```go
-var logger *zap.Logger
-var slowSQLLogger *zap.Logger // 慢SQL专用logger
-
-func init() {
-    // 1. 配置编码器
-    encoderConfig := zap.NewProductionEncoderConfig()
-    encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder  // ISO8601 时间格式
-    encoder := zapcore.NewJSONEncoder(encoderConfig)        // JSON 格式
-
-    // 2. 加载配置
-    conf := configs.GetConfig()
-    logDir := conf.LogDir
-
-    // 3. 确保日志目录存在
-    if err := os.MkdirAll(logDir, 0755); err != nil {
-        log.Printf("创建日志目录失败: %v", err)
-    }
-
-    // 4. 初始化主日志 (同时输出到 stdout 和文件)
-    fileWriteSyncer := getFileLogWriter(logDir, conf)
-    core := zapcore.NewTee(
-        zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), zapcore.DebugLevel),
-        zapcore.NewCore(encoder, fileWriteSyncer, zapcore.DebugLevel),
-    )
-    logger = zap.New(core)
-
-    // 5. 初始化慢SQL专用logger
-    slowSQLCore := zapcore.NewTee(
-        zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), zapcore.InfoLevel),
-        zapcore.NewCore(encoder, getSlowSQLLogWriter(logDir, conf), zapcore.InfoLevel),
-    )
-    slowSQLLogger = zap.New(slowSQLCore)
+if err := configs.InitConfig(); err != nil {
+    return err
+}
+if err := zlog.InitLogger(); err != nil {
+    return err
 }
 ```
+
+MCP子进程的stderr用于JSON-RPC通信，因此其日志使用stderr。应用日志与慢SQL日志在初始化完成后通过对应的logger持续输出。
 
 ## 5. 日志轮转
 
@@ -140,8 +117,8 @@ func getFileLogWriter(logDir string, conf *configs.Config) (writeSyncer zapcore.
         rotatelogs.WithRotationTime(rotationTime), // 轮转间隔
     )
     if err != nil {
-        log.Printf("初始化日志轮转失败: %v，回退到仅输出到 stdout", err)
-        return zapcore.AddSync(os.Stdout)
+        log.Printf("初始化日志轮转失败: %v，回退到仅输出到控制台", err)
+        return zapcore.AddSync(os.Stderr)
     }
 
     return zapcore.AddSync(writer)
@@ -164,8 +141,8 @@ func getSlowSQLLogWriter(logDir string, conf *configs.Config) (writeSyncer zapco
         rotatelogs.WithRotationTime(rotationTime),
     )
     if err != nil {
-        log.Printf("初始化慢SQL日志轮转失败: %v，回退到仅输出到 stdout", err)
-        return zapcore.AddSync(os.Stdout)
+        log.Printf("初始化慢SQL日志轮转失败: %v，回退到仅输出到控制台", err)
+        return zapcore.AddSync(os.Stderr)
     }
 
     return zapcore.AddSync(writer)
@@ -257,7 +234,7 @@ func (w *GormWriter) Printf(format string, args ...interface{}) {
 ### 7.2 GORM 配置
 
 ```go
-func init() {
+func InitMySQL() error {
     conf := configs.GetConfig()
     // ... DSN 配置 ...
 
@@ -272,10 +249,15 @@ func init() {
         },
     )
 
-    GormDB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
+    database, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
         SkipDefaultTransaction: true,
         Logger:                 newLogger,
     })
+    if err != nil {
+        return fmt.Errorf("初始化MySQL失败: %w", err)
+    }
+    GormDB = database
+    return nil
 }
 ```
 

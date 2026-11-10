@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"seekF-backend/internal/configs"
 	"seekF-backend/internal/pkg/constants"
@@ -37,8 +38,16 @@ type BM25Chunk struct {
 }
 
 // InitQdrant 初始化Qdrant客户端
-func InitQdrant() error {
+func InitQdrant(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if qdrantClient != nil {
+		return qdrantClient.Ping(ctx)
+	}
 	cfg := configs.GetConfig()
+	if cfg == nil {
+		return fmt.Errorf("配置未初始化，无法初始化Qdrant")
+	}
 
 	client, err := qdrant.NewClient(&qdrant.Config{
 		Host: cfg.QdrantConfig.Host,
@@ -49,6 +58,9 @@ func InitQdrant() error {
 	}
 
 	qdrantClient = &QdrantUtil{client: client}
+	if err := qdrantClient.Ping(ctx); err != nil {
+		return fmt.Errorf("连接Qdrant失败: %w", err)
+	}
 	zlog.Info(fmt.Sprintf("已连接Qdrant: %s:%d", cfg.QdrantConfig.Host, cfg.QdrantConfig.Port))
 	return nil
 }

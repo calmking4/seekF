@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"seekF-backend/internal/configs"
 	"seekF-backend/internal/pkg/zlog"
@@ -17,46 +18,39 @@ import (
 // ESClient Elasticsearch客户端单例
 var ESClient *elasticsearch.Client
 
-// init 初始化帖子搜索使用的ES连接及索引。
-func init() {
+// InitES 显式创建ES客户端，限时探测连接并准备帖子索引。
+func InitES(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	cfg := configs.GetConfig()
-
-	addresses := strings.Split(cfg.ESConfig.Addresses, ",")
-	esCfg := elasticsearch.Config{
-		Addresses: addresses,
+	if cfg == nil {
+		return fmt.Errorf("配置未初始化，无法初始化ES")
 	}
-	if cfg.ESConfig.Username != "" {
-		esCfg.Username = cfg.ESConfig.Username
-		esCfg.Password = cfg.ESConfig.Password
+	if ESClient == nil {
+		esCfg := elasticsearch.Config{Addresses: strings.Split(cfg.ESConfig.Addresses, ",")}
+		if cfg.ESConfig.Username != "" {
+			esCfg.Username = cfg.ESConfig.Username
+			esCfg.Password = cfg.ESConfig.Password
+		}
+		client, err := elasticsearch.NewClient(esCfg)
+		if err != nil {
+			return fmt.Errorf("创建ES客户端失败: %w", err)
+		}
+		ESClient = client
 	}
-
-	client, err := elasticsearch.NewClient(esCfg)
+	res, err := ESClient.Info(ESClient.Info.WithContext(ctx))
 	if err != nil {
-		zlog.Error("创建ES客户端失败: " + err.Error())
-		return
-	}
-
-	ESClient = client
-
-	// 测试连接
-	res, err := client.Info()
-	if err != nil {
-		zlog.Error("连接ES失败: " + err.Error())
-		return
+		return fmt.Errorf("连接ES失败: %w", err)
 	}
 	defer res.Body.Close()
-
 	if res.IsError() {
-		zlog.Error("ES连接返回错误: " + res.String())
-		return
+		return fmt.Errorf("ES连接返回错误，状态码=%d", res.StatusCode)
 	}
-
-	zlog.Info(fmt.Sprintf("已连接到Elasticsearch: %s", cfg.ESConfig.Addresses))
-
-	// 仅自动创建发现页帖子搜索索引。
-	if err := EnsureSearchIndex(context.Background()); err != nil {
-		zlog.Error("创建ES索引失败: " + err.Error())
+	if err := EnsureSearchIndex(ctx); err != nil {
+		return fmt.Errorf("准备ES搜索索引失败: %w", err)
 	}
+	zlog.Info("ES初始化完成")
+	return nil
 }
 
 // AnalyzeText 使用指定ES分析器返回词项，保留重复词项以反映原文词频。

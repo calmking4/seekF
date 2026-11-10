@@ -1,6 +1,7 @@
 package zlog
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path"
@@ -14,17 +15,20 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-var logger *zap.Logger
-var slowSQLLogger *zap.Logger // 慢SQL专用logger
+var logger = zap.NewNop()
+var slowSQLLogger = zap.NewNop() // 慢SQL专用logger
 
-// 自动调用
-func init() {
+// InitLogger 显式初始化日志，控制台输出到stderr以保留MCP的stdio协议。
+func InitLogger() error {
+	conf := configs.GetConfig()
+	if conf == nil {
+		return fmt.Errorf("配置未初始化，无法初始化日志")
+	}
 	encoderConfig := zap.NewProductionEncoderConfig()
 	// 设置日志记录中时间格式
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	// 日志encoder还是JSONEncoder，把日志行格式化成JSON格式
 	encoder := zapcore.NewJSONEncoder(encoderConfig)
-	conf := configs.GetConfig()
 	logDir := conf.LogDir
 
 	// 确保日志目录存在
@@ -35,19 +39,21 @@ func init() {
 	// 使用 file-rotatelogs 实现按天日志轮转
 	fileWriteSyncer := getFileLogWriter(logDir, conf)
 	core := zapcore.NewTee(
-		zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), zapcore.DebugLevel),
+		zapcore.NewCore(encoder, zapcore.AddSync(os.Stderr), zapcore.DebugLevel),
 		zapcore.NewCore(encoder, fileWriteSyncer, zapcore.DebugLevel),
 	)
 	logger = zap.New(core)
 
 	// 初始化慢SQL专用logger
 	slowSQLCore := zapcore.NewTee(
-		zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), zapcore.InfoLevel),
+		zapcore.NewCore(encoder, zapcore.AddSync(os.Stderr), zapcore.InfoLevel),
 		zapcore.NewCore(encoder, getSlowSQLLogWriter(logDir, conf), zapcore.InfoLevel),
 	)
 	slowSQLLogger = zap.New(slowSQLCore)
+	return nil
 }
 
+// getFileLogWriter 创建按天轮转的应用日志输出器。
 func getFileLogWriter(logDir string, conf *configs.Config) (writeSyncer zapcore.WriteSyncer) {
 	// 配置轮转参数
 	maxAge := time.Duration(conf.MaxAge) * 24 * time.Hour        // 保留天数
@@ -62,14 +68,15 @@ func getFileLogWriter(logDir string, conf *configs.Config) (writeSyncer zapcore.
 		rotatelogs.WithRotationTime(rotationTime), // 轮转间隔
 	)
 	if err != nil {
-		// 轮转日志初始化失败，回退到 stdout，避免程序崩溃
-		log.Printf("初始化日志轮转失败: %v，回退到仅输出到 stdout", err)
-		return zapcore.AddSync(os.Stdout)
+		// 轮转日志初始化失败，回退到控制台，避免程序崩溃
+		log.Printf("初始化日志轮转失败: %v，回退到仅输出到控制台", err)
+		return zapcore.AddSync(os.Stderr)
 	}
 
 	return zapcore.AddSync(writer)
 }
 
+// getSlowSQLLogWriter 创建按天轮转的慢SQL日志输出器。
 func getSlowSQLLogWriter(logDir string, conf *configs.Config) (writeSyncer zapcore.WriteSyncer) {
 	// 配置轮转参数
 	maxAge := time.Duration(conf.MaxAge) * 24 * time.Hour        // 保留天数
@@ -84,8 +91,8 @@ func getSlowSQLLogWriter(logDir string, conf *configs.Config) (writeSyncer zapco
 		rotatelogs.WithRotationTime(rotationTime),
 	)
 	if err != nil {
-		log.Printf("初始化慢SQL日志轮转失败: %v，回退到仅输出到 stdout", err)
-		return zapcore.AddSync(os.Stdout)
+		log.Printf("初始化慢SQL日志轮转失败: %v，回退到仅输出到控制台", err)
+		return zapcore.AddSync(os.Stderr)
 	}
 
 	return zapcore.AddSync(writer)

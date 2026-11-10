@@ -1,7 +1,7 @@
 package configs
 
 import (
-	"log"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -394,26 +394,19 @@ func loadEnvConfig(cfg *Config) {
 	}
 }
 
-func LoadConfig() error {
-	config = new(Config)
-
-	// 加载 .env 文件
+// InitConfig 显式加载配置与环境变量，成功后发布只读配置。
+func InitConfig() error {
+	cfg := new(Config)
 	_ = godotenv.Load()
-
-	if _, err := toml.DecodeFile("./config/config.toml", config); err != nil {
-		log.Fatal(err.Error())
-		return err
+	if _, err := toml.DecodeFile("./config/config.toml", cfg); err != nil {
+		return fmt.Errorf("加载配置文件失败: %w", err)
 	}
-
-	// 从环境变量加载敏感配置（覆盖配置文件中的值）
-	loadEnvConfig(config)
-
+	loadEnvConfig(cfg)
+	config = cfg
 	return nil
 }
 
+// GetConfig 返回启动阶段加载的配置，不执行文件读取。
 func GetConfig() *Config {
-	if config == nil {
-		_ = LoadConfig()
-	}
 	return config
 }

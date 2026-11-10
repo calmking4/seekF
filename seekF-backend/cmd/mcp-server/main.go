@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"seekF-backend/internal/configs"
+	"seekF-backend/internal/pkg/db"
 
 	"seekF-backend/internal/pkg/ai/mcp/tool"
 	"seekF-backend/internal/pkg/zlog"
@@ -11,7 +13,20 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// main 初始化MCP工具依赖并通过stdio提供服务。
 func main() {
+	if err := configs.InitConfig(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := zlog.InitLogger(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := db.InitMySQL(); err != nil {
+		zlog.Fatal(err.Error())
+	}
+
 	// 初始化日志
 	zlog.Info("MCP Server (stdio) 正在启动...")
 

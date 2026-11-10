@@ -69,3 +69,13 @@ const (
 	// AI评论收集批次的等待时间。
 	AICommentBatchWait = 100 * time.Millisecond
 )
+
+// MCP客户端启动限制。
+const (
+	// MCP单次握手及工具加载最多等待30秒。
+	MCPInitTimeout = 30 * time.Second
+	// MCP启动最多尝试3次。
+	MCPInitAttempts = 3
+	// MCP启动失败后等待2秒再重试。
+	MCPInitRetryDelay = 2 * time.Second
+)

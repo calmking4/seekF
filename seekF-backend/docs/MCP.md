@@ -4,8 +4,7 @@ MCP（Model Context Protocol）可以理解为：
 **给大模型一套“可调用工具”的标准接口**。  
 大模型先判断要不要调用工具（例如天气），如果要，就让后端执行工具，再把工具结果喂回模型，让模型组织成自然语言回复。
 
-在本项目里，MCP 工具目前是：
-- `get_weather`（查天气）
+在本项目里，MCP 工具包括天气、汇率、网页搜索和帖子搜索。
 
 ---
 
@@ -24,12 +23,24 @@ MCP（Model Context Protocol）可以理解为：
 ### 2.2 MCP Client（把 MCP 工具转换为 Eino 可用工具）
 - 文件：`internal/pkg/ai/mcp/client.go`
 - 作用：
-  - 通过 `client.NewStdioMCPClient(command, nil, args...)` 启动 MCP Server 子进程并建立 stdio 连接
+  - 由启动入口调用 `InitMCPClient(ctx)`，通过 stdio transport 和 `client.NewClient` 启动 MCP Server 子进程
   - 执行 MCP 初始化握手（`Initialize`）
   - 调用 `eino-ext` 的 `mcpp.GetTools(...)`，把 MCP 工具转为 `[]tool.BaseTool`
-  - 缓存工具列表（`sync.Once` + `einoTools`）
+  - 在握手、工具加载和声明校验全部成功后，一次性发布工具列表及调用映射，使用读写锁保护缓存
 
 你可以把它理解成：**”翻译层”**，启动 MCP Server 子进程并把 MCP 工具元信息翻译成大模型可读的函数声明（tool schema）。
+
+### 客户端初始化与关闭
+
+主服务启动时显式调用 `InitMCPClient(ctx)`。每次握手和工具加载共用30秒超时，最多尝试3次，重试间隔2秒；失败的客户端会先关闭，再进行下一次尝试。子进程的生命周期上下文与应用保持一致，不随握手结束而取消。
+
+`GetMCPTools(ctx)`和`FilteredMCPToolBinding(ctx, enableWebSearch)`只读取缓存，不创建子进程、不重新加载工具。初始化失败时返回错误，聊天服务按普通聊天流程继续处理。工具列表和调用映射每次返回容器副本，避免请求修改全局缓存。
+
+`CloseMCPClient()`清空缓存并关闭客户端，由stdio transport关闭输入管道、等待子进程退出，必要时终止进程。主服务收到退出信号或入口正常返回时调用该方法。
+
+MCP子进程显式调用`InitConfig()`、`InitLogger()`和`InitMySQL()`，帖子搜索工具使用该进程自己的数据库连接池。stdout专用于JSON-RPC，日志由stderr和日志文件输出；主进程持续读取子进程stderr，避免管道积压阻塞工具服务。
+
+启动命令由`MCP_SERVER_COMMAND`控制，默认`go run ./cmd/mcp-server`；工作目录由`MCP_SERVER_WORKDIR`控制，默认当前目录。两个入口均应在`seekF-backend/`目录运行，以加载相对路径的配置文件。
 
 ### 2.3 具体工具实现（天气）
 - 文件：`internal/pkg/ai/mcp/tool/weather.go`

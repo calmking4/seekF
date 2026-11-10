@@ -1,7 +1,3 @@
-// 注意：此文件仅用于参考和进程内模式的备用实现
-// 当前主应用使用 stdio 模式与独立的 MCP Server 进程通信
-// 独立 MCP Server 入口：cmd/mcp-server/main.go
-
 package mcp
 
 import (
@@ -14,12 +10,12 @@ import (
 )
 
 var (
-	mcpServer          *server.MCPServer
-	weatherTool        *tool.WeatherTool
-	exchangeRateTool   *tool.ExchangeRateTool
-	webSearchTool      *tool.WebSearchTool
-	discoverPostsTool  *tool.DiscoverPostsTool
-	initOnce           sync.Once
+	mcpServer         *server.MCPServer
+	weatherTool       *tool.WeatherTool
+	exchangeRateTool  *tool.ExchangeRateTool
+	webSearchTool     *tool.WebSearchTool
+	discoverPostsTool *tool.DiscoverPostsTool
+	initOnce          sync.Once
 )
 
 // InitMCPServer 初始化MCP服务器实例并注册天气工具

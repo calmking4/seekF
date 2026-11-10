@@ -2,129 +2,193 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
+	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/zlog"
 
 	mcpp "github.com/cloudwego/eino-ext/components/tool/mcp"
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
 var (
-	einoTools          []einotool.BaseTool               // 存储已初始化的Eino工具列表
-	allToolInfos       []*schema.ToolInfo                // 缓存的工具声明（避免每次请求调用 t.Info）
-	allInvokableByName map[string]einotool.InvokableTool // 工具名 -> 可调用实现
-	toolsOnce          sync.Once                         // 确保工具只初始化一次的同步原语
-	toolsErr           error                             // 记录初始化过程中的错误
+	// 保护退出时关闭客户端与请求读取工具缓存的并发访问。
+	clientMu           sync.RWMutex
+	stdioClient        *client.Client
+	einoTools          []einotool.BaseTool
+	allToolInfos       []*schema.ToolInfo
+	allInvokableByName map[string]einotool.InvokableTool
+	toolsErr           = errors.New("MCP客户端未初始化")
 )
 
-// GetStdioTools 获取通过 stdio 连接的 MCP 工具实例
-func GetStdioTools(ctx context.Context) ([]einotool.BaseTool, error) {
-	toolsOnce.Do(func() {
-		// 从环境变量获取 MCP Server 命令
-		mcpCmd := os.Getenv("MCP_SERVER_COMMAND")
-		if mcpCmd == "" {
-			mcpCmd = "go run ./cmd/mcp-server" // 开发环境默认值
-		}
-
-		// 解析命令和参数
-		parts := strings.Fields(mcpCmd)
-		command := parts[0]
-		args := parts[1:]
-
-		// 创建与 MCP Server 的 stdio 客户端连接
-		// 会启动一个子进程，通过 stdin/stdout 进行 JSON-RPC 通信
-		mcpClient, err := client.NewStdioMCPClient(command, nil, args...)
-		if err != nil {
-			toolsErr = err
-			zlog.Error("创建 stdio MCP 客户端失败: " + err.Error())
-			return
-		}
-
-		// 构建初始化请求，设置协议版本和客户端信息
-		initRequest := mcp.InitializeRequest{}
-		initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-		initRequest.Params.ClientInfo = mcp.Implementation{
-			Name:    "seekF-client",
-			Version: "1.0.0",
-		}
-
-		// 向MCP服务器发送初始化请求
-		_, err = mcpClient.Initialize(ctx, initRequest)
-		if err != nil {
-			toolsErr = err
-			zlog.Error("初始化MCP客户端失败: " + err.Error())
-			return
-		}
-
-		// 从MCP服务器获取可用的工具列表，eino-ext 的适配器把 MCP 工具转成 Eino 的 BaseTool 接口
-		einoTools, err = mcpp.GetTools(ctx, &mcpp.Config{
-			Cli: mcpClient,
-		})
-		if err != nil {
-			toolsErr = err
-			zlog.Error("获取MCP工具失败: " + err.Error())
-			return
-		}
-
-		// 初始化阶段用独立 context 拉取工具元信息，避免上游请求 ctx 过短导致缓存未建立
-		metaCtx := context.Background()
-		allToolInfos = make([]*schema.ToolInfo, 0, len(einoTools))
-		allInvokableByName = make(map[string]einotool.InvokableTool)
-		for _, t := range einoTools {
-			info, ierr := t.Info(metaCtx)
-			if ierr != nil {
-				zlog.Error("获取工具信息失败: " + ierr.Error())
-				continue
-			}
-			allToolInfos = append(allToolInfos, info)
-			if inv, ok := t.(einotool.InvokableTool); ok {
-				allInvokableByName[info.Name] = inv
-			}
-		}
-
-		zlog.Info(fmt.Sprintf("MCP tools initialized via stdio: %d tools, %d tool infos cached", len(einoTools), len(allToolInfos)))
-	})
-	return einoTools, toolsErr
-}
-
-// GetMCPTools 获取MCP工具列表，如果尚未初始化则先进行初始化
-func GetMCPTools(ctx context.Context) ([]einotool.BaseTool, error) {
-	if len(einoTools) == 0 {
-		return GetStdioTools(ctx)
+// InitMCPClient 显式启动stdio子进程并加载工具，使用有限重试且只发布完整的工具缓存。
+func InitMCPClient(ctx context.Context) error {
+	clientMu.Lock()
+	defer clientMu.Unlock()
+	if stdioClient != nil {
+		return nil
 	}
-	return einoTools, nil
+	var lastErr error
+	for attempt := 1; attempt <= constants.MCPInitAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		candidate, tools, infos, invokable, err := loadMCPClient(ctx)
+		if err == nil {
+			stdioClient, einoTools, allToolInfos, allInvokableByName = candidate, tools, infos, invokable
+			toolsErr = nil
+			zlog.Info(fmt.Sprintf("MCP客户端初始化完成，工具数=%d", len(tools)))
+			return nil
+		}
+		lastErr = err
+		toolsErr = err
+		zlog.Warn(fmt.Sprintf("MCP客户端初始化失败，第%d次尝试: %s", attempt, err.Error()))
+		if attempt < constants.MCPInitAttempts {
+			timer := time.NewTimer(constants.MCPInitRetryDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return fmt.Errorf("初始化MCP客户端失败: %w", lastErr)
 }
 
-// FilteredMCPToolBinding 返回按开关过滤后的工具声明与可调用映射（复用进程内 ToolInfo 缓存）
+// GetMCPTools 返回已初始化工具的列表副本，不启动子进程或执行网络请求。
+func GetMCPTools(ctx context.Context) ([]einotool.BaseTool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	clientMu.RLock()
+	defer clientMu.RUnlock()
+	if toolsErr != nil {
+		return nil, toolsErr
+	}
+	return append([]einotool.BaseTool(nil), einoTools...), nil
+}
+
+// CloseMCPClient 关闭stdio客户端及其子进程，清空工具缓存并允许后续显式初始化。
+func CloseMCPClient() error {
+	clientMu.Lock()
+	defer clientMu.Unlock()
+	candidate := stdioClient
+	stdioClient, einoTools, allToolInfos, allInvokableByName = nil, nil, nil, nil
+	toolsErr = errors.New("MCP客户端未初始化或已关闭")
+	if candidate == nil {
+		return nil
+	}
+	if err := candidate.Close(); err != nil {
+		return fmt.Errorf("关闭MCP客户端失败: %w", err)
+	}
+	return nil
+}
+
+// FilteredMCPToolBinding 从已加载的缓存生成本次请求的工具绑定。
 func FilteredMCPToolBinding(ctx context.Context, enableWebSearch bool) ([]*schema.ToolInfo, map[string]einotool.InvokableTool, error) {
-	_, err := GetMCPTools(ctx)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	if len(allToolInfos) == 0 {
-		return nil, nil, nil
+	clientMu.RLock()
+	defer clientMu.RUnlock()
+	if toolsErr != nil {
+		return nil, nil, toolsErr
 	}
-	outInfos := make([]*schema.ToolInfo, 0, len(allToolInfos))
-	outByName := make(map[string]einotool.InvokableTool)
+	infos := make([]*schema.ToolInfo, 0, len(allToolInfos))
+	invokable := make(map[string]einotool.InvokableTool)
 	for _, info := range allToolInfos {
-		// 根据开关过滤 web_search 工具
 		if !enableWebSearch && info.Name == "web_search" {
 			continue
 		}
-		outInfos = append(outInfos, info)
-		if inv, ok := allInvokableByName[info.Name]; ok {
-			outByName[info.Name] = inv
+		infos = append(infos, info)
+		if tool, ok := allInvokableByName[info.Name]; ok {
+			invokable[info.Name] = tool
 		}
 	}
-	if len(outInfos) == 0 {
-		return nil, nil, nil
+	return infos, invokable, nil
+}
+
+// loadMCPClient 单次创建子进程，以独立的限时上下文完成握手和工具加载，失败时清理资源。
+func loadMCPClient(lifetimeCtx context.Context) (_ *client.Client, _ []einotool.BaseTool, _ []*schema.ToolInfo, _ map[string]einotool.InvokableTool, resultErr error) {
+	command := strings.TrimSpace(os.Getenv("MCP_SERVER_COMMAND"))
+	if command == "" {
+		command = "go run ./cmd/mcp-server"
 	}
-	return outInfos, outByName, nil
+	parts := strings.Fields(command)
+	if len(parts) == 0 {
+		return nil, nil, nil, nil, fmt.Errorf("MCP启动命令不能为空")
+	}
+	workDir := strings.TrimSpace(os.Getenv("MCP_SERVER_WORKDIR"))
+	if workDir == "" {
+		workDir = "."
+	}
+	stdio := transport.NewStdioWithOptions(parts[0], nil, parts[1:],
+		transport.WithCommandFunc(func(ctx context.Context, name string, env, args []string) (*exec.Cmd, error) {
+			cmd := exec.CommandContext(ctx, name, args...)
+			cmd.Dir = workDir
+			cmd.Env = append(os.Environ(), env...)
+			return cmd, nil
+		}),
+	)
+	candidate := client.NewClient(stdio)
+	// 生命周期上下文不随握手完成而取消，避免初始化成功后误杀子进程。
+	defer func() {
+		if resultErr != nil {
+			if err := candidate.Close(); err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("清理失败的MCP客户端失败: %w", err))
+			}
+		}
+	}()
+	if err := candidate.Start(lifetimeCtx); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("启动MCP子进程失败: %w", err)
+	}
+	// 持续消费子进程日志，避免stderr管道写满后阻塞协议处理。
+	if stderr, ok := client.GetStderr(candidate); ok {
+		go func() { _, _ = io.Copy(os.Stderr, stderr) }()
+	}
+	ctx, cancel := context.WithTimeout(lifetimeCtx, constants.MCPInitTimeout)
+	defer cancel()
+	request := mcp.InitializeRequest{}
+	request.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	request.Params.ClientInfo = mcp.Implementation{Name: "seekF-client", Version: "1.0.0"}
+	if _, err := candidate.Initialize(ctx, request); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("MCP协议握手失败: %w", err)
+	}
+	tools, err := mcpp.GetTools(ctx, &mcpp.Config{Cli: candidate})
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("加载MCP工具失败: %w", err)
+	}
+	if len(tools) == 0 {
+		return nil, nil, nil, nil, fmt.Errorf("MCP服务未返回工具")
+	}
+	infos := make([]*schema.ToolInfo, 0, len(tools))
+	invokable := make(map[string]einotool.InvokableTool)
+	for _, tool := range tools {
+		info, err := tool.Info(ctx)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("加载MCP工具声明失败: %w", err)
+		}
+		if info == nil {
+			return nil, nil, nil, nil, fmt.Errorf("MCP工具声明为空")
+		}
+		implementation, ok := tool.(einotool.InvokableTool)
+		if !ok {
+			return nil, nil, nil, nil, fmt.Errorf("MCP工具不可调用: %s", info.Name)
+		}
+		infos = append(infos, info)
+		invokable[info.Name] = implementation
+	}
+	return candidate, tools, infos, invokable, nil
 }

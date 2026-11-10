@@ -15,8 +15,17 @@ import (
 var redisClient *redis.Client
 var ctx = context.Background()
 
-func init() {
+// InitRedis 显式创建Redis连接池并校验连接与认证。
+func InitRedis(initCtx context.Context) error {
+	initCtx, cancel := context.WithTimeout(initCtx, 5*time.Second)
+	defer cancel()
+	if redisClient != nil {
+		return Ping(initCtx)
+	}
 	conf := configs.GetConfig()
+	if conf == nil {
+		return fmt.Errorf("配置未初始化，无法初始化Redis")
+	}
 	host := conf.RedisConfig.Host
 	port := conf.RedisConfig.Port
 	password := conf.RedisConfig.Password
@@ -30,6 +39,7 @@ func init() {
 		// 让即时探测传入的截止时间约束网络读写，既有后台上下文调用保持原行为。
 		ContextTimeoutEnabled: true,
 	})
+	return Ping(initCtx)
 }
 
 // Ping 使用现有连接检查Redis命令响应，不读写业务键。

@@ -2,6 +2,8 @@
 
 本文按当前代码说明知识库流程：**GLM Embedding 稠密向量 + Qdrant 内置 BM25 稀疏向量 + Qdrant RRF 融合**。Go 后端复用 Elasticsearch 的 IK 分词器处理中文，词项编号和 BM25 权重由 Qdrant 生成。
 
+主服务启动时依次显式初始化配置、日志、MySQL、Redis、ES、Qdrant和AI模块。`InitRAG()`创建Embedding包装对象与分块器，不发送远程向量化请求；`GetRAG()`只读取实例。ES初始化包含服务探测和搜索索引准备，Qdrant初始化通过健康检查确认响应。MySQL或Redis初始化失败会阻止主服务启动；ES、Qdrant初始化失败时记录告警，相关功能通过请求错误或既定降级流程处理。
+
 ## 1. 整体流程
 
 ### 文档入库
