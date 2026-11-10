@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"seekF-backend/internal/configs"
+	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/zlog"
 )
@@ -35,7 +36,7 @@ func GetRAG() *RAG {
 			cfg.AIModelConfig.GlmBaseUrl,
 		)
 
-		spl := NewTextSplitter(500, 50)
+		spl := NewTextSplitter(constants.KnowledgeChunkSize, constants.KnowledgeChunkOverlap)
 
 		ragInstance = &RAG{
 			embedding: emb,

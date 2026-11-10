@@ -224,8 +224,8 @@
                             @input="autoResize"
                         />
 
-                        <div class="input-footer">
-                            <div class="left-actions">
+                        <div class="input-footer flex-wrap gap-x-3 gap-y-3">
+                            <div class="left-actions min-w-0 flex-wrap">
                                 <!-- 上传图片 -->
                                 <div class="dropdown">
                                     <button
@@ -248,39 +248,27 @@
                                     </div>
                                 </div>
 
-                                <!-- 工具 -->
-                                <div class="dropdown">
-                                    <button
-                                        class="footer-btn"
-                                        @click.stop="toggleTool"
-                                    >
-                                        <Icon name="uil:wrench" class="mr-1" />
-                                        工具
-                                        <Icon name="uil:angle-down" class="ml-1 dropdown-arrow" :class="{ 'arrow-up': showTool }" />
-                                    </button>
-
-                                    <div v-if="showTool" class="dropdown-menu" @click.stop>
-                                        <div
-                                            class="menu-item"
-                                            :class="{ active: useKnowledgeBase }"
-                                            @click.stop="useKnowledgeBase = !useKnowledgeBase"
-                                        >
-                                            <Icon name="uil:books" class="mr-2" />
-                                            知识库
-                                            <Icon v-if="useKnowledgeBase" name="uil:check" class="ml-auto text-green-500" />
-                                        </div>
-
-                                        <div
-                                            class="menu-item"
-                                            :class="{ active: useWebSearch }"
-                                            @click.stop="useWebSearch = !useWebSearch"
-                                        >
-                                            <Icon name="uil:globe" class="mr-2" />
-                                            联网搜索
-                                            <Icon v-if="useWebSearch" name="uil:check" class="ml-auto text-green-500" />
-                                        </div>
-                                    </div>
-                                </div>
+                                <!-- 独立的知识库与联网搜索开关，选中状态随浏览器保存。 -->
+                                <button
+                                    type="button"
+                                    class="footer-btn shrink-0 whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0073ff]"
+                                    :class="{ '!bg-[#eaf2ff] !text-[#0073ff]': useKnowledgeBase }"
+                                    :aria-pressed="useKnowledgeBase"
+                                    @click="useKnowledgeBase = !useKnowledgeBase"
+                                >
+                                    <Icon name="uil:books" class="mr-1" />
+                                    知识库
+                                </button>
+                                <button
+                                    type="button"
+                                    class="footer-btn shrink-0 whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0073ff]"
+                                    :class="{ '!bg-[#eaf2ff] !text-[#0073ff]': useWebSearch }"
+                                    :aria-pressed="useWebSearch"
+                                    @click="useWebSearch = !useWebSearch"
+                                >
+                                    <Icon name="uil:globe" class="mr-1" />
+                                    联网搜索
+                                </button>
 
                                 <!-- 模型 -->
                                 <div class="dropdown">
@@ -392,30 +380,20 @@ const toggleSidebar = () => {
 }
 
 // 下拉菜单状态
-const showTool = ref(false)
 const showModel = ref(false)
 const showUpload = ref(false)
 
-const toggleTool = () => {
-    showTool.value = !showTool.value
-    showModel.value = false
-    showUpload.value = false
-}
-
 const toggleModel = () => {
     showModel.value = !showModel.value
-    showTool.value = false
     showUpload.value = false
 }
 
 const toggleUpload = () => {
     showUpload.value = !showUpload.value
-    showTool.value = false
     showModel.value = false
 }
 
 const closeMenus = () => {
-    showTool.value = false
     showModel.value = false
     showUpload.value = false
 }
@@ -452,8 +430,13 @@ const isStreaming = computed(() => {
     return sid ? activeStreamSessions.value.has(sid) || restoringStreamSession.value === sid : false
 })
 const selectedImage = ref(null)
-const useKnowledgeBase = ref(false)
-const useWebSearch = ref(false)
+// 浏览器保存两个开关，刷新或重新进入页面时直接恢复，默认关闭。
+const useKnowledgeBase = useCookie('seekf_ai_knowledge', {
+    default: () => false, maxAge: 60 * 60 * 24 * 365, sameSite: 'lax'
+})
+const useWebSearch = useCookie('seekf_ai_web_search', {
+    default: () => false, maxAge: 60 * 60 * 24 * 365, sameSite: 'lax'
+})
 const showDiscoverDetail = ref(false)
 const selectedDiscoverItem = ref(null)
 const postSourcesMessageId = ref('')
@@ -1627,11 +1610,6 @@ textarea {
 
 .menu-item-disabled:hover {
     background: transparent;
-}
-
-.menu-item.active {
-    color: #0073ff;
-    font-weight: 500;
 }
 
 .send-btn {

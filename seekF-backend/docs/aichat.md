@@ -200,7 +200,7 @@ fetch(url, { method: 'POST', body: formData, credentials: 'include' })
 **类比**：RAG 就像给 AI 配了一个"参考书架"。
 
 用户上传文档到知识库后，系统会：
-1. 按段落组织文档分块，目标长度500字节、尾部重叠50字节
+1. 按段落与句末组织文档分块，每块最多500个Unicode字符、尾部重叠最多50个字符
 2. 用 GLM Embedding 生成语义向量，复用 ES 的 ik_max_word 分词后由 Qdrant 生成 BM25 稀疏向量
 3. 分块正文存 MySQL，两种向量存 Qdrant
 

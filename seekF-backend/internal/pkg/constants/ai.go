@@ -2,6 +2,14 @@ package constants
 
 import "time"
 
+// 知识库正文分块参数。
+const (
+	// 每块最多500个Unicode字符。
+	KnowledgeChunkSize = 500
+	// 相邻块保留最多50个尾部字符作为上下文重叠。
+	KnowledgeChunkOverlap = 50
+)
+
 // 知识库BM25索引参数，调整预处理或参数后需重新生成已有稀疏向量。
 const (
 	// GLM语义向量的命名字段。

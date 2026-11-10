@@ -15,8 +15,6 @@ func main() {
 	// 使用 Wire 生成的注入器初始化 DAO/Service/Controller/Router
 	app := initApp(db.GormDB)
 
-	// 以下为全局单例初始化，不适合 Wire 管理
-
 	// 初始化其他业务Kafka与直接推送的WebSocket服务器
 	kafka.KafkaServiceInstance.Init()
 	websocket.ChatServer = websocket.NewServer(

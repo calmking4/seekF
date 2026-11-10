@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	userdao "seekF-backend/internal/dao/user_dao"
@@ -77,7 +76,7 @@ func (s *KnowledgeServiceImpl) AddDocument(ctx context.Context, userId, fileName
 	}
 
 	if fileType == "md" {
-		content = removeMarkdownMarkers(content)
+		content = rag.NormalizeMarkdown(content)
 	}
 
 	ragInst := rag.GetRAG()
@@ -281,26 +280,6 @@ func (s *KnowledgeServiceImpl) downloadFile(ctx context.Context, url string) (st
 
 	content := string(body)
 	return content, nil
-}
-
-// removeMarkdownMarkers 移除Markdown标记符号(如标题(#)、代码块(```)、分隔线(---))
-func removeMarkdownMarkers(content string) string {
-	lines := strings.Split(content, "\n")
-	var result []string
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "#") ||
-			strings.HasPrefix(line, "```") ||
-			strings.HasPrefix(line, "---") {
-			continue
-		}
-		if line != "" {
-			result = append(result, line)
-		}
-	}
-
-	return strings.Join(result, "\n")
 }
 
 // GetDocumentContent 获取文档原始内容
