@@ -1,0 +1,17 @@
+services:
+  backend:
+    container_name: seekf-backend
+    image: seekf-backend:local
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      PORT: "8080"
+      # 本地模型运行在宿主机，容器不能通过 localhost 访问它。
+      QWEN_LOCAL_BASE_URL: "http://host.docker.internal:12345/v1"
+    volumes:
+      # 将容器专用配置挂载到程序实际读取的位置。
+      - ./config/config.docker.toml:/app/config/config.toml:ro
+      - ./logs:/app/logs

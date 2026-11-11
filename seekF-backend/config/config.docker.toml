@@ -1,0 +1,153 @@
+# Docker Desktop 容器专用配置；原 config.toml 保持不变。
+# host.docker.internal 连接宿主机端口；浏览器回调和允许来源保留 localhost。
+# 密钥沿用 .env 注入
+
+[mainConfig]
+appName = "seekF"
+host = "0.0.0.0"
+port = 8080
+
+[supportSettlementConfig]
+platformRateBPS = 1000 # 平台抽成基点，1000表示10%，仅影响新订单
+
+[alipayConfig]
+environment = "sandbox" # sandbox或production
+appID = ""
+sellerID = ""
+returnURL = ""
+notifyURL = ""
+
+[authConfig]
+# mode: "redis"(默认，不透明token+redis会话) 或 "jwt"(JWT+Redis校验)
+mode = "redis"
+# 会话过期时间（分钟）。不填/<=0 时，将回退使用 jwtConfig.expireMinutes
+sessionExpireMinutes = 1440
+
+[jwtConfig]
+secret = ""
+expireMinutes = 1440
+issuer = "seekF-backend"
+
+[mysqlConfig]
+host = "host.docker.internal"
+port = 3306
+user = "root"
+password = ""
+databaseName = "seekf"
+
+[redisConfig]
+host = "host.docker.internal"
+port = 6379
+password = ""
+db = 0
+
+[authCodeConfig]
+# pnvs：号码认证；sms：原短信服务
+provider = "pnvs"
+accessKeyID = ""
+accessKeySecret = ""
+signName = "阿里云短信测试"
+templateCode = "SMS_154950909"
+
+[emailConfig]
+smtpHost = "smtp.qq.com"
+smtpPort = 465
+username = ""          # 发件邮箱账号
+password = ""          # 邮箱授权码
+fromAddress = ""       # 发件邮箱地址
+fromName = "seekF"     # 发件人名称
+
+[ossConfig]
+accessKeyID = ""
+accessKeySecret = ""
+region = ""
+bucket = ""
+baseURL = ""
+
+[logConfig]
+logDir = "./logs"       # 日志目录
+maxAge = 30             # 保留旧日志的最大天数
+rotationTime = 24       # 轮转间隔（小时）
+
+[kafkaConfig]
+discoverFeedTopic = "discover_feed_events"
+discoverTopic = "discover_post_events"
+# Docker 使用独立入口 9093，本地 Windows 仍使用原配置的 localhost:9092。
+hostPort = "host.docker.internal:9093"
+aiCommentTopic = "ai_comment_reply"
+partition = 0 # kafka partition
+timeout = 1 # 单位秒
+
+[staticSrcConfig]
+staticAvatarPath = "./static/avatars"
+staticFilePath = "./static/files"
+
+[aiModelConfig]
+deepseekApiKey = ""
+deepseekModel = ""
+deepseekBaseUrl = ""
+deepseekMaxTokens = 65536
+
+qwenApiKey = ""
+qwenModel = ""
+qwenBaseUrl = ""
+qwenMaxTokens = 131072
+
+glmApiKey = ""
+glmModel = ""
+glmBaseUrl = ""
+glmMaxTokens = 131072
+glm4vModel = "glm-4.6v"
+glm4vMaxTokens = 131072
+
+qwenLocalApiKey = ""
+qwenLocalModel = ""
+qwenLocalBaseUrl = ""
+qwenLocalMaxTokens = 4096
+
+glmEmbeddingModel = ""
+ttsModel = "glm-tts"
+ttsVoice = "chuichui"
+asrModel = "glm-asr-2512"
+
+# 多模态模型列表（支持图片输入的模型）
+multimodalModels = ["glm-4v", "qwen-local"]
+
+
+[qdrantConfig]
+host = "host.docker.internal"
+port = 6334
+
+[seniverseConfig]
+apiKey = ""
+
+[exchangeRateConfig]
+apiKey = ""
+
+[tavilyConfig]
+apiKey = ""
+
+[esConfig]
+addresses = "http://host.docker.internal:9200"
+username = ""
+password = ""
+
+[wsConfig]
+allowedOrigins = ["http://localhost:3000"]
+
+[githubOAuthConfig]
+clientID = ""
+clientSecret = ""
+redirectURL = "http://localhost:8080/user/github/callback"
+frontendRedirectURL = "http://localhost:3000/oauth/github/callback"
+proxyURL = "http://host.docker.internal:7890"
+
+[giteeOAuthConfig]
+clientID = ""
+clientSecret = ""
+redirectURL = "http://localhost:8080/user/gitee/callback"
+frontendRedirectURL = "http://localhost:3000/oauth/gitee/callback"
+
+[discoverFeedConfig]
+followerThreshold = 500
+retentionDays = 30
