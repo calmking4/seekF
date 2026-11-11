@@ -1,5 +1,11 @@
 ﻿# seekF
 
+[![项目演示](https://img.shields.io/badge/项目演示-语雀-25b864)](https://www.yuque.com/lengjing-7k1h6/iadugr/coq4r9zpocyuwgyr)
+[![Stars](https://img.shields.io/github/stars/calmking4/seekF?style=social)](https://github.com/calmking4/seekF/stargazers)
+[![Forks](https://img.shields.io/github/forks/calmking4/seekF?style=social)](https://github.com/calmking4/seekF/forks)
+
+**中文** | [English](README.en.md)
+
 **基于 Go 与 Nuxt 4 的 feed流 内容社区，集成实时私聊与创作者助力。**
 
 seekF 围绕实时交流、智能问答和内容创作构建完整业务链路：支持用户私聊、多模型 AI 对话、私有知识库、图文与视频社区，以及创作者付费权益、收益分配、自动提现和管理控制台。
