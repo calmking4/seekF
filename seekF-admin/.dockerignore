@@ -1,0 +1,17 @@
+# 仅发送构建所需文件，不复制本地依赖、构建产物和密钥。
+**
+!package.json
+!package-lock.json
+!index.html
+!tsconfig.json
+!vite.config.ts
+!src/
+!src/**
+!public/
+!public/**
+
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.log

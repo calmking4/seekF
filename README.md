@@ -30,9 +30,9 @@ seekF 围绕实时交流、智能问答和内容创作构建完整业务链路�
 | 后端框架与工程 | Go 1.25.5 / Gin / GORM / Google Wire |
 | 用户端 | Nuxt 4 / Vue 3 Composition API / Element Plus / Tailwind CSS |
 | 管理端 | React 19 / TypeScript / Vite / React Router / Tailwind CSS |
-| 数据存储 | MySQL（业务数据与事务）/ Redis（会话、验证码与缓存）/ 阿里云 OSS（文件与媒体） |
-| 搜索与向量检索 | Elasticsearch 8 / Qdrant / GLM Embedding / TF-IDF 稀疏向量 / RRF 结果融合 |
-| 实时通信 | Gorilla WebSocket / SSE（EventSource） |
+| 数据存储 | MySQL（业务数据与事务）/ Redis（会话、验证码、缓存与 AI 回答事件流）/ 阿里云 OSS（文件与媒体） |
+| 搜索与向量检索 | Elasticsearch / IK 中文分词 / Qdrant / GLM Embedding / BM25 稀疏向量 / RRF 结果融合 |
+| 实时通信 | Gorilla WebSocket / SSE（fetch 流式读取与断线续接） |
 | 消息与后台任务 | kafka-go / Kafka / Transactional Outbox / 消费幂等与失败重试 / 定时补偿 |
 | AI 与工具编排 | CloudWeGo Eino / OpenAI 兼容接口 / DeepSeek、Qwen、GLM / MCP（mcp-go）/ RAG / ASR / TTS |
 | 身份认证 | JWT / Redis 会话 / bcrypt 密码哈希 / OAuth 2.0 / HttpOnly 管理端 Cookie |
@@ -44,12 +44,12 @@ seekF 围绕实时交流、智能问答和内容创作构建完整业务链路�
 ### 分层设计与 AI 编排
 
 - **分层与依赖注入**：后端采用 Controller → Service → DAO 分层，由 Wire 生成依赖组装代码。Service 统一管理事务，业务写入、计数和站内通知使用同一事务连接；并发修改结合行锁与目标状态校验，保持重复请求下的数据一致性。
-- **多模型与 MCP 工具**：通过 Eino 接入 OpenAI 兼容模型，复用 DeepSeek / Qwen / GLM 模型实例。对话先判断是否调用工具、执行 MCP 工具，再通过 SSE 流式输出回答；工具运行于独立 stdio 子进程，提供联网搜索、社区帖子检索与外部 API 能力。
-- **用户隔离的 RAG**：文档按 500 字符分块、50 字符重叠，结合 GLM 稠密向量与 TF-IDF 稀疏向量，通过 Qdrant 的 RRF 融合检索结果；每个用户使用独立集合，隔离私有知识库。
+- **多模型与 MCP 工具**：通过 Eino 接入 OpenAI 兼容模型，复用 DeepSeek / Qwen / GLM 模型实例。对话先判断是否调用工具、执行 MCP 工具，再流式生成回答；后台任务将事件写入 Redis Stream，浏览器通过 SSE 按游标订阅和断线续接，完整回答与会话摘要由 Service 写入 MySQL。工具运行于独立 stdio 子进程，提供联网搜索、社区帖子检索与外部 API 能力。
+- **用户隔离的 RAG**：文档按 500 字符分块、50 字符重叠，原文通过 GLM 生成稠密向量，中文文本经 Elasticsearch IK 分词后交给 Qdrant 生成 BM25 稀疏向量，再通过 RRF 融合检索结果；每个用户使用独立集合，隔离私有知识库。查询时分词失败会降级为语义检索。
 
 ### 实时通信与内容分发
 
-- **消息传输与权限复核**：WebSocket 承载私聊，配合心跳与自动重连维持连接，Kafka 异步处理私聊及 AI 消息。私聊在入队、消费和落库阶段复核发送权限，任一方拉黑后禁止继续发送。
+- **消息传输与权限复核**：WebSocket 承载私聊，配合心跳与自动重连维持连接。Service 在 MySQL 事务中校验用户状态、拉黑关系与会话归属，按客户端请求编号去重并保存消息，事务提交后确认发送结果并直接推送在线用户。私聊不依赖 Kafka 或 Elasticsearch；Kafka 用于 AI 评论、帖子搜索同步和关注流分发。
 - **未读与消息状态同步**：以入站消息主键记录已读边界，事务内锁定会话并单调推进进度，避免重复或乱序确认误清新消息。撤回与个人删除统一影响历史、搜索、未读及会话摘要，前端过滤迟到响应，避免旧内容重新出现。
 - **搜索与信息流**：帖子搜索优先使用 Elasticsearch，异常时降级到 MySQL；私聊搜索限定本人会话并过滤个人删除记录。关注流采用混合推拉：普通作者通过 Outbox 与 Kafka 将帖子索引写入粉丝 Redis ZSet，大 V 作品读取时从 MySQL 召回；缓存缺失时从帖子及关注关系重建，故障或历史翻页超出缓存范围时回退 MySQL 全拉，统一复核当前权限并按时间与主键游标分页。
 - **审核与媒体访问**：帖子审核结合行锁与版本校验，防止旧页面审核已修改内容，公开帖子通过审核后再创建关注分发事件。OSS 支持分片续传，媒体读取支持 Range 请求，并在后端校验作品可见性与助力权益。
@@ -102,6 +102,7 @@ seekF/
 
 - Go 版本以 [go.mod](seekF-backend/go.mod) 为准，当前为 **1.25.5**；前端 Node.js 版本需满足各自锁定依赖的 `engines` 要求，使用 npm 安装依赖。
 - 准备 MySQL、Redis、Kafka、Elasticsearch 和 Qdrant，配置可访问的服务地址，并准备与当前模型及迁移记录一致的数据库结构。以下命令不包含基础设施部署和数据库初始化。
+- Elasticsearch 需安装与服务版本匹配的 IK 分词插件，提供 `ik_max_word` 和 `ik_smart`；Qdrant 需支持项目使用的 `qdrant/bm25` 推理与混合查询。知识库入库依赖 IK 分词和 GLM Embedding，具体流程见 [RAG 说明](seekF-backend/docs/RAG.md)。
 - 后端配置见 [config.toml](seekF-backend/config/config.toml)，参考 [后端环境变量模板](seekF-backend/.env.example)，在 `seekF-backend/` 下复制 `.env.example` 为 `.env` 后按需填写模型、OSS、短信、邮件、OAuth、工具 API 与支付宝凭据。已有 `.env` 时仅补充缺少的配置，不要覆盖或提交真实凭据；覆盖项见[配置加载代码](seekF-backend/internal/configs/configs.go)。
 - 用户端 API 与 WebSocket 地址见 [nuxt.config.ts](seekF-user/nuxt.config.ts)，默认分别为 `http://localhost:8080/` 和 `ws://localhost:8080/`。
 
@@ -171,6 +172,74 @@ npm run dev
 | `seekF-backend/` | `go build ./...` | 后端编译检查 |
 | `seekF-user/` | `npm run build` | 用户端生产构建 |
 | `seekF-admin/` | `npm run build` | 管理端 TypeScript 检查与生产构建 |
+
+构建后运行方式：
+
+| 应用 | 产物 | 运行命令（在应用目录执行） |
+| --- | --- | --- |
+| 用户端 | 完整 `.output/` | `node .output/server/index.mjs`，默认端口 3000 |
+| 管理端 | `dist/` | `npm run preview`，本地预览端口 3002 |
+
+构建产物运行不会像 `npm run dev` 那样自动更新源码；修改代码后需重新构建。管理端 preview 用于预览，不能代替正式生产静态资源服务。
+
+## Docker 启动
+
+当前三个应用分别提供 Dockerfile 和 Compose 配置，各自在对应目录启动。以下配置面向 **本机 Docker Desktop 的 Linux 容器环境**，不包含 MySQL、Redis、Kafka、Elasticsearch 和 Qdrant 的部署。
+
+### 启动前准备
+
+- 启动 Docker 和所需依赖服务，数据库结构与本地开发要求相同。
+- 准备 `seekF-backend/.env`，核对 [config.docker.toml](seekF-backend/config/config.docker.toml) 中的连接地址。密钥由 `.env` 注入，配置和日志通过目录挂载提供，不打进镜像。
+- 当前后端通过 `host.docker.internal` 访问宿主机服务或其他容器映射出的端口；Kafka 使用 `9093`，其公布地址也需要能从后端容器访问。独立 WSL Docker Engine 或远程 Linux 服务器需按实际网络调整地址。
+- 停止本机占用 `8080`、`3000`、`3002` 端口的后端或前端开发服务。浏览器默认仍在本机访问。
+
+### 构建并启动
+
+**下面每组命令均从仓库根目录开始执行，先启动后端，再启动两个前端。**
+
+**后端：**
+
+```sh
+cd seekF-backend
+docker compose up -d --build backend
+```
+
+后端监听 `http://localhost:8080`，镜像包含编译好的主服务和 MCP 程序，主服务自动启动 MCP，无需额外安装 Go。
+
+**用户端：**
+
+```sh
+cd seekF-user
+docker compose up -d --build user
+```
+
+访问 `http://localhost:3000`。镜像构建 Nuxt 后，通过 Node 运行 `.output/server/index.mjs`。浏览器默认直接连接后端 `localhost:8080`，Docker 配置不改变页面样式或接口路径。
+
+**管理端：**
+
+```sh
+cd seekF-admin
+docker compose up -d --build admin
+```
+
+访问 `http://localhost:3002`。当前容器使用 Vite preview 提供构建后的 `dist`，供本地验证；正式生产部署应使用正式静态资源服务。管理请求先到 `/api/admin/...`，再由容器中的 Vite 代理转发到 `http://host.docker.internal:8080/admin/...`；代理目标由 Compose 的 `VITE_BACKEND_TARGET` 设置。
+
+### 查看、更新和停止
+
+在对应应用目录执行，将 `服务名` 替换为 `backend`、`user` 或 `admin`：
+
+```sh
+docker compose ps -a                         # 查看容器状态
+docker compose logs --tail 50 服务名          # 查看最近日志
+docker compose logs -f 服务名                 # 实时日志，Ctrl+C 只退出查看
+docker compose stop 服务名                   # 停止容器
+docker compose up -d 服务名                  # 使用已有镜像启动或更新配置
+docker compose up -d --build 服务名          # 修改源码后重新构建并更新容器
+```
+
+`--build` 会先构建镜像，未变化的步骤可复用缓存；只执行 `restart` 不会重新编译代码。修改后端挂载的 `config.docker.toml` 后执行 `docker compose restart backend`；修改后端 `.env` 后执行 `docker compose up -d --force-recreate backend`，重新注入环境变量。
+
+`docker compose down` 删除当前 Compose 管理的容器和默认网络，不删除镜像及挂载在宿主机上的配置、日志。三个应用的 Compose 相互独立，在某一目录执行不会停止另外两个应用。
 
 ## 许可证与致谢
 

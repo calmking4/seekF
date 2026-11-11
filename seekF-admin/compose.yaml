@@ -1,0 +1,10 @@
+services:
+  admin:
+    container_name: seekf-admin
+    image: seekf-admin:local
+    build: .
+    ports:
+      - "3002:3002"
+    environment:
+      # 管理端容器中的 Vite 代理访问宿主机映射出的后端端口。
+      VITE_BACKEND_TARGET: "http://host.docker.internal:8080"

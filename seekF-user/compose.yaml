@@ -1,0 +1,7 @@
+services:
+  user:
+    container_name: seekf-user
+    image: seekf-user:local
+    build: .
+    ports:
+      - "3000:3000"

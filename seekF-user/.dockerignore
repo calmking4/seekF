@@ -1,0 +1,16 @@
+# 仅发送前端构建所需文件，不复制 Windows 依赖、构建缓存或本地密钥。
+**
+!package.json
+!package-lock.json
+!nuxt.config.ts
+!tsconfig.json
+!app/
+!app/**
+!public/
+!public/**
+
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.log
