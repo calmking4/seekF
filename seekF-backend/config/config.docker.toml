@@ -133,20 +133,20 @@ username = ""
 password = ""
 
 [wsConfig]
-allowedOrigins = ["http://localhost:3000"]
+allowedOrigins = ["http://localhost", "http://127.0.0.1", "http://[::1]", "http://localhost:3000"]
 
 [githubOAuthConfig]
 clientID = ""
 clientSecret = ""
-redirectURL = "http://localhost:8080/user/github/callback"
-frontendRedirectURL = "http://localhost:3000/oauth/github/callback"
+redirectURL = "http://localhost/api/user/github/callback"
+frontendRedirectURL = "http://localhost/oauth/github/callback"
 proxyURL = "http://host.docker.internal:7890"
 
 [giteeOAuthConfig]
 clientID = ""
 clientSecret = ""
-redirectURL = "http://localhost:8080/user/gitee/callback"
-frontendRedirectURL = "http://localhost:3000/oauth/gitee/callback"
+redirectURL = "http://localhost/api/user/gitee/callback"
+frontendRedirectURL = "http://localhost/oauth/gitee/callback"
 
 [discoverFeedConfig]
 followerThreshold = 500

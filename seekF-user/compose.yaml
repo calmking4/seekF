@@ -5,3 +5,7 @@ services:
     build: .
     ports:
       - "3000:3000"
+    environment:
+      # Docker 用户端从 Nginx 的 80 端口访问，接口和聊天连接使用同一入口。
+      NUXT_PUBLIC_API_BASE: "/api/"
+      NUXT_PUBLIC_WS_BASE: "/api/"

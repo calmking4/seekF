@@ -1,10 +1,17 @@
 // 发现页媒体始终通过后端鉴权读取，原始OSS地址只作为资源标识。
 export function discoverMediaURL(value, apiBase) {
- if (!value || typeof value !== 'string' || value.startsWith('blob:') || value.startsWith('data:') || value.includes('/user/file/view?')) return value
+ if (!value || typeof value !== 'string' || value.startsWith('blob:') || value.startsWith('data:')) return value
  try {
-  const parsed = new URL(value, 'http://resource.local/')
+  let source = value
+  let parsed = new URL(source, 'http://resource.local/')
+  // 将历史草稿中的旧媒体代理地址重新绑定到当前入口，避免继续绕过 Nginx。
+  if (parsed.pathname.endsWith('/user/file/view')) {
+   source = parsed.searchParams.get('url')
+   if (!source) return value
+   parsed = new URL(source, 'http://resource.local/')
+  }
   if (!/^\/discover\/(images|videos)\//.test(parsed.pathname)) return value
-  return String(apiBase || '').replace(/\/$/, '') + '/user/file/view?url=' + encodeURIComponent(value)
+  return String(apiBase || '').replace(/\/$/, '') + '/user/file/view?url=' + encodeURIComponent(source)
  } catch { return value }
 }
 

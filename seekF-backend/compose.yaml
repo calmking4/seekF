@@ -11,6 +11,8 @@ services:
       PORT: "8080"
       # 本地模型运行在宿主机，容器不能通过 localhost 访问它。
       QWEN_LOCAL_BASE_URL: "http://host.docker.internal:12345/v1"
+      # 支付完成后返回统一的网站入口，异步通知地址仍沿用 .env。
+      ALIPAY_RETURN_URL: "http://localhost/support/result"
     volumes:
       # 将容器专用配置挂载到程序实际读取的位置。
       - ./config/config.docker.toml:/app/config/config.toml:ro

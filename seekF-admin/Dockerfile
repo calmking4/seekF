@@ -6,6 +6,6 @@ COPY . .
 RUN npm ci
 RUN npm run build
 
-# Vite preview 使用现有代理规则，不需要 Nginx。
+# 容器内通过 Vite preview 提供页面，外部 Nginx 统一转发入口。
 EXPOSE 3002
 CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--strictPort"]

@@ -153,8 +153,12 @@ export const useWebSocket = () => {
         restorePending()
         manuallyClosed = false
         isConnected.value = false
-        const wsBase = config.public.wsBase || 'ws://localhost:8080/'
-        const socket = new WebSocket(`${wsBase}user/ws/login?client_id=${encodeURIComponent(owner)}`)
+        // 支持 Nginx 的相对路径，也保留本地开发的完整地址；协议随页面切换 ws/wss。
+        const wsBase = String(config.public.wsBase || 'ws://localhost:8080/').replace(/\/?$/, '/')
+        const socketURL = new URL('user/ws/login', new URL(wsBase, window.location.href))
+        socketURL.protocol = ['https:', 'wss:'].includes(socketURL.protocol) ? 'wss:' : 'ws:'
+        socketURL.searchParams.set('client_id', owner)
+        const socket = new WebSocket(socketURL.href)
         wsInstance = socket
         const isCurrent = () => generation === connectionGeneration && wsInstance === socket && owner === ownerId()
         socket.onopen = () => {

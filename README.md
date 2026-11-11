@@ -100,13 +100,11 @@ seekF/
 
 ### 环境与配置
 
-- Go 版本以 [go.mod](seekF-backend/go.mod) 为准，当前为 **1.25.5**；前端 Node.js 版本需满足各自锁定依赖的 `engines` 要求，使用 npm 安装依赖。
-- 准备 MySQL、Redis、Kafka、Elasticsearch 和 Qdrant，配置可访问的服务地址，并准备与当前模型及迁移记录一致的数据库结构。以下命令不包含基础设施部署和数据库初始化。
-- Elasticsearch 需安装与服务版本匹配的 IK 分词插件，提供 `ik_max_word` 和 `ik_smart`；Qdrant 需支持项目使用的 `qdrant/bm25` 推理与混合查询。知识库入库依赖 IK 分词和 GLM Embedding，具体流程见 [RAG 说明](seekF-backend/docs/RAG.md)。
-- 后端配置见 [config.toml](seekF-backend/config/config.toml)，参考 [后端环境变量模板](seekF-backend/.env.example)，在 `seekF-backend/` 下复制 `.env.example` 为 `.env` 后按需填写模型、OSS、短信、邮件、OAuth、工具 API 与支付宝凭据。已有 `.env` 时仅补充缺少的配置，不要覆盖或提交真实凭据；覆盖项见[配置加载代码](seekF-backend/internal/configs/configs.go)。
-- 用户端 API 与 WebSocket 地址见 [nuxt.config.ts](seekF-user/nuxt.config.ts)，默认分别为 `http://localhost:8080/` 和 `ws://localhost:8080/`。
-
-助力支付与提现复用支付宝环境及 RSA2 凭据。启用提现时，还需在后端 `.env` 配置 `SUPPORT_ACCOUNT_ENCRYPTION_KEY`，取值为 **32 字节随机密钥的 Base64 编码**，用于加密收款账号、姓名和提现快照；部署及迁移时保持该密钥稳定。平台抽成由 `config.toml` 的 `[supportSettlementConfig].platformRateBPS` 配置，`1000` 表示 10%，仅影响新订单。
+- Go **1.25.5**（以 [go.mod](seekF-backend/go.mod) 为准），前端使用 Node.js **22** 和 npm。
+- 准备 MySQL、Redis、Kafka、Elasticsearch 和 Qdrant，并初始化数据库；Elasticsearch 需安装匹配版本的 IK 插件，Qdrant 需支持 BM25。
+- 后端连接配置见 [config.toml](seekF-backend/config/config.toml)，将 [后端环境变量模板](seekF-backend/.env.example) 复制为同目录下的 `.env`，按需填写凭据，不要提交密钥。
+- user 通过 Nginx 访问时，将 [user 环境变量模板](seekF-user/.env.example) 复制为同目录下的 `.env`；已有文件时仅补充配置。
+- 支付与提现按需配置支付宝凭据，详见 [支付说明](seekF-backend/docs/支付.md)；知识库配置见 [RAG 说明](seekF-backend/docs/RAG.md)。
 
 ### 创作者与管理端入口
 
@@ -122,10 +120,10 @@ seekF/
 | 助力设置 | `/discover/support` | 开通助力、设置价格 |
 | 助力记录 | `/discover/support-records` | 查看助力订单、收款与退款情况 |
 | 收益与提现 | `/discover/support-wallet` | 查看余额与流水、绑定支付宝、申请提现 |
-| 管理端系统概览 | `/` | 查看平台总收款、累计抽成、退款退回抽成与平台净收益 |
-| 管理端助力订单与退款 | `/support` | 查询订单、审核购买者退款 |
-| 管理端收益与提现核对 | `/settlement` | 查询提现、核对渠道结果和账户资金 |
-| 管理端帖子审核 | `/posts` | 查看封面、按标题 / 作者 / 编号及状态筛选，预览内容与媒体并审核、驳回、下架或恢复 |
+| 管理端系统概览 | `/admin/` | 查看平台总收款、累计抽成、退款退回抽成与平台净收益 |
+| 管理端助力订单与退款 | `/admin/support` | 查询订单、审核购买者退款 |
+| 管理端收益与提现核对 | `/admin/settlement` | 查询提现、核对渠道结果和账户资金 |
+| 管理端帖子审核 | `/admin/posts` | 查看封面、按标题 / 作者 / 编号及状态筛选，预览内容与媒体并审核、驳回、下架或恢复 |
 
 
 
@@ -141,7 +139,7 @@ go mod download
 go run ./cmd/seekf-server
 ```
 
-默认监听 `http://localhost:8080`。必须在 `seekF-backend/` 下执行，因为配置按 `./config/config.toml` 加载。MCP 工具初始化时会自动启动 stdio 子进程，默认命令为 `go run ./cmd/mcp-server`，无需另开终端；可通过 `MCP_SERVER_COMMAND` 指定其他启动命令。
+监听 8080 端口，必须在后端目录执行；MCP 自动启动，无需另开终端。
 
 **用户端**
 
@@ -151,7 +149,7 @@ npm install
 npm run dev
 ```
 
-默认访问 `http://localhost:3000`。
+监听 3000 端口；接入下方 Nginx 后，访问 `http://localhost`。
 
 **管理端**
 
@@ -161,7 +159,7 @@ npm install
 npm run dev
 ```
 
-访问 `http://127.0.0.1:3002`，开发代理默认连接本地 8080 后端，可通过管理端的 `VITE_BACKEND_TARGET` 修改目标地址。登录使用已有正常账号，数据库 `user_info.is_admin` 必须为 `1`；没有预置管理员密码。
+监听 3002 端口；接入 Nginx 后，访问 `http://localhost/admin/`。使用已有账号登录，需将数据库 `user_info.is_admin` 设为 `1`。
 
 ### 编译与构建
 
@@ -184,14 +182,13 @@ npm run dev
 
 ## Docker 启动
 
-当前三个应用分别提供 Dockerfile 和 Compose 配置，各自在对应目录启动。以下配置面向 **本机 Docker Desktop 的 Linux 容器环境**，不包含 MySQL、Redis、Kafka、Elasticsearch 和 Qdrant 的部署。
+适用于本机 Docker Desktop（Linux 容器）。三个应用分别启动，MySQL、Redis 等依赖需自行准备。
 
 ### 启动前准备
 
-- 启动 Docker 和所需依赖服务，数据库结构与本地开发要求相同。
-- 准备 `seekF-backend/.env`，核对 [config.docker.toml](seekF-backend/config/config.docker.toml) 中的连接地址。密钥由 `.env` 注入，配置和日志通过目录挂载提供，不打进镜像。
-- 当前后端通过 `host.docker.internal` 访问宿主机服务或其他容器映射出的端口；Kafka 使用 `9093`，其公布地址也需要能从后端容器访问。独立 WSL Docker Engine 或远程 Linux 服务器需按实际网络调整地址。
-- 停止本机占用 `8080`、`3000`、`3002` 端口的后端或前端开发服务。浏览器默认仍在本机访问。
+- 启动 Docker 和依赖服务。
+- 准备后端 `.env`，核对 [config.docker.toml](seekF-backend/config/config.docker.toml) 中的地址；当前 Kafka 使用宿主机 9093 端口。
+- 停止占用 `8080`、`3000`、`3002` 端口的本地开发服务。
 
 ### 构建并启动
 
@@ -204,7 +201,7 @@ cd seekF-backend
 docker compose up -d --build backend
 ```
 
-后端监听 `http://localhost:8080`，镜像包含编译好的主服务和 MCP 程序，主服务自动启动 MCP，无需额外安装 Go。
+监听 8080 端口，镜像已包含后端和 MCP 程序。
 
 **用户端：**
 
@@ -213,7 +210,7 @@ cd seekF-user
 docker compose up -d --build user
 ```
 
-访问 `http://localhost:3000`。镜像构建 Nuxt 后，通过 Node 运行 `.output/server/index.mjs`。浏览器默认直接连接后端 `localhost:8080`，Docker 配置不改变页面样式或接口路径。
+监听 3000 端口，接口和 WebSocket 使用 `/api/`；接入 Nginx 后访问 `http://localhost`。
 
 **管理端：**
 
@@ -222,24 +219,37 @@ cd seekF-admin
 docker compose up -d --build admin
 ```
 
-访问 `http://localhost:3002`。当前容器使用 Vite preview 提供构建后的 `dist`，供本地验证；正式生产部署应使用正式静态资源服务。管理请求先到 `/api/admin/...`，再由容器中的 Vite 代理转发到 `http://host.docker.internal:8080/admin/...`；代理目标由 Compose 的 `VITE_BACKEND_TARGET` 设置。
+监听 3002 端口；接入 Nginx 后访问 `http://localhost/admin/`。当前使用 Vite preview，供本地验证。
 
-### 查看、更新和停止
+### Nginx 统一前后端入口
 
-在对应应用目录执行，将 `服务名` 替换为 `backend`、`user` 或 `admin`：
+Nginx 使用 [default.conf](deploy/nginx/default.conf)，将 80 端口映射到本机后：
+
+| 地址 | 转发目标 |
+| --- | --- |
+| `http://localhost/` | user 前端，3000 端口 |
+| `http://localhost/admin/` | admin 前端，3002 端口 |
+| `http://localhost/api/...` | 去掉 `/api` 后转发到后端，8080 端口 |
+
+现有 Nginx 容器名为 `nginx`。首次接入网络：
 
 ```sh
-docker compose ps -a                         # 查看容器状态
-docker compose logs --tail 50 服务名          # 查看最近日志
-docker compose logs -f 服务名                 # 实时日志，Ctrl+C 只退出查看
-docker compose stop 服务名                   # 停止容器
-docker compose up -d 服务名                  # 使用已有镜像启动或更新配置
-docker compose up -d --build 服务名          # 修改源码后重新构建并更新容器
+docker network create seekf-nginx-network
+docker network connect seekf-nginx-network nginx
 ```
 
-`--build` 会先构建镜像，未变化的步骤可复用缓存；只执行 `restart` 不会重新编译代码。修改后端挂载的 `config.docker.toml` 后执行 `docker compose restart backend`；修改后端 `.env` 后执行 `docker compose up -d --force-recreate backend`，重新注入环境变量。
+备份原配置，将仓库配置复制到 Nginx 挂载目录的 `conf.d/default.conf`，再检查、重载：
 
-`docker compose down` 删除当前 Compose 管理的容器和默认网络，不删除镜像及挂载在宿主机上的配置、日志。三个应用的 Compose 相互独立，在某一目录执行不会停止另外两个应用。
+```sh
+docker exec nginx nginx -t           # 检查配置
+docker exec nginx nginx -s reload    # 检查成功后执行
+```
+
+需要 Nginx 1.27.3 或更新版本；重新创建容器时加 `--network seekf-nginx-network`。
+
+前后端可在本机或 Docker 中运行，二选一。本机运行时，按 [user 环境变量模板](seekF-user/.env.example) 配置 `.env`，仍从 Nginx 入口访问。
+
+OAuth 平台回调地址需与后端配置一致。支付若穿透 Nginx 的 80 端口，通知路径需加 `/api`。
 
 ## 许可证与致谢
 
