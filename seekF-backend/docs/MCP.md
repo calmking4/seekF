@@ -1,179 +1,96 @@
-## 1. 先用一句话理解 MCP
+# MCP 工具调用
 
-MCP（Model Context Protocol）可以理解为：  
-**给大模型一套“可调用工具”的标准接口**。  
-大模型先判断要不要调用工具（例如天气），如果要，就让后端执行工具，再把工具结果喂回模型，让模型组织成自然语言回复。
+MCP 可以理解为后端调用工具的一套通信协议。本项目先让模型决定是否需要工具，再由后端执行查询，最后让模型根据结果回答。
 
-在本项目里，MCP 工具包括天气、汇率、网页搜索和帖子搜索。
+当前工具包括天气、汇率、网页搜索和平台帖子查询。模型负责选择工具和参数，不直接访问数据库或外部服务。
 
----
+## 1. 主服务和工具服务怎样配合
 
-## 2. 本项目 MCP 的核心文件
+| 部分 | 职责 |
+| --- | --- |
+| AI 聊天服务 | 组织问题和历史，调用模型，执行工具调用流程 |
+| MCP Client | 连接工具子进程，将工具说明转换为 Eino 可用的模型工具声明 |
+| MCP Server | 注册工具，接收调用，执行具体查询并返回结果 |
 
-### 2.1 MCP Server（独立进程，stdio 模式）
-- 文件：`cmd/mcp-server/main.go`
-- 作用：
-  - 创建一个独立的 MCP Server 进程
-  - 注册工具：天气、汇率、网页搜索、帖子搜索
-  - 通过 stdio（stdin/stdout）与主进程进行 JSON-RPC 通信
-  - 使用 `server.NewStdioServer(mcpServer)` 启动，监听 stdin/stdout
+主服务启动 `cmd/mcp-server` 子进程，通过 stdin/stdout 交换 JSON-RPC 消息。stdout 专用于协议，日志写入 stderr 和日志文件；主进程持续读取子进程 stderr，避免管道积压。
 
-你可以把它理解成：**”工具商店后台”**，作为独立子进程运行，负责告诉外界”我有哪些工具、每个工具怎么执行”。
+帖子查询使用子进程自己的 MySQL 连接池。`internal/pkg/ai/mcp/server.go` 是进程内服务实现，当前主服务使用的是独立 stdio 子进程入口。
 
-### 2.2 MCP Client（把 MCP 工具转换为 Eino 可用工具）
-- 文件：`internal/pkg/ai/mcp/client.go`
-- 作用：
-  - 由启动入口调用 `InitMCPClient(ctx)`，通过 stdio transport 和 `client.NewClient` 启动 MCP Server 子进程
-  - 执行 MCP 初始化握手（`Initialize`）
-  - 调用 `eino-ext` 的 `mcpp.GetTools(...)`，把 MCP 工具转为 `[]tool.BaseTool`
-  - 在握手、工具加载和声明校验全部成功后，一次性发布工具列表及调用映射，使用读写锁保护缓存
+## 2. 一次问题怎样调用工具
 
-你可以把它理解成：**”翻译层”**，启动 MCP Server 子进程并把 MCP 工具元信息翻译成大模型可读的函数声明（tool schema）。
+1. 前端调用 `POST /user/aichat/startGeneration`。后端保存提问并启动后台生成任务，返回任务编号。
+2. 后台任务读取历史，按开关检索知识库，再选择模型。
+3. `runMCPAgentFlow()` 从 `FilteredMCPToolBinding()` 获取已缓存的工具说明和调用映射；关闭联网搜索时移除 `web_search`。
+4. 调用模型的 `Generate()`，一次性取得是否调用工具的决定。
+5. 如果有工具调用，后端按顺序执行，将调用决定与工具结果追加到模型输入；没有工具调用则使用原来的问题与历史。
+6. 调用 `streamChatModel()` 进行流式回答，正文片段写入 Redis；前端通过独立的 SSE 订阅接口接收。
+7. 文本生成结束后，把非空的网页来源、帖子数据写成 Redis 事件，再将完整回答、来源、帖子与会话摘要一起提交 MySQL 事务。成功后写入 `done`，失败则记录 `error`。
 
-### 客户端初始化与关闭
+```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"nodeSpacing": 18, "rankSpacing": 22, "padding": 6}}}%%
+flowchart TD
+    A[问题与历史] --> B[Generate 决定是否用工具]
+    B --> C{需要工具？}
+    C -- 是 --> D[后端执行工具]
+    D --> E[追加工具结果]
+    E --> F[Stream 生成回答]
+    C -- 否 --> F
+    F --> G[Redis 事件供 SSE 订阅]
+    G --> H[MySQL 保存完整结果]
+    H --> I[写入 done]
+```
 
-主服务启动时显式调用 `InitMCPClient(ctx)`。每次握手和工具加载共用30秒超时，最多尝试3次，重试间隔2秒；失败的客户端会先关闭，再进行下一次尝试。子进程的生命周期上下文与应用保持一致，不随握手结束而取消。
+不需要工具时，也会重新调用 `Stream()`，不会直接把工具决策阶段的整段文字作为最终回答。
 
-`GetMCPTools(ctx)`和`FilteredMCPToolBinding(ctx, enableWebSearch)`只读取缓存，不创建子进程、不重新加载工具。初始化失败时返回错误，聊天服务按普通聊天流程继续处理。工具列表和调用映射每次返回容器副本，避免请求修改全局缓存。
+## 3. 会调用几次模型
 
-`CloseMCPClient()`清空缓存并关闭客户端，由stdio transport关闭输入管道、等待子进程退出，必要时终止进程。主服务收到退出信号或入口正常返回时调用该方法。
+| 情况 | 调用次数 |
+| --- | --- |
+| 工具可用，模型决定不用 | 一次 `Generate` 决策，加一次 `Stream` 回答 |
+| 工具可用，模型决定使用 | 一次 `Generate` 决策，执行工具，再一次 `Stream` 总结 |
+| 没有可用工具或绑定失败 | 直接一次 `Stream` 普通回答 |
+| 工具决策请求失败 | 该次请求已尝试，随后回退 `Stream` 普通回答 |
 
-MCP子进程显式调用`InitConfig()`、`InitLogger()`和`InitMySQL()`，帖子搜索工具使用该进程自己的数据库连接池。stdout专用于JSON-RPC，日志由stderr和日志文件输出；主进程持续读取子进程stderr，避免管道积压阻塞工具服务。
+一次决策可以包含多个工具调用，执行这些工具不等于再次调用大模型。当前流程只进行一轮工具决策，不会反复循环调用工具直到模型结束。
 
-启动命令由`MCP_SERVER_COMMAND`控制，默认`go run ./cmd/mcp-server`；工作目录由`MCP_SERVER_WORKDIR`控制，默认当前目录。两个入口均应在`seekF-backend/`目录运行，以加载相对路径的配置文件。
+单个工具执行失败时，错误信息作为工具结果交给模型；最终生成或保存失败时，不会发送正常完成信号。
 
-### 2.3 具体工具实现（天气）
-- 文件：`internal/pkg/ai/mcp/tool/weather.go`
-- 作用：
-  - `GetWeatherTool()`：声明工具名、描述、参数（`location`）
-  - `HandleWeatherRequest(...)`：解析参数并执行查询
-  - `queryWeather(...)`：调用心知天气 API，拼装文本结果
+## 4. 工具返回什么
 
-这部分就是“真实业务逻辑”。
+| 工具名称 | 主要参数 | 用途 |
+| --- | --- | --- |
+| `get_weather` | `location` | 查询城市天气 |
+| `get_exchange_rate` | `base_currency`、`target_currency` | 查询两种货币的汇率 |
+| `web_search` | `query` | 通过 Tavily 搜索网页 |
+| `get_discover_posts` | `keyword`、`limit` | 查询平台帖子 |
 
-### 2.4 进程内备用 Server（参考）
-- 文件：`internal/pkg/ai/mcp/server.go`
-- 作用：
-  - 进程内 MCP Server 的备用实现，仅用于参考
-  - 当前主应用使用 stdio 模式与独立的 MCP Server 进程通信
+工具可返回供模型阅读的文本，以及网页来源、帖子卡片等结构化数据。后端从返回结果中分别提取这些内容；来源与帖子会保存到回答记录，加载历史时仍可展示。
 
-### 2.5 AI 主流程（MCP 决策 + 工具执行 + 总结回复）
-- 文件：`internal/services/user_service/aichat_service.go`
-- 核心函数：
-  - `SendMessageStream(...)`
-  - `runMCPAgentFlow(...)`
-  - `streamChatModelToSSE(...)`
-  - `persistAndCompleteAIMessage(...)`
+帖子查询的 `_viewer_id` 由后端根据登录用户注入，覆盖模型提供的同名值，用于按用户身份过滤可见内容。
 
----
+## 5. 初始化与配置
 
-## 3. 用户发消息后的完整链路（真实代码行为）
+主服务启动时显式调用 `InitMCPClient()`：启动子进程、完成 MCP 握手、加载工具并校验声明，全部成功后发布缓存。握手和工具加载共用30秒超时，最多尝试3次，间隔2秒；失败的客户端先关闭再重试。
 
-下面是你项目当前实现的实际流程：
+聊天请求通过 `GetMCPTools()` 或 `FilteredMCPToolBinding()` 读取缓存，不会每次重新启动子进程或刷新工具列表。初始化失败时，普通 AI 聊天仍可回退执行；主服务退出时调用 `CloseMCPClient()` 关闭子进程。
 
-1. `SendMessageStream(...)` 先做通用逻辑  
-   - 校验会话、保存用户消息到 DB、更新会话最后消息  
-   - 读取历史消息，构建 Eino `chatMessages`（含 system prompt、历史 user/assistant）
-   - 可选拼接知识库检索结果（`UseKnowledge`）
+启动参数由环境变量决定：
 
-2. 选择模型实例  
-   - 通过 `aipkg.GetModelPool().GetModel(req.ModelType)` 获取 `ToolCallingChatModel`
+| 环境变量 | 用途 |
+| --- | --- |
+| `MCP_SERVER_COMMAND` | 启动命令；未设置时使用 `go run ./cmd/mcp-server` |
+| `MCP_SERVER_WORKDIR` | 子进程工作目录；未设置时使用当前目录 |
 
-3. 进入 MCP Agent 分支（默认尝试）  
-   - 调用 `runMCPAgentFlow(...)`
+当前客户端不读取 TOML 的 `[mcpConfig]` 段。默认命令与相对配置路径要求工作目录为 `seekF-backend/`。
 
-4. `runMCPAgentFlow(...)` 第 1 次请求（非流式）  
-   - 从 `mcppkg.GetMCPTools(ctx)` 获取工具定义
-   - `chatModel.WithTools(toolInfos)` 绑定工具
-   - 调 `Generate(ctx, chatMessages)` 让模型做“是否调用工具”决策
+模型由 `[aiModelConfig]` 配置，支持 `deepseek`、`qwen`、`glm`、`glm-4v`、`qwen-local`，是否可用取决于配置和初始化结果。天气、汇率、网页搜索分别读取对应服务配置，密钥可通过相关环境变量覆盖。
 
-5. 分支判断  
-   - **无 ToolCalls**：返回 `handled=false`，外层回退普通流式（保证非工具问题也流式）  
-   - **有 ToolCalls**：后端执行每个工具（`InvokableRun`），并拼 `ToolMessage`
+## 6. 新增工具时需要做什么
 
-6. 第 2 次请求（流式总结）  
-   - 把“原对话 + assistant 工具调用指令 + tool 执行结果”组装成 `msgs2`
-   - 调 `streamChatModelToSSE(...)`（无工具绑定）进行流式总结回复
+1. 在职责对应的工具模块中定义名称、描述、参数和执行函数。
+2. 在 `cmd/mcp-server/main.go` 注册工具。
+3. 更新必要的配置，并由用户重启主服务，使新的子进程加载工具列表。
 
-7. 持久化与收尾  
-   - `persistAndCompleteAIMessage(...)`：兜底空回复、发送 Kafka 异步持久化、更新会话 last_message、回调 `onComplete`
+普通文本工具可以复用现有执行流程。如果需要像来源、帖子卡片一样返回专用结构化数据，还需在聊天服务和前端增加对应的提取、事件与展示处理，不能只注册工具。
 
----
-
-## 4. 一共调用几次大模型？
-
-### 场景 A：模型判断不需要工具
-- 第 1 次：`Generate`（带 tools 做决策）  
-- 然后回退普通流式：`Stream`  
-- **总计 2 次**
-
-### 场景 B：模型判断需要工具（例如天气）
-- 第 1 次：`Generate`（带 tools 做决策，返回 ToolCalls）  
-- 工具执行：本地/MCP 调用（不算 LLM 请求）  
-- 第 2 次：`Stream`（基于工具结果总结）  
-- **总计 2 次**
-
-所以你现在的实现是：**默认按两段式 Agent 走**，区别只在于第二段的输入上下文是否包含工具结果。
-
----
-
-## 5. 为什么非天气问题也能流式？
-
-之前常见坑是：  
-“无工具时直接把第 1 次 `Generate` 的整段文本返回”，这会看起来不是流式。
-
-当前代码已经修正为：
-- 无工具时 `runMCPAgentFlow` 返回 `handled=false`
-- 外层继续走 `streamChatModelToSSE`，所以仍是流式输出
-
----
-
-## 6. 配置项与依赖
-
-### 6.1 模型配置
-- 文件：`config/config.toml` 下 `[aiModelConfig]`
-- 支持：`deepseek / qwen / glm / glm-4v`
-- 读取逻辑：`internal/pkg/ai/model_pool.go`
-
-### 6.2 天气 API 配置
-- 文件：`config/config.toml` 下 `[seniverseConfig] apiKey`
-- 结构定义：`internal/configs/configs.go` 的 `SeniverseConfig`
-- 也支持环境变量覆盖：`SENIVERSE_API_KEY`
-
-### 6.3 关键依赖（go.mod）
-- `github.com/mark3labs/mcp-go`（MCP server/client 协议实现）
-- `github.com/cloudwego/eino`（模型与消息抽象）
-- `github.com/cloudwego/eino-ext/components/tool/mcp`（MCP 工具桥接到 Eino）
-
----
-
-## 7. 工具调用的组织方式
-
-- 工具接入清晰：Server（注册）+ Client（桥接）+ Service（编排）
-- 对前端体验友好：非工具场景也保持流式
-- 有降级能力：MCP 工具不可用时可回退普通聊天
-
----
-
-## 8. 如何在本项目新增一个 MCP 工具（最小步骤）
-
-1. 在 `internal/pkg/ai/mcp/tool/` 新建工具文件（例如 `calendar.go`）  
-2. 参考 `WeatherTool` 实现：
-   - 工具声明函数（名称、描述、参数）
-   - 处理函数（参数解析 + 业务调用 + 文本结果）
-3. 在 `cmd/mcp-server/main.go` 的 `main()` 里 `AddTool(...)` 注册（独立 MCP Server 进程）  
-4. 不需要改 `runMCPAgentFlow` 主流程（它会动态读取 MCP 工具列表）  
-5. 确保工具描述写清”何时使用”，这样模型更容易正确触发工具
-
----
-
-## 9. 给 AI 应用初学者的总结
-
-你可以把这个项目 MCP 流程记成三步：
-
-1. **先问模型要不要查工具**（第 1 次 LLM）  
-2. **后端真去查工具**（MCP，不是 LLM）  
-3. **再让模型用查到的数据回答人话**（第 2 次 LLM，流式输出）
-
-这就是一个标准的“LLM + Tool Calling”工程化落地方式。  
-你现在这套代码已经具备可扩展基础，后面只需要不断加工具和提示词策略，就能从“天气助手”升级为“多工具 AI 助手”。
+相关流程还可参阅 [AI 聊天](AiChat.md) 和 [知识库 RAG](RAG.md)。

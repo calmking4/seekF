@@ -1,871 +1,241 @@
-# AI Chat 实现详解
+# AI 聊天
 
----
+AI 聊天的主要流程是：**保存提问 → 读取历史和参考资料 → 调用模型 → 逐段显示回答 → 保存完整回答**。浏览器只请求本站后端，模型密钥由后端保管。
 
-## 一、整体架构
+## 1. 一次提问怎样变成回答
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  模型层（pkg/ai/model_pool.go）—— 全局单例池                  │
-│  deepseek │ qwen │ glm │ glm-4v                            │
-│  类比：数据库连接池，只负责"推理"，不存任何用户数据              │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────────────┐
-│  MCP 工具层（pkg/ai/mcp/）—— AI 可调用的外部能力              │
-│  天气查询 │ 汇率查询 │ 联网搜索（Tavily）                     │
-│  两阶段 Agent：Generate(工具决策) → 执行工具 → Stream(总结)   │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────────────┐
-│  会话层（services/user_service/aichat_service.go）            │
-│  每次请求新建，不驻留内存                                      │
-│  流程：读DB历史 → 构建messages → MCP/调模型 → SSE推送 → 存DB  │
-│  类比：普通 HTTP 请求处理，每次请求都是独立的                    │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────────────┐
-│  存储层（MySQL + Redis + Qdrant）                     │
-│  所有聊天记录存数据库，绝对不放在结构体里                        │
-│  AI 响应完成后直接写入 MySQL                                │
-│  Qdrant 向量数据库，支持知识库 RAG 检索                        │
-└─────────────────────────────────────────────────────────────┘
-```
+发送消息和接收回答分成两个请求：
 
-### 与传统 Web 项目的核心区别
+1. **启动任务**：前端提交问题、模型和功能开关。后端检查会话归属、模型是否可用及并发限制，保存用户消息，返回本次回答的 `stream_id`。
+2. **订阅回答**：前端拿着 `stream_id` 建立 SSE 连接。后端生成任务把回答片段写入 Redis，订阅接口持续读取并推送给浏览器。
+3. **保存结果**：模型输出完成后，后端在同一个 MySQL 事务中保存完整回答、搜索来源、关联帖子和会话摘要。提交成功后，才写入 `done` 完成事件。
 
-| Web 项目 | AI 聊天项目 |
-|----------|------------|
-| 请求 → 处理 → 返回完整响应 | 请求 → 流式返回（边生成边推送） |
-| 响应时间固定（几十ms~几百ms） | 响应时间不固定（几秒~几十秒） |
-| 不需要维护"上下文" | 每次请求需要携带历史对话作为上下文 |
-| 无状态，每次请求独立 | 需要"记住"之前的对话 |
+这两步请求让生成任务与浏览器连接分开：页面刷新或连接断开，只会停止接收，不会立即取消正在生成的回答。
 
----
-
-## 二、核心概念解释
-
-### 2.1 什么是 ChatModel？
-
-**类比**：把 ChatModel 想象成一个"远程 API 调用"。
-
-```go
-// 传统 Web：调用外部 API
-resp := http.Post("https://api.example.com/translate", body)
-
-// AI 聊天：调用大语言模型
-stream := model.Stream(ctx, messages)
+```mermaid
+%%{init: {"sequence": {"actorFontSize": 14, "messageFontSize": 13, "noteFontSize": 13, "width": 100, "height": 34, "actorMargin": 24, "messageMargin": 18, "mirrorActors": false}}}%%
+sequenceDiagram
+    participant B as 浏览器
+    participant A as 本站后端
+    participant R as Redis
+    participant M as AI 模型
+    B->>A: POST startGeneration，提交提问
+    Note over A: 校验并保存提问，启动后台任务
+    A-->>B: 返回 stream_id
+    B->>A: GET stream，订阅回答
+    A->>M: 发送历史、问题和参考资料
+    loop 逐段生成
+        M-->>A: 回答片段
+        A->>R: 保存事件及编号
+        R-->>A: 订阅接口读取事件
+        A-->>B: SSE 推送，页面追加文字
+    end
+    Note over A: MySQL 事务保存完整回答
+    A->>R: 写入 done 事件
+    A-->>B: 通知回答完成
 ```
 
-ChatModel 就是和 AI 模型（DeepSeek/Qwen/GLM）对话的接口。本项目使用 Eino 框架的 `model.ToolCallingChatModel` 接口，它有三个关键方法：
+用户消息和 AI 回答分开保存。因此，生成失败时提问仍在历史中，但未完成的回答不会被当成完整回答保存。此链路直接写 MySQL，不经过 Kafka；AI 评论回复属于另一条业务链路。
 
-- **`Generate()`**：一次性返回完整响应（用于 MCP 工具决策阶段）
-- **`Stream()`**：逐块返回响应（用于普通对话和 MCP 最终总结，实现"打字机效果"）
-- **`WithTools(toolInfos)`**：绑定工具列表，返回带工具调用能力的模型实例
+## 2. 模型为什么能接着上文回答
 
-本项目主要用 `Stream()`，因为 AI 生成内容需要几秒，流式推送可以让用户看到逐字输出效果。
+模型不会自动记住本站之前的聊天。每次生成，后端都从 MySQL 读取最近 **100条消息**，按时间顺序组织成输入，再加上当前问题。当前提问已经保存过，构建输入时会去重，避免发给模型两次。
 
-### 2.2 什么是 Message（消息角色）？
+| 消息角色 | 给模型看的内容 |
+| --- | --- |
+| `system` | 助手规则、当前时间，以及检索到的知识库内容等 |
+| `user` | 用户历史提问和当前问题；多模态模型还可接收图片 |
+| `assistant` | AI 之前的回答，以及本轮工具调用决定 |
+| `tool` | 工具实际查询到的结果 |
 
-AI 对话中的每条消息都有一个"角色"，这是 AI 理解对话的关键：
+例如，用户先说“我准备去北京”，再问“那里天气怎么样”，后端把两轮对话一起传给模型，模型才能理解“那里”指北京。历史条数有限，实际可用输入还受所选模型的长度限制。
 
-| 角色 | 含义 | 类比 |
-|------|------|------|
-| `system` | 系统指令，告诉 AI 它的行为规则 | 服务器的全局配置 |
-| `user` | 用户说的是什么 | 客户端请求 |
-| `assistant` | AI 的回复（可携带 tool_calls） | 服务器响应 |
-| `tool` | 工具执行结果 | 第三方 API 回调 |
+模型池在后端启动时创建并复用客户端，提供 `deepseek`、`qwen`、`glm`、`glm-4v`、`qwen-local` 这些模型类型，是否可用取决于配置和初始化结果。客户端负责访问模型服务，聊天记录保存在 MySQL。
 
-**为什么需要历史消息？**
+图片消息先上传 OSS，再将图片地址和文字交给模型；哪些模型支持图片，由 `[aiModelConfig]` 的 `multimodalModels` 配置判断。
 
-AI 模型本身是无状态的（类似 HTTP 协议），它不记得之前说过什么。所以每次调用时，需要把整个对话历史一起发过去：
+## 3. 工具调用：先查资料，再让模型回答
 
-```
-// 第一次对话
-messages = [
-    UserMessage("你好"),
-]
-// AI 回复: "你好！有什么可以帮你的？"
+MCP 是后端与工具服务之间的通信协议。主服务启动独立的 `cmd/mcp-server` 子进程，通过标准输入、输出交换请求和结果；浏览器不直接连接这个子进程。
 
-// 第二次对话（必须带上第一次的完整历史）
-messages = [
-    UserMessage("你好"),
-    AssistantMessage("你好！有什么可以帮你的？"),
-    UserMessage("帮我写个排序算法"),
-]
-// AI 回复: "好的，这是一个快速排序的实现..."
-```
+| 工具 | 作用 | 主要参数 |
+| --- | --- | --- |
+| `get_weather` | 查询天气 | `location` |
+| `get_exchange_rate` | 查询汇率 | `base_currency`、`target_currency` |
+| `web_search` | 通过 Tavily 搜索网页 | `query` |
+| `get_discover_posts` | 查询平台帖子 | `keyword`、`limit` |
 
-这就是为什么 `SendMessageStream` 中要从 DB 读取历史消息构建上下文。
+关闭“联网搜索”只会从本轮工具列表中移除 `web_search`，其他工具仍可使用。帖子工具的用户身份由后端注入，用于过滤当前用户不能访问的内容。
 
-### 2.3 什么是 SSE（Server-Sent Events）？
+工具调用分两步：
 
-**类比**：SSE 是单向的 WebSocket。
+1. **决定查什么**：后端把问题和工具说明交给模型，调用 `Generate()`，一次性取得工具调用决定。
+2. **生成回答**：如果需要工具，后端执行工具，再把结果交给模型调用 `Stream()`，逐段输出回答；不需要工具则直接进入普通流式回答。
 
-| 特性 | WebSocket | SSE |
-|------|---------|-----|
-| 通信方向 | 双向 | 服务端 → 客户端（单向） |
-| 协议 | `ws://` | `http://`（基于 HTTP） |
-| 复杂度 | 高（需要心跳、重连等） | 低（浏览器原生支持） |
-| 适用场景 | 实时聊天、游戏 | 流式 AI 响应、股票行情 |
-
-SSE 的格式很简单：
-
-```
-data: {"content": "你好"}
-
-data: {"content": "，有什么"}
-
-data: {"content": "可以帮你的？"}
-
-data: {"done": true}
+```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"nodeSpacing": 18, "rankSpacing": 22, "padding": 6}}}%%
+flowchart TD
+    A[问题与历史消息] --> B[模型决定是否用工具]
+    B --> C{需要工具？}
+    C -- 否 --> F[模型流式回答]
+    C -- 是 --> D[后端通过 MCP 执行工具]
+    D --> E[将查询结果加入模型输入]
+    E --> F
+    F --> G[保存回答、来源和关联帖子]
 ```
 
-**本项目的 SSE 协议**：
+例如“北京今天的天气”，模型可选择天气工具，后端实际查询后，模型根据结果组织回答。模型负责决定工具及参数，具体接口由工具执行。
 
-| 消息类型 | 格式 | 说明 |
-|---------|------|------|
-| 内容块 | `data: {"content": "..."}` | AI 生成的文本片段，可多次发送 |
-| 搜索来源 | `data: {"sources": [...]}` | 联网搜索结果，发送一次（在内容之前） |
-| 完成信号 | `data: {"done": true}` | 流式响应结束 |
-| 错误信号 | `data: {"error": "..."}` | 发生错误 |
+工具列表获取、绑定或决策阶段失败时，代码会回退到普通流式回答；单个工具执行失败时，会把失败信息作为工具结果交给模型。最终生成、事件保存或数据库写入失败，则返回错误，不标记正常完成。
 
-**为什么转义？**
+网页来源和帖子卡片作为独立事件发送。当前实现是在最终文本流生成后发送这些结构化数据，不能假定来源一定先于正文到达。完整回答保存时，网页来源保留标题和 URL，关联帖子也会保存，刷新后可从历史加载。
 
-如果 AI 返回的内容包含换行符或引号，需要转义：
-- `\n` → `\\n`
-- `"` → `\"`
+## 4. 知识库：把用户文档作为参考资料
 
-例如 AI 返回 `"你好\nWorld"`，转义后变成：
-```
-data: {"content": "你好\\nWorld"}
-```
+RAG（检索增强生成）可以理解为：**先从用户自己的文档中找相关段落，再让模型参考这些段落回答**。它不会把文档训练进模型。
 
-**前端接收方式**：
+文档入库时，系统将正文切块，每块最多500个 Unicode 字符，尾部重叠最多50个字符。正文存 MySQL，检索向量存 Qdrant，按 `knowledge_用户ID` 隔离。
 
-本项目使用 `fetch` + `ReadableStream` 手动解析 SSE（而非浏览器原生 `EventSource`），因为需要支持 POST 请求 + FormData 上传图片：
+打开“知识库”后，每次提问按以下步骤处理：
 
-```javascript
-fetch(url, { method: 'POST', body: formData, credentials: 'include' })
-    .then(response => {
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder()
-        const readStream = () => {
-            reader.read().then(({ done, value }) => {
-                if (done) { onComplete?.(); return }
-                // 解析 data: {...} 行
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = JSON.parse(line.slice(6))
-                        if (data.sources) onSources?.(data.sources)
-                        if (data.content) onChunk?.(data.content)
-                        if (data.done) onComplete?.()
-                        if (data.error) onError?.(data.error)
-                    }
-                }
-                readStream()
-            })
-        }
-        readStream()
-    })
-```
+1. 根据问题做语义检索，并结合 ES 的 IK 分词进行 BM25 关键词检索。
+2. Qdrant 融合两路排名，先返回最多10个相关文档片段，再取排名前5个作为模型的参考资料；不足5个时使用实际返回的片段。
+3. 从 MySQL 取得对应正文，放入本轮 `system` 消息，让模型参考回答。
 
-### 2.4 什么是 MCP（Model Context Protocol）？
+语义检索寻找“意思接近”的内容，关键词检索寻找“词语匹配”的内容。融合分数用于排序，不是相似度百分比。ES 分词失败时只使用语义检索；聊天中的知识检索失败或无结果时，继续普通回答。
 
-**类比**：MCP 就像给 AI 装上了"手脚"，让它能调用外部工具。
+知识库开关和联网搜索开关可以同时开启：前者提供个人文档资料，后者允许模型通过工具查询网页。
 
-普通 AI 只能根据训练数据回答问题。有了 MCP，AI 可以：
-- 查询实时天气（`get_weather`）
-- 查询汇率（`get_exchange_rate`）
-- 联网搜索（`web_search`）
+## 5. SSE、Redis 和刷新恢复
 
-**两阶段 Agent 流程**：
+### 回答怎样一点点显示
+
+SSE 是一次持续返回数据的 HTTP 响应。模型每生成一段文字，后端记录并推送一条事件，前端把它追加到消息中，所以用户能看到逐段输出。
+
+前端使用 `fetch + ReadableStream` 接收 SSE，手动解析事件。当前启动任务是 POST 表单请求，订阅回答是单独的 GET 请求。
+
+事件示例（编号仅用于说明格式）：
+
+```text
+id: 1000-0
+event: delta
+data: {"content":"你好"}
+
+id: 1001-0
+event: delta
+data: {"content":"，有什么可以帮你？"}
+
+id: 1002-0
+event: done
+data: {"message_id":"M示例消息ID"}
 
 ```
-用户提问 → 第1次调用（Generate，非流式）
-                ↓
-         AI 决定是否需要工具
-                ↓
-     ┌─── 不需要 → 回退普通 Stream（流式回答）
-     │
-     └─── 需要工具 → 执行工具 → 第2次调用（Stream，流式总结）
-                                    ↓
-                             把工具结果 + 用户问题一起给 AI
-                                    ↓
-                             AI 基于真实数据流式回答
+
+| 事件 | 含义 |
+| --- | --- |
+| `start` | 任务身份、会话及消息编号等信息 |
+| `delta` | 一段回答文字 |
+| `sources` | 网页搜索来源 |
+| `posts` | 关联帖子 |
+| `heartbeat` | 任务仍在运行 |
+| `done` | 完整回答已经保存 |
+| `error` | 生成或保存失败 |
+
+数据通过 JSON 编码，换行和引号由编码器处理。前端按空行划分完整 SSE 事件，不能把一次网络读取当成一条完整消息。
+
+### 刷新为什么还能继续接收
+
+Redis Stream 保存本次回答的事件及递增编号。每个订阅连接独立读取，不会因为一个页面读过，其他页面就读不到。
+
+- **网络短暂断开**：前端带上最后处理的事件编号 `after` 重连，只接收后续事件，并过滤重复编号；只重试订阅，不重新提交问题。
+- **整页刷新**：前端从当前标签页的 `sessionStorage` 找回任务编号，先查询任务状态。回答已保存则加载 MySQL 历史；仍在生成则从 `0-0` 回放已有事件，再接收新事件。
+- **缓存过期或无权访问**：接口明确报错；已保存的回答仍可通过会话历史查看。关闭标签页会丢失该标签页的恢复记录。
+
+```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"nodeSpacing": 18, "rankSpacing": 22, "padding": 6}}}%%
+flowchart TD
+    A[刷新并找回任务编号] --> B[查询任务状态]
+    B --> C{回答已保存？}
+    C -- 是 --> D[加载 MySQL 历史]
+    C -- 否 --> E[从头回放 Redis 事件]
+    E --> F[继续接收新片段或错误事件]
 ```
 
-### 2.5 什么是 RAG（检索增强生成）？
+生成任务最长运行 **15分钟**，每 **5秒** 写一次心跳。事件缓存每次写入都会续期 **30分钟**；超过 **30秒** 没有新事件等情况会被识别为中断。Redis 用于短期回放，MySQL 用于长期历史。
 
-**类比**：RAG 就像给 AI 配了一个"参考书架"。
+浏览器断开不等于后端任务停止，但后端进程退出会打断生成。Redis 能回放已经记录的事件，不能让模型从中断位置重新生成。任务失败或中断时，页面明确提示，需要用户重新发送问题。
 
-用户上传文档到知识库后，系统会：
-1. 按段落与句末组织文档分块，每块最多500个Unicode字符、尾部重叠最多50个字符
-2. 用 GLM Embedding 生成语义向量，复用 ES 的 ik_max_word 分词后由 Qdrant 生成 BM25 稀疏向量
-3. 分块正文存 MySQL，两种向量存 Qdrant
+## 6. 常用接口
 
-当用户提问时：
-1. 原始问题生成语义向量，同时通过ES的IK分词生成BM25查询文本
-2. Qdrant 两路各召回最多10条，用RRF融合后按排名最多选择5个知识块
-3. 把知识块注入到 system prompt 中
-4. AI 基于知识库内容回答
+以下接口均需登录，路径以 `/user/aichat` 为前缀。仓库当前配置使用 Cookie 中的 token 做 Redis 会话认证。
 
-### 2.6 AI 回答如何持久化？
+| 方法与路径 | 用途及主要参数 |
+| --- | --- |
+| `POST /createSession` | 创建会话，JSON：`model_type` |
+| `POST /getSessionList` | 会话列表，JSON：`page`、`page_size` |
+| `POST /getMessageHistory` | 历史消息，JSON：`session_id`、`page_size`、`cursor`、`direction`；`prev` 查更旧，`next` 查更新 |
+| `POST /startGeneration` | 提交问题，启动调用 AI 模型的后台任务；返回 `stream_id` 等任务信息。FormData 参数见下表 |
+| `GET /streamInfo` | 查询已有回答任务的状态，返回生成中、已保存、失败或中断等信息，不返回回答正文；参数：`session_id`、`stream_id` |
+| `GET /stream` | 持续接收已有任务的文字片段、来源和完成等 SSE 事件；参数：`session_id`、`stream_id`、`after` |
+| `POST /deleteSession` | 删除会话，JSON：`session_id` |
+| `POST /asr` | 上传录音，表单字段 `file`，以 SSE 返回语音识别结果 |
+| `POST /tts` | 文字转语音，JSON：`content`、可选 `voice`，返回 PCM 音频流 |
 
-SSE 流式输出结束后，Service 在同一个 MySQL 事务中保存回答、搜索来源、关联帖子和会话摘要。成功后发送完成信号，失败时回滚并返回错误。该链路不使用 Kafka。
+### 三个回答接口怎样配合
 
----
+**开始调用 AI 模型的是 `POST /startGeneration`。** 它校验参数、保存提问后，启动后台任务；任务构建上下文，再调用模型决定是否使用工具及生成回答。接口返回的是任务编号，不必等完整回答生成。`createSession` 只创建会话，不发起模型推理；`streamInfo` 和 `stream` 都只读取已有任务，不会重新提问或重新调用模型。
 
-## 三、分层详解
+| 场景 | 调用顺序 |
+| --- | --- |
+| 用户发送新问题 | `startGeneration` 获取任务编号 → `stream` 接收回答 |
+| SSE 断线后重连，页面还开着 | 用原任务编号和内存中的 `after` 再请求 `stream`，接收后续事件 |
+| 刷新页面后恢复 | 用保存的任务编号请求 `streamInfo`；已保存则加载消息历史，否则订阅 `stream` 回放已有事件并接收后续内容或错误 |
 
-### 3.1 模型层（`pkg/ai/model_pool.go`）
+**`streamInfo` 查哪些数据？** 先从 Redis 取得任务信息并校验归属，再查询 MySQL，确认完整回答是否已保存；尚未保存时，根据 Redis 最后事件和心跳判断运行状态。因此，Redis 保存的片段已经齐全，也不代表回答已经成功入库。
 
-**职责**：管理 AI 模型实例，全局只初始化一次。
+**`stream` 怎样持续返回？** 后端在同一条 HTTP 连接中循环调用 Redis `XREAD`：每次从 `after` 之后读取事件，没有新事件时最多等待1秒，返回后继续读；有事件就写入 SSE 并刷新给浏览器。收到 `done` 或 `error` 后结束订阅。
 
-```go
-type ModelPool struct {
-    DeepSeek model.ToolCallingChatModel
-    Qwen     model.ToolCallingChatModel
-    GLM      model.ToolCallingChatModel
-    GLM4V    model.ToolCallingChatModel
-}
-```
+三个查询参数的含义：
 
-**关键设计**：
+| 参数 | 含义 |
+| --- | --- |
+| `session_id` | 会话编号，一个会话中可以多次提问 |
+| `stream_id` | 某一次回答的任务编号，由 `startGeneration` 返回 |
+| `after` | 最后一条已处理事件的编号，只用于 `stream`；从该编号之后继续读取，不传或为 `0-0` 时从头回放 |
 
-1. **显式初始化**：启动入口在业务任务启动前调用 `InitModelPool(ctx)`创建模型客户端，汇总初始化错误并保留成功模型；`GetModelPool()`只读取实例，运行期间不重新初始化模型池
+`after` 在前端订阅函数和后端当前请求中各有一份内存变量，随事件处理更新。单纯断网不会清空页面内存，所以可以带上原游标重连；整页刷新会清空它，前端从 `sessionStorage` 找回 `stream_id`，重新从 `0-0` 回放。
 
-2. **配置优先级**：配置文件 → 环境变量
+### 启动生成的表单参数
 
-3. **统一接口**：所有模型都通过 `openai.NewChatModel` 创建（Eino 框架的 OpenAI 兼容适配器），因为它们都兼容 OpenAI 协议
-   - DeepSeek: `https://api.deepseek.com/v1`
-   - Qwen: `https://dashscope.aliyuncs.com/compatible-mode/v1`
-   - GLM/GLM-4V: `https://open.bigmodel.cn/api/paas/v4/`
+`startGeneration` 的主要表单参数：
 
-4. **按需获取**：`GetModel(modelType)` 根据类型返回对应模型，默认返回 DeepSeek
+| 参数 | 用途 |
+| --- | --- |
+| `session_id` | 必填，会话编号 |
+| `model_type` | 必填，选择模型类型 |
+| `content` | 提问文字 |
+| `image` | 可选图片文件，上传后由后端取得地址 |
+| `image_url` | 已有图片地址；图片能否作为输入取决于模型配置 |
+| `use_knowledge` | 是否检索用户知识库 |
+| `use_web_search` | 是否允许网页搜索工具 |
 
-**多模态模型支持**：
+文字和图片至少提供一种。启动成功返回 `stream_id`、`session_id`、`model_type`、AI 回答的 `message_id`、提问的 `user_message_id` 及状态。任务状态包括 `running`、`finished`、`error`、`interrupted`；回答缓存缺失返回 HTTP `410`，无权读取返回 `403`。
 
-GLM-4V 是多模态模型，支持图片输入。在 `SendMessageStream` 中构建多模态消息：
-```go
-multiMsg := &schema.Message{
-    Role: schema.User,
-    UserInputMultiContent: []schema.MessageInputPart{
-        {Type: schema.ChatMessagePartTypeText, Text: content},
-        {Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{
-            MessagePartCommon: schema.MessagePartCommon{URL: &imageURL},
-        }},
-    },
-}
-```
+语音识别与语音合成使用各自的接口和响应格式，不共用上述回答事件回放流程。
 
----
+## 7. 配置和代码位置
 
-### 3.2 MCP 工具层（`pkg/ai/mcp/` + `cmd/mcp-server/`）
+模型参数位于 `config/config.toml` 的 `[aiModelConfig]`，包含模型名称、API 地址和多模态模型列表。`.env` 加载的非空环境变量可覆盖相应配置，例如 `DEEPSEEK_API_KEY`、`QWEN_API_KEY`、`GLM_API_KEY`、`QWEN_LOCAL_BASE_URL`。
 
-**职责**：为 AI 提供可调用的外部工具。采用 stdio 模式，MCP Server 作为独立子进程运行。
+MCP 子进程命令和工作目录分别读取 `MCP_SERVER_COMMAND`、`MCP_SERVER_WORKDIR`，未设置时使用 `go run ./cmd/mcp-server` 和当前目录；当前客户端不读取 TOML 的 `[mcpConfig]`。天气、汇率、网页搜索分别使用相应的外部服务密钥。运行后端和默认 MCP 子进程时，工作目录应为 `seekF-backend/`，以便读取配置和找到入口。
 
-#### 3.2.1 独立 MCP Server（`cmd/mcp-server/main.go`）
-
-MCP Server 作为独立进程运行，通过 stdin/stdout 进行 JSON-RPC 通信：
-
-```go
-// 创建工具实例
-weatherTool := tool.NewWeatherTool()
-exchangeRateTool := tool.NewExchangeRateTool()
-webSearchTool := tool.NewWebSearchTool()
-discoverPostsTool := tool.NewDiscoverPostsTool()
-
-// 创建 MCP Server
-mcpServer = server.NewMCPServer("seekF-mcp-server", "1.0.0", ...)
-
-// 注册工具
-mcpServer.AddTool(weatherTool.GetWeatherTool(), weatherTool.HandleWeatherRequest)
-mcpServer.AddTool(exchangeRateTool.GetExchangeRateTool(), exchangeRateTool.HandleExchangeRateRequest)
-mcpServer.AddTool(webSearchTool.GetWebSearchTool(), webSearchTool.HandleWebSearchRequest)
-mcpServer.AddTool(discoverPostsTool.GetDiscoverPostsTool(), discoverPostsTool.HandleDiscoverPostsRequest)
-
-// 使用 stdio 传输启动服务器
-stdioServer := server.NewStdioServer(mcpServer)
-stdioServer.Listen(ctx, os.Stdin, os.Stdout)
-```
-
-#### 3.2.2 stdio 客户端连接（`client.go`）
-
-主进程通过 `client.NewStdioMCPClient` 启动 MCP Server 子进程并建立 stdio 连接。工具列表通过 `mcpp.GetTools` 转换为 Eino 的 `tool.BaseTool` 接口。
-
-#### 3.2.3 工具实现
-
-每个工具都实现两个方法：
-- `GetXxxTool() mcp.Tool` — 定义工具名、描述、参数
-- `HandleXxxRequest(ctx, request) (*mcp.CallToolResult, error)` — 处理请求
-
-**天气工具**（`tool/weather.go`）：
-- 工具名：`get_weather`
-- 参数：`location`（城市名）
-- 调用心知天气 API
-
-**汇率工具**（`tool/exchange_rate.go`）：
-- 工具名：`get_exchange_rate`
-- 参数：`base_currency`、`target_currency`
-- 调用 ExchangeRate-API
-
-**联网搜索工具**（`tool/web_search.go`）：
-- 工具名：`web_search`
-- 参数：`query`（搜索关键词）
-- 调用 Tavily Search API
-- 返回文本摘要 + `__SOURCES_JSON__` 标记的结构化来源数据
-
-**帖子搜索工具**（`tool/discover_posts.go`）：
-- 工具名：`search_discover_posts`
-- 参数：`query`（搜索关键词）
-- 在社区帖子中搜索相关内容
-
-#### 3.2.4 Agent 流程（`aichat_service.go` 的 `runMCPAgentFlow`）
-
-```go
-func runMCPAgentFlow(ctx, chatModel, chatMessages, onChunk, enableWebSearch) (
-    finalContent string, handled bool, sources []tool.SearchSource, err error) {
-
-    // 1. 获取 MCP 工具列表（通过 stdio 连接 MCP Server 子进程）
-    tools, _ := mcppkg.GetMCPTools(ctx)
-
-    // 2. 根据开关过滤工具（enableWebSearch=false 时移除 web_search）
-    for _, t := range tools {
-        info, _ := t.Info(ctx)
-        if !enableWebSearch && info.Name == "web_search" { continue }
-        toolInfos = append(toolInfos, info)
-    }
-
-    // 3. 第1次调用：非流式 Generate（工具决策）
-    modelWithTools, _ := chatModel.WithTools(toolInfos)
-    first, _ := modelWithTools.Generate(ctx, chatMessages)
-
-    // 4. 如果 AI 不需要工具，回退到普通流式
-    if len(first.ToolCalls) == 0 {
-        return "", false, nil, nil
-    }
-
-    // 5. 执行工具（通过 stdio 向 MCP Server 子进程发送请求）
-    for _, tc := range first.ToolCalls {
-        runOut, _ := inv.InvokableRun(ctx, tc.Function.Arguments)
-        out := toolCallResultToText(runOut)
-
-        // 从 web_search 结果提取来源数据
-        if name == "web_search" {
-            sources = extractSources(out)
-            out = stripSourcesSentinel(out)
-        }
-        msgs2 = append(msgs2, schema.ToolMessage(out, tc.ID))
-    }
-
-    // 6. 第2次调用：流式 Stream（最终总结）
-    finalContent, _ = streamChatModelToSSE(ctx, chatModel, msgs2, onChunk)
-    return finalContent, true, sources, nil
-}
-```
-
----
-
-### 3.3 会话层（`services/user_service/aichat_service.go`）
-
-**职责**：处理 AI 聊天的核心业务逻辑。
-
-#### 3.3.1 SendMessageStream —— 核心流式对话
-
-这是整个项目最复杂的方法，流程如下：
-
-**Step 1：校验会话** → 确认 `receive_id` 以 `A` 开头
-
-**Step 2：获取用户信息** → 用于保存消息时带上昵称和头像
-
-**Step 3：保存用户消息到 DB** → 同步写入 `message` 表
-
-**Step 4：更新会话元数据** → 更新 `last_message`，如果是首条消息则更新 `first_message`
-
-**Step 5：构建上下文**
-```go
-// 从 DB 读取最近 100 条消息
-messages, _ := s.messageDAO.GetMessagesBySessionId(req.SessionId, 100, 0)
-
-// 系统提示（注入当前时间）
-currentTime := time.Now().Format("2006-01-02 15:04:05")
-systemPrompt := "你是一个专业的AI助手，当前使用的模型是" + req.ModelType + "。当前时间是" + currentTime + "。"
-
-// 如果启用知识库，注入 RAG 检索结果
-if req.UseKnowledge {
-    knowledgeResults, _ := rag.Search(ctx, "knowledge_"+userId, content, 3)
-    systemPrompt = "知识库内容:\n" + 格式化(knowledgeResults) + "\n\n" + systemPrompt
-}
-
-// 如果启用联网搜索，在系统提示中引导 AI 使用 web_search 工具
-if req.UseWebSearch {
-    systemPrompt += "你拥有联网搜索能力（web_search 工具）。当用户询问新闻、时事、最新数据时必须优先使用。"
-}
-
-// 转换历史消息为 Eino 格式
-chatMessages = [SystemMessage(systemPrompt), ...历史消息]
-```
-
-**Step 6：MCP Agent 流程** → `runMCPAgentFlow()` 尝试工具调用
-
-**Step 7：普通流式推理** → 如果 MCP 未处理，调用 `streamChatModelToSSE()`
-
-**Step 8：推送搜索来源** → 如果有 `sources`，通过 `onSources` 回调发送 SSE `sources` 事件
-
-**Step 9：持久化 AI 响应** → 通过 MySQL 事务直接写 DB，触发 `onComplete` 回调
-
-#### 3.3.2 其他方法
-
-- **CreateSession**：创建会话，生成 AI receiveId（A 前缀）
-- **GetSessionList**：根据 userId 查 session 表，筛选 `receive_id LIKE 'A%'`
-- **GetMessageHistory**：按 `created_at` 降序分页返回（前端再反转为正序）
-- **DeleteSession**：级联删除消息和会话
-
----
-
-### 3.4 Controller 层（`controllers/user/aichat_controller.go`）
-
-#### 普通接口（JSON 响应）
-
-CreateSession / GetSessionList / GetMessageHistory / DeleteSession —— 和普通 Web 接口完全一样。
-
-#### SSE 流式接口（SendMessage）
-
-```go
-func (c *AIChatController) SendMessage(ctx *gin.Context) {
-    // 1. 解析 form-data 参数（支持图片上传）
-    var req userreq.SendAIMessageRequest
-    ctx.ShouldBind(&req)
-
-    // 2. 如果有图片文件，上传到 OSS
-    if file, err := ctx.FormFile("image"); err == nil {
-        result, _ := c.fileService.UploadFile(ctx, file, oss.MessageImage)
-        req.ImageURL = result.URL
-    }
-
-    // 3. 设置 SSE 响应头
-    ctx.Header("Content-Type", "text/event-stream")
-    ctx.Header("Cache-Control", "no-cache")
-    ctx.Header("Connection", "keep-alive")
-
-    // 4. 定义三个回调
-    onChunk := func(chunk string) error {
-        // 转义 → 写入 data: {"content": "..."} → Flush
-    }
-    onSources := func(sources []tool.SearchSource) error {
-        // 序列化 → 写入 data: {"sources": [...]} → Flush
-    }
-    onComplete := func(fullContent string) error {
-        // 写入 data: {"done": true} → Flush
-    }
-
-    // 5. 调用 Service（阻塞直到流结束）
-    c.aiChatService.SendMessageStream(ctx, userId, req, onChunk, onSources, onComplete)
-}
-```
-
----
-
-### 3.5 存储层
-
-#### 数据库表复用
-
-**不新建表**，复用现有的 `session` 和 `message` 表，通过前缀区分类型：
-
-| 前缀 | 含义 | 表字段 |
-|------|------|--------|
-| `S` | Session ID | `session.uuid` |
-| `U` | 用户 ID | `user.uuid` / `message.send_id` |
-| `G` | 群组 ID | `session.receive_id` |
-| `A` | AI ID | `session.receive_id` / `message.send_id` |
-| `M` | 消息 ID | `message.uuid` |
-
-#### Kafka
-
-```toml
-[kafkaConfig]
-aiCommentTopic = "ai_comment"      # AI 评论回复
-```
-
-#### Qdrant 向量数据库
-
-- 集合维度：2048（GLM Embedding 模型输出维度）
-- 相似度：余弦相似度（Cosine）
-- dense 保存语义向量，sparse 保存 BM25 权重；payload 保存文档ID和分块序号，正文从MySQL读取
-- ES分词失败时只使用语义候选
-- 用户知识库集合名：`knowledge_{userId}`
-
----
-
-## 四、完整请求流程
-
-### 4.1 普通 AI 对话
-
-```
-1. 前端发起 POST 请求（fetch + FormData）
-   POST /user/aichat/sendMessage
-   Content-Type: multipart/form-data
-   session_id=Sxxx&content=你好&model_type=deepseek
-
-2. Controller 层
-   - 解析 form-data 参数
-   - 设置 SSE 响应头
-   - 定义 onChunk / onSources / onComplete 回调
-   - 调用 Service.SendMessageStream()
-
-3. Service 层
-   a. 校验会话 → 保存用户消息 → 更新会话
-   b. 读取历史消息（最近 100 条）
-   c. 构建系统提示（注入当前时间）
-   d. 转换为 Eino messages 格式
-
-4. MCP Agent 流程
-   a. 获取 MCP 工具列表
-   b. 第1次调用 Generate（非流式，AI 决定是否用工具）
-   c. 如果不需要工具 → 回退到普通 Stream
-   d. 如果需要工具 → 执行工具 → 第2次调用 Stream（流式总结）
-
-5. 流式推送
-   data: {"content": "你"}
-   data: {"content": "好"}
-   data: {"content": "！"}
-   data: {"done": true}
-
-6. 异步持久化
-   - 直接保存 AI 响应到 MySQL
-   - 更新会话最后消息
-```
-
-### 4.2 联网搜索对话
-
-```
-1. 前端开启"联网搜索"开关，发送 use_web_search=true
-
-2. Service 层构建系统提示时额外注入：
-   "你拥有联网搜索能力（web_search 工具）..."
-
-3. MCP Agent 流程
-   a. AI 决定调用 web_search 工具
-   b. 执行 Tavily Search API → 返回搜索结果
-   c. 提取结构化来源数据（sources）
-   d. 第2次调用 Stream，AI 基于搜索结果流式回答
-
-4. SSE 推送
-   data: {"sources": [{"title":"...","url":"...","snippet":"..."}]}
-   data: {"content": "根据最新搜索结果..."}
-   data: {"content": "..."}
-   data: {"done": true}
-
-5. 前端渲染
-   - 消息气泡下方显示"已搜索 N 个来源"折叠卡片
-   - 点击展开可查看来源标题和链接
-```
-
----
-
-## 五、API 接口文档
-
-### 5.1 创建 AI 会话
-
-```
-POST /user/aichat/createSession
-Authorization: Bearer <token>
-Content-Type: application/json
-
-Request:
-{
-    "model_type": "deepseek"   // deepseek | qwen | glm | glm-4v
-}
-
-Response:
-{
-    "code": 200,
-    "msg": "创建AI会话成功",
-    "data": {
-        "session_id": "S20260403123456",
-        "receive_id": "A20260403123457",
-        "model_type": "deepseek"
-    }
-}
-```
-
-### 5.2 获取 AI 会话列表
-
-```
-POST /user/aichat/getSessionList
-Authorization: Bearer <token>
-
-Request:
-{
-    "page": 1,
-    "page_size": 20
-}
-
-Response:
-{
-    "code": 200,
-    "data": {
-        "list": [
-            {
-                "session_id": "S20260403123456",
-                "first_message": "你好",
-                "created_at": "2026-04-03 12:34:56"
-            }
-        ],
-        "total": 1
-    }
-}
-```
-
-### 5.3 获取消息历史
-
-```
-POST /user/aichat/getMessageHistory
-Authorization: Bearer <token>
-
-Request:
-{
-    "session_id": "S20260403123456",
-    "page": 1,
-    "page_size": 20
-}
-```
-
-### 5.4 发送消息（SSE 流式）
-
-```
-POST /user/aichat/sendMessage
-Authorization: Bearer <token>
-Content-Type: multipart/form-data
-
-Form Fields:
-  session_id (required)  - 会话 ID
-  content               - 消息文本
-  model_type (required)  - 模型类型：deepseek | qwen | glm | glm-4v
-  image                  - 图片文件（可选，仅 glm-4v）
-  use_knowledge          - 是否使用知识库（可选）
-  use_web_search         - 是否启用联网搜索（可选）
-
-Response (SSE stream):
-data: {"sources": [{"title":"...","url":"...","snippet":"..."}]}
-
-data: {"content": "你"}
-
-data: {"content": "好"}
-
-data: {"content": "！"}
-
-data: {"done": true}
-
-// 或错误情况：
-data: {"error": "会话不存在"}
-```
-
-### 5.5 删除 AI 会话
-
-```
-POST /user/aichat/deleteSession
-Authorization: Bearer <token>
-
-Request:
-{
-    "session_id": "S20260403123456"
-}
-```
-
----
-
-## 六、配置说明
-
-### 6.1 config.toml
-
-```toml
-[kafkaConfig]
-aiCommentTopic = "ai_comment"
-
-[aiModelConfig]
-# DeepSeek
-deepseekApiKey = "sk-xxx"
-deepseekModel = "deepseek-chat"
-deepseekBaseUrl = "https://api.deepseek.com/v1"
-
-# 通义千问
-qwenApiKey = "sk-xxx"
-qwenModel = "qwen-plus"
-qwenBaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-
-# 智谱 GLM
-glmApiKey = "xxx"
-glmModel = "glm-4"
-glmBaseUrl = "https://open.bigmodel.cn/api/paas/v4/"
-
-# 智谱 GLM-4V（多模态，复用 glmApiKey/glmBaseUrl）
-glm4vModel = "glm-4v"
-
-# 智谱 Embedding（RAG 向量化）
-glmEmbeddingModel = "embedding-3"
-
-[seniverseConfig]
-apiKey = "xxx"       # 心知天气 API Key
-
-[exchangeRateConfig]
-apiKey = "xxx"       # 汇率 API Key
-
-[tavilyConfig]
-apiKey = "tvly-xxx"  # Tavily 搜索 API Key（联网搜索）
-
-[qdrantConfig]
-host = "localhost"
-port = 6334
-```
-
-### 6.2 环境变量（备选）
-
-如果配置文件中 API Key 为空，会自动从环境变量读取：
-
-```bash
-export DEEPSEEK_API_KEY="sk-xxx"
-export QWEN_API_KEY="sk-xxx"
-export GLM_API_KEY="xxx"
-export SENIVERSE_API_KEY="xxx"
-export EXCHANGE_RATE_API_KEY="xxx"
-export TAVILY_API_KEY="tvly-xxx"
-```
-
----
-
-## 七、前端实现
-
-### 7.1 核心 Composable（`composables/useAIChat.js`）
-
-```javascript
-const sendMessage = (
-    sessionId, content, modelType, imageFile,
-    useKnowledge, useWebSearch,  // 功能开关
-    onChunk, onSources, onComplete, onError  // 回调
-) => {
-    const formData = new FormData()
-    formData.append('session_id', sessionId)
-    formData.append('content', content)
-    formData.append('model_type', modelType)
-    if (useKnowledge) formData.append('use_knowledge', 'true')
-    if (useWebSearch) formData.append('use_web_search', 'true')
-    if (imageFile) formData.append('image', imageFile)
-
-    fetch(url, { method: 'POST', body: formData, credentials: 'include' })
-        .then(response => {
-            const reader = response.body.getReader()
-            // ... 手动解析 SSE
-        })
-    return { close: () => controller.abort() }
-}
-```
-
-### 7.2 AI 对话页面（`pages/aichat/index.vue`）
-
-- 左侧：AI 会话列表（新建 / 选择 / 删除）
-- 右侧：聊天窗口
-  - 头部：模型选择器 + 知识库开关 + 联网搜索开关 + 思考中指示器
-  - 消息列表：用户消息（绿色气泡）+ AI 消息（白色气泡 + 搜索来源卡片）
-  - 输入框：文本输入 + 图片上传（GLM-4V）
-
-### 7.3 搜索来源组件（`components/SearchSources.vue`）
-
-可折叠卡片，展示联网搜索的参考来源：
-- 标题栏："已搜索 N 个来源"，点击展开/收起
-- 每个来源：序号 + 标题 + URL，点击在新标签页打开
-
----
-
-## 八、常见问题
-
-### Q1: 为什么用 fetch + ReadableStream 而不是 EventSource？
-
-因为 `EventSource` 只支持 GET 请求，无法上传图片文件。本项目用 `fetch` + POST + FormData 支持图片上传，同时手动解析 SSE 流。
-
-### Q2: 为什么需要转义？
-
-AI 返回的内容可能包含换行符和引号：
-- 换行符 `\n` 会破坏 SSE 消息边界
-- 引号 `"` 会破坏 JSON 格式
-
-### Q3: 上下文窗口有限制吗？
-
-上下文读取最近100条消息，按消息角色和顺序构建模型输入；可用上下文还受所选模型的输入长度限制。
-
-### Q4: MCP 工具调用失败会影响对话吗？
-
-不会。整个 MCP Agent 流程有完善的降级机制：
-- MCP 工具获取失败 → 静默降级为普通流式对话
-- 工具执行失败 → 返回错误信息给 AI，AI 继续回答
-- Tavily API Key 未配置 → web_search 工具不可用，不影响其他工具
-
-### Q5: 联网搜索的来源数据会持久化吗？
-
-v1 不持久化。来源数据仅在当前会话的 SSE 流中推送一次，刷新页面后丢失。后续版本可考虑存入 message 表的新字段。
-
-### Q6: 和 WebSocket 人聊的区别？
-
-| 特性 | 人聊（WebSocket） | AI 聊（SSE） |
-|------|-------------------|-------------|
-| 实时性 | 双向实时 | 服务端单向推送 |
-| 消息来源 | 另一个用户 | AI 模型推理 |
-| 上下文 | 不需要 | 需要历史对话 |
-| 响应时间 | 即时 | 几秒~几十秒 |
-| 持久化 | 同步写 DB | MySQL 事务直接保存 |
-| 工具调用 | 不支持 | 支持 MCP 工具 |
-| 联网搜索 | 不支持 | 支持（Tavily） |
-
----
-
-## 九、文件结构
-
-```
-seekF-backend/
-├── cmd/mcp-server/
-│   └── main.go                               # MCP Server 独立进程入口（stdio 模式）
-├── config/config.toml                        # 配置文件
-├── internal/
-│   ├── configs/configs.go                    # 配置结构体（含 TavilyConfig）
-│   ├── dao/user_dao/
-│   │   ├── session_dao.go                    # AI 会话 DAO
-│   │   └── message_dao.go                    # AI 消息 DAO
-│   ├── dto/user/
-│   │   ├── user_req/
-│   │   │   ├── create_ai_session_request.go
-│   │   │   ├── get_ai_session_list_request.go
-│   │   │   ├── get_ai_message_history_request.go
-│   │   │   ├── send_ai_message_request.go    # 含 use_knowledge / use_web_search
-│   │   │   └── delete_ai_session_request.go
-│   │   └── user_resp/
-│   │       ├── create_ai_session_respond.go
-│   │       ├── get_ai_session_list_respond.go
-│   │       └── get_ai_message_history_respond.go
-│   ├── services/user_service/
-│   │   ├── aichat_service.go                 # 核心业务（MCP Agent + RAG + 联网搜索）
-│   │   └── knowledge_service.go              # 知识库管理
-│   ├── controllers/user/
-│   │   ├── aichat_controller.go              # HTTP 端点 + SSE
-│   │   └── knowledge_controller.go           # 知识库端点
-│   ├── pkg/ai/
-│   │   ├── model_pool.go                     # 模型单例池
-│   │   ├── ai_comment_kafka.go               # AI 评论回复 Kafka
-│   │   ├── mcp/
-│   │   │   ├── server.go                     # MCP Server（进程内备用，仅参考）
-│   │   │   ├── client.go                     # MCP Client（stdio 连接子进程）
-│   │   │   └── tool/
-│   │   │       ├── weather.go                # 天气查询工具
-│   │   │       ├── exchange_rate.go          # 汇率查询工具
-│   │   │       ├── web_search.go             # 联网搜索工具（Tavily）
-│   │   │       └── discover_posts.go         # 帖子搜索工具
-│   │   └── rag/
-│   │       ├── init.go                       # RAG 单例初始化
-│   │       ├── embedding.go                  # GLM Embedding 向量化
-│   │       └── splitter.go                   # 文本分块器
-│   ├── pkg/db/qdrant_util.go                 # Qdrant 向量数据库操作
-│   ├── pkg/kafka/kafka.go                    # Kafka 初始化
-│   ├── router/router.go                      # 路由注册
-│   └── main.go                               # 初始化所有组件
-└── docs/aichat.md                            # 本文档
-```
+| 代码位置 | 主要职责 |
+| --- | --- |
+| `internal/controllers/user/aichat_controller.go` | 启动任务、查询状态和 SSE 推送 |
+| `internal/services/user_service/aichat_service.go` | 保存提问、组织上下文、调用模型与工具、记录事件、保存回答 |
+| `internal/pkg/ai/model_pool.go` | 初始化并提供模型客户端 |
+| `internal/pkg/ai/mcp/client.go`、`cmd/mcp-server/` | MCP 子进程连接与工具注册 |
+| `internal/services/user_service/knowledge_service.go`、`internal/pkg/ai/rag/` | 知识库检索 |
+| `internal/pkg/constants/ai.go` | 生成超时、事件缓存和心跳等常量 |
+| `seekF-user/app/composables/useAIChat.js` | 发起生成、解析 SSE、断线重连 |
+| `seekF-user/app/pages/aichat/index.vue` | 消息展示、任务编号保存和刷新恢复 |

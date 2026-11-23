@@ -106,8 +106,8 @@ sequenceDiagram
 - 用户确认授权 seekF 访问其 GitHub 基本信息
 
 **⑤ GitHub 回调 seekF（生成 code）**
-- GitHub 生成临时授权码 `code`（有效期约10分钟，只能使用一次）
-- GitHub 重定向到 seekF 的回调地址：`http://localhost:8080/user/github/callback?code=AUTH_CODE&state=xxx`
+- GitHub 生成一次性临时授权码 `code`；其有效期由 GitHub 决定，与本站10分钟的 state 有效期分别管理。
+- GitHub 重定向到 seekF 的回调地址，例如：`https://api.example.com/user/github/callback?code=AUTH_CODE&state=xxx`（域名为占位示例）
 - 此时 `code` 由 GitHub 颁发，通过 URL 参数传递给 seekF
 
 **⑥ 浏览器直接访问后端回调，后端校验浏览器绑定**
@@ -128,7 +128,7 @@ sequenceDiagram
 
 **⑨ seekF 后端用 access_token 获取用户信息**
 - seekF 后端向 GitHub API 发送请求：`GET https://api.github.com/user`
-- 请求头携带：`Authorization: token {access_token}`
+- OAuth2 客户端自动在 `Authorization` 请求头中携带 access_token，具体认证类型由令牌响应决定。
 - GitHub 返回用户信息（头像、邮箱、昵称等）
 
 **⑩ GitHub 返回用户信息**
@@ -148,7 +148,7 @@ sequenceDiagram
 如果完全没有 state 校验，攻击者可以用自己的 GitHub 身份授权，截取尚未过期且尚未兑换的 code，再诱导受害者访问：
 
 ```text
-https://your-seekF.com/user/github/callback?code=攻击者的code
+https://api.example.com/user/github/callback?code=攻击者的code
 ```
 
 后端若直接处理这个 code，就可能通过 Set-Cookie 把攻击者账号的 seekF token 写入受害者浏览器。
@@ -172,15 +172,15 @@ GitHub 和 Gitee 使用不同的 Redis 前缀和临时 Cookie；同一浏览器�
 
 ### 1. 配置与路由
 
-`config/config.toml`：
+`config/config.toml` 配置示例，域名需替换为部署地址；无需代理时保持 `proxyURL` 为空：
 
 ```toml
 [githubOAuthConfig]
 clientID = ""
 clientSecret = ""
-redirectURL = "http://localhost:8080/user/github/callback"
-frontendRedirectURL = "http://localhost:3000/oauth/github/callback"
-proxyURL = "http://127.0.0.1:7890"
+redirectURL = "https://api.example.com/user/github/callback"
+frontendRedirectURL = "https://app.example.com/oauth/github/callback"
+proxyURL = ""
 ```
 
 敏感凭证放入后端 `.env`：
@@ -188,11 +188,11 @@ proxyURL = "http://127.0.0.1:7890"
 ```dotenv
 GITHUB_OAUTH_CLIENT_ID=你的ClientID
 GITHUB_OAUTH_CLIENT_SECRET=你的ClientSecret
-USER_COOKIE_SECURE=false
-ADMIN_COOKIE_SECURE=false
+USER_COOKIE_SECURE=true
+ADMIN_COOKIE_SECURE=true
 ```
 
-本地或服务器使用 HTTP 时设为 false；对外 HTTPS 部署时设为 true，包括 Nginx 提供 HTTPS、内部转发 HTTP 的情况。默认不配置相当于 false；Go 自己直接收到 TLS 请求时也会开启 Secure，不依赖未经校验的 X-Forwarded-Proto。管理端沿用既有 ADMIN_COOKIE_SECURE，用户端使用 USER_COOKIE_SECURE，两者独立。`.env` 在启动时加载，修改后需重启后端。
+上例适用于 HTTPS 部署，包括 Nginx 提供 HTTPS、内部转发 HTTP 的情况。使用 HTTP 开发环境时设为 false。默认不配置相当于 false；Go 自己直接收到 TLS 请求时也会开启 Secure，不依赖未经校验的 X-Forwarded-Proto。管理端使用 ADMIN_COOKIE_SECURE，用户端使用 USER_COOKIE_SECURE，两者独立。`.env` 在启动时加载，修改后需重启后端。
 
 用户端登录和临时 OAuth Cookie 都保持 `HttpOnly=true`、`SameSite=Lax`、Path=`/`，不设置 Domain，默认仅绑定实际响应主机。临时 Cookie 名称分别为 `oauth_state_github`、`oauth_state_gitee`。删除时沿用相同名称、Path、Domain 和安全属性。
 
@@ -241,8 +241,8 @@ return 0
 2. 点击 "New OAuth App"
 3. 填写信息：
    - **Application name**: seekF
-   - **Homepage URL**: `http://localhost:3000`
-   - **Authorization callback URL**: `http://localhost:8080/user/github/callback`
+   - **Homepage URL**: 前端部署地址，例如 `https://app.example.com`
+   - **Authorization callback URL**: 后端回调地址，例如 `https://api.example.com/user/github/callback`
 
 ### 2. 获取凭证
 
@@ -290,12 +290,12 @@ zlog.Error("序列化 GitHub 登录用户信息失败: " + err.Error())
 如果当前网络访问 GitHub API 需要代理，可以配置 `proxyURL`；服务器无需代理时设为空，不要沿用开发电脑的代理端口：
 
 ```toml
-proxyURL = "http://127.0.0.1:7890"
+proxyURL = "" # 无需代理时留空；需要时填写部署环境提供的代理地址
 ```
 
 ### 3. 邮箱为空
 
-GitHub 用户可能设置了邮箱隐私，需要单独调用 `/user/emails` API 获取。
+GitHub 用户资料中的邮箱可能因隐私设置为空。当前后端已在此时请求 `/user/emails`，优先选择已验证的主邮箱，再尝试主邮箱或列表中的首个邮箱；列表为空时仍可能没有邮箱。
 
 ## 相关依赖
 

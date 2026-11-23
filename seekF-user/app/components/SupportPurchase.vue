@@ -25,12 +25,14 @@
       </div>
       <p v-if="order && creator && order.amount !== Number(creator.price_yuan).toFixed(2)" class="mt-3 text-xs leading-5 text-slate-500">已为你保留此前待支付订单的价格 ¥{{ price }}，本次付款以此金额为准。</p>
       <p v-if="error" class="mt-4 text-sm text-amber-700" role="alert">{{ error }}</p>
-      <button v-if="error && sameUser()" type="button" class="mt-2 text-sm text-blue-500 hover:text-blue-600 focus-visible:outline-blue-500" :disabled="loading" @click="initialize">重新加载</button>
+      <button v-if="error && sameUser()" type="button" class="mt-2 text-sm text-blue-500 hover:text-blue-600 focus-visible:outline-blue-500" :disabled="loading" @click="order ? preparePayment() : initialize()">重新加载</button>
     </div>
 
     <footer class="shrink-0 border-t border-slate-100 bg-white px-5 py-5 sm:px-10 sm:py-6" aria-live="polite">
       <div class="mb-4 flex items-center justify-between gap-3 text-xs text-slate-400"><span class="inline-flex items-center gap-1"><Icon name="mdi:information-outline" />单次购买</span><span v-if="remaining && order?.status === 0">{{ remaining }}</span></div>
-      <div v-if="loading" class="flex min-h-44 items-center justify-center gap-2 text-sm text-slate-500" role="status"><Icon name="uil:spinner" class="animate-spin text-xl" />正在准备支付</div>
+      <!-- 为加载和支付状态预留一致的空间，窄屏同时容纳上下排列的二维码与说明。 -->
+      <div class="grid min-h-[420px] sm:min-h-[206px]">
+      <div v-if="loading" class="flex min-h-44 items-center justify-center gap-2 text-sm text-slate-500" role="status"><Icon name="uil:spinner" class="animate-spin text-xl" />正在加载，请稍候</div>
       <div v-else-if="order?.status === 1" class="flex min-h-36 flex-col items-center justify-center gap-3 text-emerald-600"><Icon name="mdi:check-circle-outline" class="text-4xl" /><p>助力成功，正在解锁作品</p><button type="button" class="text-sm text-blue-500" @click="$emit('paid')">查看作品</button></div>
       <div v-else-if="order?.status === 2 || expired" class="flex min-h-40 flex-col items-center justify-center gap-3 text-sm text-slate-500"><Icon name="mdi:qrcode-remove" class="text-4xl text-slate-300" /><p>{{ order?.status === 2 ? '本次支付已关闭' : '二维码已过期，请先确认支付结果' }}</p><el-button :loading="checking || loading" @click="retryPayment">{{ order?.status === 2 ? '重新获取二维码' : '刷新支付结果' }}</el-button></div>
       <div v-else-if="urls && sameUser()" class="flex flex-col items-center justify-center gap-5 sm:flex-row sm:gap-6">
@@ -48,7 +50,20 @@
           <p v-else-if="order?.has_error" class="mt-2 text-xs text-amber-600">支付结果确认中，请稍候或手动刷新。</p>
         </div>
       </div>
-      <p v-else class="py-8 text-center text-sm text-slate-400">{{ error ? '暂时无法加载支付，请重试' : '正在读取创作者信息' }}</p>
+      <div v-else-if="creator?.activated && !creator.has_support && sameUser()" class="relative isolate flex min-h-44 flex-col items-center justify-center overflow-hidden rounded-2xl border border-blue-100/80 bg-gradient-to-br from-blue-50 via-indigo-50/60 to-sky-50 px-5 py-7 text-center">
+        <div aria-hidden="true" class="pointer-events-none absolute inset-0 -z-10">
+          <div class="absolute -left-10 -top-16 h-48 w-48 rounded-full border border-white/90 bg-white/30" />
+          <div class="absolute -bottom-20 -right-8 h-52 w-52 rounded-full border border-blue-100/70 bg-sky-100/40" />
+          <Icon name="mdi:lightning-bolt" class="absolute left-[12%] top-8 -rotate-12 text-4xl text-blue-200/60" />
+          <Icon name="mdi:star-four-points" class="absolute bottom-8 right-[15%] rotate-12 text-3xl text-indigo-200/70" />
+        </div>
+        <p class="text-base font-medium text-slate-700">为喜欢的创作，点亮一份支持</p>
+        <p class="mt-2 text-xs leading-5 text-slate-500">确认支付后获取二维码，助力成功即可解锁专属作品</p>
+        <button type="button" class="mt-5 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500 px-8 py-3 text-sm font-medium text-white shadow-lg shadow-blue-500/20 hover:from-blue-600 hover:to-indigo-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-500" @click="preparePayment"><Icon name="mdi:lightning-bolt" class="text-lg" />立即支付<Icon name="mdi:arrow-right" class="text-base" /></button>
+        <p class="mt-3 inline-flex items-center gap-1 text-xs text-slate-400"><Icon name="ri:alipay-fill" class="text-sm text-blue-400" />支付宝支付</p>
+      </div>
+      <p v-else class="flex items-center justify-center py-8 text-center text-sm text-slate-400">{{ error ? '暂时无法加载支付，请重试' : '正在读取创作者信息' }}</p>
+      </div>
     </footer>
   </section>
 </template>
@@ -64,14 +79,27 @@ const remaining = computed(() => {
   const seconds = Math.max(0, Math.ceil((new Date(order.value.expires_at).getTime() - now.value) / 1000))
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} 内有效`
 })
-// 弹窗自动准备同一笔待支付订单，不要求用户进入订单页。
+// loadCreator 读取最新价格与权益，已有权益时直接通知页面解锁。
+const loadCreator = async () => {
+  creator.value = await request('/user/support/creator/info', { creator_id: props.creatorId })
+  if (creator.value.has_support) { emit('paid'); return false }
+  if (!creator.value.activated) throw new Error('创作者暂未开通助力')
+  return true
+}
+// initialize 打开弹窗时只加载创作者信息，不创建订单。
 const initialize = async () => {
+  if (loading.value || !sameUser()) return
+  loading.value = true; error.value = ''
+  try { await loadCreator() }
+  catch (cause) { showError(cause) }
+  finally { loading.value = false }
+}
+// preparePayment 用户确认支付后创建或复用订单，并获取支付地址。
+const preparePayment = async () => {
   if (loading.value || !sameUser()) return
   loading.value = true; error.value = ''; urls.value = null; qrLoaded.value = false
   try {
-    creator.value = await request('/user/support/creator/info', { creator_id: props.creatorId })
-    if (creator.value.has_support) { emit('paid'); return }
-    if (!creator.value.activated) throw new Error('创作者暂未开通助力')
+    if (!await loadCreator()) return
     const key = `seekf-support-request:${owner}:${props.creatorId}`
     let requestKey
     try { requestKey = sessionStorage.getItem(key) } catch { /* 存储受限时由服务端待支付订单复用防重。 */ }
@@ -90,7 +118,7 @@ const initialize = async () => {
 }
 const retryPayment = async () => {
   await refresh()
-  if (order.value?.status === 2) await initialize()
+  if (order.value?.status === 2) await preparePayment()
 }
 onMounted(initialize)
 </script>
