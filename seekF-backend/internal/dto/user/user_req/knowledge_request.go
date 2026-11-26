@@ -14,5 +14,6 @@ type RemoveKnowledgeRequest struct {
 }
 
 type GetKnowledgeContentRequest struct {
-	Uuid string `json:"uuid" form:"uuid"`
+	Uuid         string `json:"uuid" form:"uuid"`
+	ChunkNumbers []int  `json:"chunk_numbers" form:"chunk_numbers" binding:"omitempty,dive,gt=0"`
 }

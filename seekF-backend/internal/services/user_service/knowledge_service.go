@@ -10,6 +10,7 @@ import (
 	userdao "seekF-backend/internal/dao/user_dao"
 	"seekF-backend/internal/models"
 	"seekF-backend/internal/pkg/ai/rag"
+	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/util"
 	"seekF-backend/internal/pkg/zlog"
 )
@@ -27,10 +28,14 @@ var httpClient = &http.Client{
 // maxDownloadSize 最大下载大小 10MB
 const maxDownloadSize = 10 * 1024 * 1024
 
-// SearchResult 搜索结果，包含正文和RRF融合排名分数（不是相似度）。
+// SearchResult 保存命中分块正文、文档信息及检索分数。
 type SearchResult struct {
-	Text  string
-	Score float32
+	Text        string
+	Score       float32
+	DocUUID     string
+	FileName    string
+	ChunkIndex  int
+	RerankScore *float64
 }
 
 type KnowledgeService interface {
@@ -38,7 +43,8 @@ type KnowledgeService interface {
 	ListDocuments(ctx context.Context, userId string) ([]DocInfo, error)
 	RemoveDocument(ctx context.Context, userId, uuid string) error
 	Search(ctx context.Context, userId, query string, topK int) ([]SearchResult, error)
-	GetDocumentContent(ctx context.Context, userId, uuid string) (string, error)
+	// 获取文档正文，可按指定分块生成高亮预览。
+	GetDocumentContent(ctx context.Context, userId, uuid string, chunkNumbers []int) (*KnowledgeDocumentContent, error)
 }
 
 type KnowledgeServiceImpl struct {
@@ -231,7 +237,18 @@ func (s *KnowledgeServiceImpl) Search(ctx context.Context, userId, query string,
 		docUUIDs = append(docUUIDs, uuid)
 	}
 
-	// 3. 一次性从 MySQL 批量查询所有分块文本
+	docs, err := s.knowledgeDAO.FindByUserAndUUIDs(ctx, userId, docUUIDs)
+	if err != nil {
+		return nil, fmt.Errorf("查询候选文档失败: %w", err)
+	}
+	docNames := make(map[string]string, len(docs))
+	docUUIDs = docUUIDs[:0]
+	for _, doc := range docs {
+		docNames[doc.Uuid] = doc.FileName
+		docUUIDs = append(docUUIDs, doc.Uuid)
+	}
+
+	// 3. 批量读取归属已确认的文档分块。
 	chunks, err := s.knowledgeChunkDAO.FindByDocUUIDs(ctx, docUUIDs)
 	if err != nil {
 		return nil, fmt.Errorf("查询分块文本失败: %w", err)
@@ -254,8 +271,8 @@ func (s *KnowledgeServiceImpl) Search(ctx context.Context, userId, query string,
 			continue
 		}
 		results = append(results, SearchResult{
-			Text:  text,
-			Score: vr.Score,
+			Text: text, Score: vr.Score,
+			DocUUID: vr.DocUUID, FileName: docNames[vr.DocUUID], ChunkIndex: vr.ChunkIdx,
 		})
 	}
 
@@ -291,20 +308,58 @@ func (s *KnowledgeServiceImpl) downloadFile(ctx context.Context, url string) (st
 	return content, nil
 }
 
-// GetDocumentContent 获取文档原始内容
-func (s *KnowledgeServiceImpl) GetDocumentContent(ctx context.Context, userId, uuid string) (string, error) {
+// KnowledgeDocumentContent 返回原始文档或包含高亮信息的分段预览。
+type KnowledgeDocumentContent struct {
+	Content  string            `json:"content"`
+	Segments []rag.TextSegment `json:"segments,omitempty"`
+}
+
+// GetDocumentContent 获取原始文档，并在指定分块时生成高亮预览。
+func (s *KnowledgeServiceImpl) GetDocumentContent(ctx context.Context, userId, uuid string, chunkNumbers []int) (*KnowledgeDocumentContent, error) {
+	if len(chunkNumbers) > constants.KnowledgeContextLimit {
+		return nil, fmt.Errorf("最多可高亮%d个文档分块", constants.KnowledgeContextLimit)
+	}
 	doc, err := s.knowledgeDAO.FindByUuid(ctx, uuid)
 	if err != nil {
-		return "", err
+		return nil, err
+	}
+	if doc == nil {
+		return nil, fmt.Errorf("知识库文档不存在")
 	}
 	if doc.UserId != userId {
-		return "", fmt.Errorf("无权限访问")
+		return nil, fmt.Errorf("无权限访问")
 	}
 
 	content, err := s.downloadFile(ctx, doc.FileUrl)
 	if err != nil {
-		return "", fmt.Errorf("获取文件内容失败: %v", err)
+		return nil, fmt.Errorf("获取文件内容失败: %v", err)
+	}
+	if len(chunkNumbers) == 0 {
+		return &KnowledgeDocumentContent{Content: content}, nil
+	}
+	indices := make([]int, len(chunkNumbers))
+	for i, number := range chunkNumbers {
+		indices[i] = number - 1
+	}
+	chunks, err := s.knowledgeChunkDAO.FindByDocUUIDsAndChunkIdx(ctx, uuid, indices)
+	if err != nil {
+		return nil, fmt.Errorf("查询命中分块失败: %w", err)
+	}
+	if len(chunks) == 0 {
+		return &KnowledgeDocumentContent{Content: content}, nil
+	}
+	matches := make(map[int]string, len(chunks))
+	for _, chunk := range chunks {
+		matches[chunk.ChunkIdx] = chunk.Content
+	}
+	previewText := content
+	if doc.FileType == "md" {
+		previewText = rag.NormalizeMarkdown(previewText)
+	}
+	splitter := rag.NewTextSplitter(constants.KnowledgeChunkSize, constants.KnowledgeChunkOverlap)
+	if segments := splitter.HighlightChunks(previewText, matches); len(segments) > 0 {
+		return &KnowledgeDocumentContent{Segments: segments}, nil
 	}
 
-	return content, nil
+	return &KnowledgeDocumentContent{Content: content}, nil
 }

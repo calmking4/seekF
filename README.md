@@ -21,7 +21,7 @@ seekF 围绕实时交流、智能问答和内容创作构建完整业务链路�
 | 即时通讯 | 从用户主页发起私聊，无需添加好友；文字与图片消息、聊天记录搜索与联想、WebSocket 心跳与断线重连、持久化未读数与导航总角标、会话置顶与删除、消息右键菜单、两分钟内撤回本人消息、仅对本人删除消息、点击头像在新标签页查看个人主页 |
 | AI 对话 | DeepSeek / Qwen / GLM 多模型切换、多会话与历史记录、SSE 流式回答、联网搜索与来源展示、社区帖子检索、ASR 语音输入与 TTS 回答朗读 |
 | MCP 工具 | 天气查询、汇率查询、网页搜索和帖子搜索；通过 stdio 协议调用独立工具进程 |
-| 私有知识库 | 文档添加、查看与删除、文本分块、Embedding 向量化、Dense / Sparse 混合检索、RAG 增强回答、按用户隔离集合 |
+| 私有知识库 | 文档添加、查看与删除、按用户隔离、查询改写、Dense / Sparse 混合检索与精排、回答引用和命中分块高亮 |
 | 内容创作 | 图文与视频发布、草稿、AI 图片标题与标签建议、视频封面、分片上传与断点续传、作品编辑与可见性管理、发布与编辑送审、驳回原因及修改重提 |
 | 社区互动 | 发现页信息流、关注动态与作者更新提醒、帖子搜索、个人主页、评论与回复、评论区 @AI、帖子与评论点赞、收藏夹管理、内容反馈与站内通知 |
 | 创作者数据中心 | 点击量、净增粉丝、点赞、收藏、助力数、评论与分享七项指标；点击量与收益趋势、近 7 / 30 / 90 天筛选、每日明细、刷新与 CSV 导出 |
@@ -37,7 +37,7 @@ seekF 围绕实时交流、智能问答和内容创作构建完整业务链路�
 | 用户端 | Nuxt 4 / Vue 3 Composition API / Element Plus / Tailwind CSS |
 | 管理端 | React 19 / TypeScript / Vite / React Router / Tailwind CSS |
 | 数据存储 | MySQL（业务数据与事务）/ Redis（会话、验证码、缓存与 AI 回答事件流）/ 阿里云 OSS（文件与媒体） |
-| 搜索与向量检索 | Elasticsearch / IK 中文分词 / Qdrant / GLM Embedding / BM25 稀疏向量 / RRF 结果融合 |
+| 搜索与向量检索 | Elasticsearch / IK 中文分词 / Qdrant / 稠密向量检索 / BM25 稀疏向量检索 / RRF 排名融合 / 文本重排序 |
 | 实时通信 | Gorilla WebSocket / SSE（fetch 流式读取与断线续接） |
 | 消息与后台任务 | kafka-go / Kafka / Transactional Outbox / 消费幂等与失败重试 / 定时补偿 |
 | AI 与工具编排 | CloudWeGo Eino / OpenAI 兼容接口 / DeepSeek、Qwen、GLM / MCP（mcp-go）/ RAG / ASR / TTS |
@@ -51,7 +51,7 @@ seekF 围绕实时交流、智能问答和内容创作构建完整业务链路�
 
 - **分层与依赖注入**：后端采用 Controller → Service → DAO 分层，由 Wire 生成依赖组装代码。Service 统一管理事务，业务写入、计数和站内通知使用同一事务连接；并发修改结合行锁与目标状态校验，保持重复请求下的数据一致性。
 - **多模型与 MCP 工具**：通过 Eino 接入 OpenAI 兼容模型，复用 DeepSeek / Qwen / GLM 模型实例。对话先判断是否调用工具、执行 MCP 工具，再流式生成回答；后台任务将事件写入 Redis Stream，浏览器通过 SSE 按游标订阅和断线续接，完整回答与会话摘要由 Service 写入 MySQL。工具运行于独立 stdio 子进程，提供联网搜索、社区帖子检索与外部 API 能力。
-- **用户隔离的 RAG**：文档按 500 字符分块、50 字符重叠，原文通过 GLM 生成稠密向量，中文文本经 Elasticsearch IK 分词后交给 Qdrant 生成 BM25 稀疏向量，再通过 RRF 融合检索结果；每个用户使用独立集合，隔离私有知识库。查询时分词失败会降级为语义检索。
+- **用户隔离的 RAG**。文档每块最多 500 个 Unicode 字符，相邻块最多重叠 50 个字符，向量按用户存入独立的 Qdrant 集合。多轮问答可结合近期对话改写查询，Qdrant 用 RRF 融合稠密向量召回与 Elasticsearch IK 分词后的 BM25 召回，再对候选分块精排。后端取最多 5 个分块作为回答上下文。精排分数严格大于 `0.6` 的分块列入参考文档，按文件归并并随回答保存。预览可高亮命中分块，命中详情以两位小数的百分比显示精排分数。查询分词失败时使用语义检索，精排不可用时按 RRF 排名选取上下文。 [RAG 说明](seekF-backend/docs/RAG.md)
 
 ### 实时通信与内容分发
 
@@ -109,6 +109,7 @@ seekF/
 - Go **1.25.5**（以 [go.mod](seekF-backend/go.mod) 为准），前端使用 Node.js **22** 和 npm。
 - 准备 MySQL、Redis、Kafka、Elasticsearch 和 Qdrant，并初始化数据库；Elasticsearch 需安装匹配版本的 IK 插件，Qdrant 需支持 BM25。
 - 后端连接配置见 [config.toml](seekF-backend/config/config.toml)，将 [后端环境变量模板](seekF-backend/.env.example) 复制为同目录下的 `.env`，按需填写凭据，不要提交密钥。
+- 知识库的查询改写和 Embedding 使用现有 GLM 配置，重排序使用 `QWEN_API_KEY` 和 `QWEN_BASE_URL` 访问阿里云百炼。
 - user 通过 Nginx 访问时，将 [user 环境变量模板](seekF-user/.env.example) 复制为同目录下的 `.env`；已有文件时仅补充配置。
 - 支付与提现按需配置支付宝凭据，详见 [支付说明](seekF-backend/docs/支付.md)；知识库配置见 [RAG 说明](seekF-backend/docs/RAG.md)。
 

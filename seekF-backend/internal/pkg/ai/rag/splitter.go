@@ -31,12 +31,66 @@ func NewTextSplitter(chunkSize, overlap int) *TextSplitter {
 
 // SplitText 按字符上限切分正文，相邻块保留尾部重叠且不产生空块。
 func (s *TextSplitter) SplitText(text string) []string {
-	paragraphs := splitIntoParagraphs(normalizeText(text))
-	runes := []rune(strings.Join(paragraphs, "\n\n"))
-	if len(runes) == 0 {
+	runes, ranges := s.splitRanges(text)
+	if len(ranges) == 0 {
 		return nil
 	}
-	var chunks []string
+	chunks := make([]string, len(ranges))
+	for i, span := range ranges {
+		chunks[i] = string(runes[span.start:span.end])
+	}
+	return chunks
+}
+
+// TextSegment 保存预览正文的一段文本及其高亮状态。
+type TextSegment struct {
+	Text      string `json:"text"`
+	Highlight bool   `json:"highlight,omitempty"`
+}
+
+type chunkRange struct {
+	start, end int
+}
+
+// HighlightChunks 在分块使用的正文中标记与已入库分块一致的区间。
+func (s *TextSplitter) HighlightChunks(text string, matches map[int]string) []TextSegment {
+	runes, ranges := s.splitRanges(text)
+	var highlights []chunkRange
+	for index, span := range ranges {
+		stored, ok := matches[index]
+		if !ok || string(runes[span.start:span.end]) != stored {
+			continue
+		}
+		// 合并相邻或重叠命中，预览中的正文只出现一次。
+		if last := len(highlights) - 1; last >= 0 && span.start <= highlights[last].end {
+			highlights[last].end = max(highlights[last].end, span.end)
+		} else {
+			highlights = append(highlights, span)
+		}
+	}
+	if len(highlights) == 0 {
+		return nil
+	}
+	segments := make([]TextSegment, 0, len(highlights)*2+1)
+	end := 0
+	for _, span := range highlights {
+		if end < span.start {
+			segments = append(segments, TextSegment{Text: string(runes[end:span.start])})
+		}
+		segments = append(segments, TextSegment{Text: string(runes[span.start:span.end]), Highlight: true})
+		end = span.end
+	}
+	if end < len(runes) {
+		segments = append(segments, TextSegment{Text: string(runes[end:])})
+	}
+	return segments
+}
+
+// splitRanges 返回归一化正文及各分块的 Unicode 字符区间。
+func (s *TextSplitter) splitRanges(text string) ([]rune, []chunkRange) {
+	paragraphs := splitIntoParagraphs(normalizeText(text))
+	runes := []rune(strings.Join(paragraphs, "\n\n"))
+	var ranges []chunkRange
 	for start := 0; start < len(runes); {
 		end := min(start+s.chunkSize, len(runes))
 		if end < len(runes) {
@@ -44,15 +98,22 @@ func (s *TextSplitter) SplitText(text string) []string {
 			minEnd := start + max(s.chunkSize/2, s.overlap+1)
 			end = findChunkEnd(runes, start, end, minEnd)
 		}
-		if chunk := strings.TrimSpace(string(runes[start:end])); chunk != "" {
-			chunks = append(chunks, chunk)
+		left, right := start, end
+		for left < right && unicode.IsSpace(runes[left]) {
+			left++
+		}
+		for right > left && unicode.IsSpace(runes[right-1]) {
+			right--
+		}
+		if left < right {
+			ranges = append(ranges, chunkRange{start: left, end: right})
 		}
 		if end == len(runes) {
 			break
 		}
 		start = end - s.overlap
 	}
-	return chunks
+	return runes, ranges
 }
 
 // NormalizeMarkdown 清理Markdown块标记，保留标题文字和段落空行供分块使用。

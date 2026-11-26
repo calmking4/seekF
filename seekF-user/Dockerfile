@@ -2,9 +2,13 @@
 FROM node:22-alpine AS builder
 
 WORKDIR /app
+COPY package.json package-lock.json ./
+# 依赖安装层只依赖清单，Nuxt 项目的准备脚本等源码复制后再执行。
+RUN --mount=type=cache,id=seekf-user-npm,target=/root/.npm \
+    npm pkg delete scripts.postinstall && npm ci
+
 COPY . .
-RUN npm ci
-RUN npm run build
+RUN npm run postinstall && npm run build
 
 # 第二阶段：只保留构建产物，使用 Node 运行。
 FROM node:22-alpine

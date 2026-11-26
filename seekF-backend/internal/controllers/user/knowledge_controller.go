@@ -124,13 +124,11 @@ func (c *KnowledgeController) GetDocumentContent(ctx *gin.Context) {
 		return
 	}
 
-	content, err := c.knowledgeService.GetDocumentContent(ctx.Request.Context(), userId, req.Uuid)
+	content, err := c.knowledgeService.GetDocumentContent(ctx.Request.Context(), userId, req.Uuid, req.ChunkNumbers)
 	if err != nil {
 		resp.Error(ctx, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp.Success(ctx, "获取成功", map[string]string{
-		"content": content,
-	})
+	resp.Success(ctx, "获取成功", content)
 }

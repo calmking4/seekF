@@ -19,6 +19,8 @@ type KnowledgeDAO interface {
 	FindByUuid(ctx context.Context, uuid string) (*models.Knowledge, error)
 	// 根据用户ID查询文档列表
 	FindByUserId(ctx context.Context, userId string) ([]models.Knowledge, error)
+	// 批量查询当前用户拥有的指定文档。
+	FindByUserAndUUIDs(ctx context.Context, userId string, uuids []string) ([]models.Knowledge, error)
 	// 根据UUID删除文档
 	Delete(ctx context.Context, uuid string) error
 }
@@ -54,6 +56,13 @@ func (d *KnowledgeDAOImpl) FindByUserId(ctx context.Context, userId string) ([]m
 	var docs []models.Knowledge
 	result := d.db.WithContext(ctx).Where("user_id = ?", userId).Order("created_at DESC").Find(&docs)
 	return docs, result.Error
+}
+
+// FindByUserAndUUIDs 批量查询当前用户拥有的指定文档。
+func (d *KnowledgeDAOImpl) FindByUserAndUUIDs(ctx context.Context, userId string, uuids []string) ([]models.Knowledge, error) {
+	var docs []models.Knowledge
+	err := d.db.WithContext(ctx).Select("uuid", "file_name").Where("user_id = ? AND uuid IN ?", userId, uuids).Find(&docs).Error
+	return docs, err
 }
 
 // Delete 根据UUID删除文档

@@ -3,31 +3,47 @@ package rag
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"seekF-backend/internal/configs"
 	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/db"
 	"seekF-backend/internal/pkg/zlog"
+
+	"github.com/cloudwego/eino-ext/components/model/openai"
 )
 
 // ragInstance RAG单例实例
 var ragInstance *RAG
 
-// RAG RAG核心模块,封装向量化和分块功能
+// RAG 封装知识库分块、向量化和在线检索模型。
 type RAG struct {
-	embedding *Embedding
-	splitter  *TextSplitter
+	embedding     *Embedding
+	splitter      *TextSplitter
+	queryRewriter *openai.ChatModel
+	reranker      rerankClient
 }
 
-// InitRAG 显式创建Embedding包装对象和分块器，不执行远程向量化请求。
+// InitRAG 创建知识库分块器和模型客户端。
 func InitRAG() error {
 	cfg := configs.GetConfig()
 	if cfg == nil {
 		return fmt.Errorf("配置未初始化，无法初始化RAG")
 	}
+	models := cfg.AIModelConfig
+	queryRewriter, err := newQueryRewriter(models.GlmApiKey, models.GlmBaseUrl, models.QueryRewriteModel)
+	if err != nil {
+		zlog.Warn("初始化知识库查询改写模型失败，将使用原始问题检索: " + err.Error())
+	}
 	ragInstance = &RAG{
-		embedding: NewEmbedding(cfg.AIModelConfig.GlmApiKey, cfg.AIModelConfig.GlmEmbeddingModel, cfg.AIModelConfig.GlmBaseUrl),
-		splitter:  NewTextSplitter(constants.KnowledgeChunkSize, constants.KnowledgeChunkOverlap),
+		embedding:     NewEmbedding(models.GlmApiKey, models.GlmEmbeddingModel, models.GlmBaseUrl),
+		splitter:      NewTextSplitter(constants.KnowledgeChunkSize, constants.KnowledgeChunkOverlap),
+		queryRewriter: queryRewriter,
+		reranker: rerankClient{
+			apiKey:  models.QwenApiKey,
+			model:   strings.TrimSpace(models.RerankModel),
+			baseURL: strings.TrimSpace(models.QwenBaseUrl),
+		},
 	}
 	zlog.Info("RAG初始化完成")
 	return nil

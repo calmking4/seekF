@@ -1,6 +1,6 @@
 # seekF 项目 RAG 实现详解
 
-本文按当前代码说明知识库流程：**GLM Embedding 稠密向量 + Qdrant 内置 BM25 稀疏向量 + Qdrant RRF 融合**。Go 后端复用 Elasticsearch 的 IK 分词器处理中文，词项编号和 BM25 权重由 Qdrant 生成。
+知识库使用 **GLM Embedding 稠密向量、Qdrant 内置 BM25 稀疏向量和 RRF 融合**。在线问答使用 GLM 对话模型改写查询，通过阿里云百炼 `qwen3-rerank` 精排候选。Go 后端复用 Elasticsearch 的 IK 分词器处理中文，词项编号和 BM25 权重由 Qdrant 生成。
 
 主服务启动时依次显式初始化配置、日志、MySQL、Redis、ES、Qdrant和AI模块。`InitRAG()`创建Embedding包装对象与分块器，不发送远程向量化请求；`GetRAG()`只读取实例。ES初始化包含服务探测和搜索索引准备，Qdrant初始化通过健康检查确认响应。MySQL或Redis初始化失败会阻止主服务启动；ES、Qdrant初始化失败时记录告警，相关功能通过请求错误或既定降级流程处理。
 
@@ -8,33 +8,39 @@
 
 ### 文档入库
 
-~~~text
-文件地址 → 下载正文 → Markdown 清理 → 文本分块
-  → 确保用户集合存在
-  → 分块正文写入 MySQL
-  ├─ 原始分块 → GLM Embedding → dense 语义向量
-  └─ PrepareBM25Text → ES ik_max_word → 词项文本 → Qdrant 内置 BM25 → sparse 向量
-  → Qdrant 保存点，等待写入完成
-  → MySQL 保存文档元数据
-~~~
+```mermaid
+%%{init: {"themeVariables":{"fontSize":"13px"},"flowchart":{"nodeSpacing":24,"rankSpacing":26,"padding":8}}}%%
+flowchart TD
+    Download["根据文件地址下载正文"] --> Clean["清理 Markdown 文档的格式标记"]
+    Clean --> Split["文本分块"]
+    Split --> Collection["确保用户的 Qdrant 集合存在"]
+    Collection --> Text["MySQL 保存分块正文"]
+    Text --> Analyze["ES 使用 ik_max_word 对分块分词"]
+    Analyze --> Embed["GLM 对原始分块生成 dense 向量"]
+    Analyze -->|词项文本| Write["Qdrant 批量写入分块点<br/>用内置 BM25 生成 sparse 向量"]
+    Embed -->|dense 向量| Write
+    Write -->|写入完成| Metadata["MySQL 保存文档元数据"]
+```
 
 ### 提问与生成
 
-~~~text
-开启知识库的用户提问
-  ├─ 原始问题 → GLM Embedding → dense 查询向量
-  └─ PrepareBM25Text → ES ik_max_word → BM25 Document → sparse 查询
-                          ↓
-             两路分别召回，Qdrant RRF 融合
-                          ↓
-             返回 doc_uuid、chunk_idx 和融合分数
-                          ↓
-             回 MySQL 批量读取匹配分块正文
-                          ↓
-             按排名最多选择5块，拼入 system 提示词
-                          ↓
-             模型生成 → Redis Stream → SSE → 浏览器
-~~~
+```mermaid
+%%{init: {"themeVariables":{"fontSize":"13px"},"flowchart":{"nodeSpacing":24,"rankSpacing":26,"padding":8}}}%%
+flowchart TD
+    Question["用户开启知识库并提问"] --> Query["结合近期对话改写查询<br/>无历史或改写失败时用原问题"]
+    Query --> Dense["GLM 生成 dense 查询向量"]
+    Query --> Analyze["ES 使用 ik_max_word 对查询分词"]
+    Dense --> Semantic["Qdrant 语义召回"]
+    Analyze -->|有有效词项| Sparse["Qdrant BM25 关键词召回"]
+    Semantic --> Fusion["Qdrant RRF 融合<br/>分词不可用时只使用语义结果"]
+    Sparse --> Fusion
+    Fusion -->|doc_uuid、chunk_idx 和融合分数| Lookup["MySQL 批量读取命中分块正文"]
+    Lookup --> Rerank["批量精排<br/>精排不可用时沿用融合排名"]
+    Rerank --> Prompt["最多将 5 个分块拼入 system 提示词"]
+    Prompt --> Answer["模型生成回答"]
+    Answer --> Redis["Redis Stream 保存回答事件"]
+    Redis --> SSE["通过 SSE 将回答推送到浏览器"]
+```
 
 | 模块 | 职责 | 代码 |
 | --- | --- | --- |
@@ -109,7 +115,7 @@ Go 通过 EmbedTexts 调用 POST {GlmBaseUrl}/embeddings。请求示意：
 
 模型、地址和密钥读取配置，每批最多16条文本，响应按 index 还原顺序。当前集合创建时指定 dense 为2048维、距离为 Cosine，因此模型实际输出必须与2048维一致。
 
-Dense 使用原始分块或原始问题，不使用 BM25 的词项拼接文本。
+入库的 Dense 向量使用原始分块生成，查询的 Dense 向量使用改写结果或回退后的原始问题生成。
 
 ### Sparse：Qdrant 内置 BM25
 
@@ -204,13 +210,23 @@ Query: qdrant.NewQueryFusion(qdrant.Fusion_RRF),
 
 RRF 按各路名次累计贡献，可用 Σ 1/(k + rank) 理解，具体排名起点及参数取服务端实现。项目没有自己实现融合算法。RRF 的平滑参数 k、BM25 的词频参数 k、返回数量 TopK 是不同概念。
 
-AI 对话当前将 topK 设为10：两路分别最多召回10条，融合最多返回10条，回查正文后按顺序最多取5块作为上下文。
+AI 对话的两路检索各取最多 10 个分块，融合后返回最多 10 个候选。融合分数反映分块在两路检索中的排名贡献。
 
-**融合分数表示两路检索的排名贡献，不是余弦相似度或概率。** 上下文按返回排名选择。高度相关但只在一路命中的分块，可能具有较低融合分数；排名靠前也不保证正文相关。
+### 查询改写与候选精排
+
+启用 `queryRewriteModel` 且有历史文本时，后端把当前问题和最近最多 3 轮文本对话发给 GLM，请它补全指代并返回一条独立查询。改写后的查询用于两路召回和精排。改写失败或超过 2 秒时用原始问题检索。生成最终回答时始终使用原始问题。
+
+从 MySQL 取回候选分块正文后，后端把查询和整批正文提交到百炼文本重排序接口。后端按返回的相关性分数排序，通过候选下标取出最多 5 个分块。仅命中一个分块时也会请求精排分数。精排失败、超时或返回无效时，按 RRF 排名选取上下文。精排最多等待 2 秒。
+
+`[aiModelConfig]` 中的 `queryRewriteModel` 默认为 `glm-4.7-flash`，使用现有 GLM 凭证及地址。`rerankModel` 默认为 `qwen3-rerank`，使用 `QWEN_API_KEY` 和 `QWEN_BASE_URL` 的服务域名访问百炼原生精排接口。模型名可分别通过 `QUERY_REWRITE_MODEL` 和 `RERANK_MODEL` 覆盖，留空可关闭对应步骤。
 
 ## 6. 回答生成与失败处理
 
 开启知识库后，AIChatService 把选中正文拼入 system 提示词，要求模型参考资料回答；没有相关信息时允许忽略资料。ES分词失败时记录中文 Warn 日志，仅使用语义候选参与RRF排名；整体检索失败时沿用普通 AI 回答流程。
+
+聊天回答的「参考文档」仅收录本轮送入模型且 Rerank 相关性分数严格大于 `0.6` 的分块，按文件归并。每份文档展示文件名和最靠前的命中摘录。点击条目可预览当前账号仍有权限访问的文档，并展开命中详情查看各分块的序号、摘录和置信度。界面将 Rerank 相关性分数显示为保留两位小数的百分比。没有符合条件的分块时，回答省略这个入口。引用随回答保存，历史会话展示当时保存的引用。
+
+参考文档预览按入库时的规则整理正文，并将与已保存分块一致的命中区间高亮。相邻分块共用的文字只展示一次。无法核对任何命中位置时，预览显示原始内容。知识库列表中的普通预览直接读取原始内容。
 
 模型回答事件写入 Redis Stream，SSE 订阅端读取并发送给浏览器，支持断线回放。Redis Stream 保存的是回答事件，不是 Qdrant 索引。
 

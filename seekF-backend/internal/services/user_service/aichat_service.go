@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"seekF-backend/internal/pkg/ai/asr"
 	mcppkg "seekF-backend/internal/pkg/ai/mcp"
 	toolpkg "seekF-backend/internal/pkg/ai/mcp/tool"
+	"seekF-backend/internal/pkg/ai/rag"
 	"seekF-backend/internal/pkg/ai/tts"
 	"seekF-backend/internal/pkg/constants"
 	"seekF-backend/internal/pkg/db"
@@ -390,7 +392,7 @@ func (s *AIChatServiceImpl) runMessageStream(ctx context.Context, cancel context
 		func(chunk string) error {
 			return appendAIStreamEvent(ctx, writer, "delta", map[string]string{"content": chunk})
 		},
-		func(sources []toolpkg.SearchSource) error {
+		func(sources []chatSource) error {
 			return appendAIStreamEvent(ctx, writer, "sources", map[string]any{"sources": sources})
 		},
 		func(posts []toolpkg.DiscoverPostItem) error {
@@ -588,7 +590,7 @@ func (s *AIChatServiceImpl) prepareAIMessage(ctx context.Context, userId string,
 }
 
 // generateAIMessage 复用模型和MCP流程，将输出交给事件存储后保存完整回答。
-func (s *AIChatServiceImpl) generateAIMessage(ctx context.Context, userId string, req userreq.SendAIMessageRequest, userMessage *models.Message, aiMessageID string, onChunk func(chunk string) error, onSources func(sources []toolpkg.SearchSource) error, onPosts func(posts []toolpkg.DiscoverPostItem) error) error {
+func (s *AIChatServiceImpl) generateAIMessage(ctx context.Context, userId string, req userreq.SendAIMessageRequest, userMessage *models.Message, aiMessageID string, onChunk func(chunk string) error, onSources func(sources []chatSource) error, onPosts func(posts []toolpkg.DiscoverPostItem) error) error {
 	content, userMsgId := userMessage.Content, userMessage.Uuid
 	// 从DB读取历史消息构建上下文（最近100条）
 	// 使用DESC排序获取最近的消息，然后反转为正序
@@ -621,27 +623,25 @@ func (s *AIChatServiceImpl) generateAIMessage(ctx context.Context, userId string
 	}
 
 	// 如果启用知识库，搜索相关知识
+	var references []chatSource
 	if req.UseKnowledge && s.knowledgeService != nil {
-		// 召回候选后按RRF融合排名选取上下文，不把融合分数当作相似度。
-		knowledgeResults, err := s.knowledgeService.Search(ctx, userId, content, 10)
+		selectedResults, err := s.searchKnowledgeContext(ctx, userId, userMessage, messages)
 		if err != nil {
 			zlog.Warn("知识库检索失败，用户ID=" + userId + ": " + err.Error())
+		} else if len(selectedResults) > 0 {
+			knowledgeContext := "以下是你应该了解的知识库内容：\n"
+			for i, result := range selectedResults {
+				knowledgeContext += fmt.Sprintf("%d. %s\n", i+1, result.Text)
+			}
+			references = knowledgeReferences(selectedResults)
+			knowledgeContext += "请根据以上知识库内容回答用户的问题。如果知识库没有相关信息，请忽略并按你原来的知识回答。"
+			systemPrompt = knowledgeContext + "\n\n" + systemPrompt
+			zlog.Info(fmt.Sprintf("知识库上下文已选取%d个分块，用户ID=%s", len(selectedResults), userId))
 		}
-		if err == nil && len(knowledgeResults) > 0 {
-			// RRF分数只用于排序，最多保留5个分块。
-			selectedResults := knowledgeResults
-			if len(selectedResults) > constants.KnowledgeContextLimit {
-				selectedResults = selectedResults[:constants.KnowledgeContextLimit]
-			}
-			if len(selectedResults) > 0 {
-				knowledgeContext := "以下是你应该了解的知识库内容：\n"
-				for i, result := range selectedResults {
-					knowledgeContext += fmt.Sprintf("%d. %s\n", i+1, result.Text)
-				}
-				knowledgeContext += "请根据以上知识库内容回答用户的问题。如果知识库没有相关信息，请忽略并按你原来的知识回答。"
-				systemPrompt = knowledgeContext + "\n\n" + systemPrompt
-				zlog.Info(fmt.Sprintf("知识库搜索找到 %d 条结果（按融合排名选取）", len(selectedResults)))
-			}
+	}
+	if len(references) > 0 && onSources != nil {
+		if err := onSources(references); err != nil {
+			return err
 		}
 	}
 
@@ -722,8 +722,11 @@ func (s *AIChatServiceImpl) generateAIMessage(ctx context.Context, userId string
 			return err
 		}
 		// 如果有搜索来源数据，通过 onSources 回调推送给前端
+		for _, source := range sources {
+			references = append(references, chatSource{Title: source.Title, URL: source.URL, Snippet: source.Snippet, Score: source.Score})
+		}
 		if len(sources) > 0 && onSources != nil {
-			if err := onSources(sources); err != nil {
+			if err := onSources(references); err != nil {
 				return err
 			}
 		}
@@ -733,7 +736,7 @@ func (s *AIChatServiceImpl) generateAIMessage(ctx context.Context, userId string
 				return err
 			}
 		}
-		return s.persistAndCompleteAIMessage(ctx, req, userId, userMessage, aiMessageID, finalContent, sources, posts, onChunk)
+		return s.persistAndCompleteAIMessage(ctx, req, userId, userMessage, aiMessageID, finalContent, references, posts, onChunk)
 	}
 
 	finalContent, err = streamChatModel(ctx, chatModel, chatMessages, onChunk)
@@ -742,12 +745,123 @@ func (s *AIChatServiceImpl) generateAIMessage(ctx context.Context, userId string
 		return fmt.Errorf("AI响应失败")
 	}
 
-	return s.persistAndCompleteAIMessage(ctx, req, userId, userMessage, aiMessageID, finalContent, nil, nil, onChunk)
+	return s.persistAndCompleteAIMessage(ctx, req, userId, userMessage, aiMessageID, finalContent, references, nil, onChunk)
+}
+
+// chatSource 保存聊天引用，知识库引用通过文档ID和分块序号定位。
+type chatSource struct {
+	Title       string   `json:"title"`
+	URL         string   `json:"url,omitempty"`
+	Snippet     string   `json:"snippet,omitempty"`
+	Score       float64  `json:"score,omitempty"`
+	DocUUID     string   `json:"doc_uuid,omitempty"`
+	ChunkNumber int      `json:"chunk_number,omitempty"`
+	RerankScore *float64 `json:"rerank_score,omitempty"`
+}
+
+// knowledgeReferences 将精排分数严格高于展示阈值的知识库分块转换为回答引用。
+func knowledgeReferences(results []SearchResult) []chatSource {
+	var references []chatSource
+	for _, result := range results {
+		if result.RerankScore == nil || *result.RerankScore <= constants.KnowledgeReferenceMinScore {
+			continue
+		}
+		excerpt := []rune(strings.TrimSpace(result.Text))
+		snippet := string(excerpt)
+		if len(excerpt) > constants.KnowledgeReferenceExcerptChars {
+			snippet = string(excerpt[:constants.KnowledgeReferenceExcerptChars]) + "…"
+		}
+		references = append(references, chatSource{
+			Title: result.FileName, DocUUID: result.DocUUID, Snippet: snippet,
+			ChunkNumber: result.ChunkIndex + 1, RerankScore: result.RerankScore,
+		})
+	}
+	return references
+}
+
+// searchKnowledgeContext 改写检索问题，召回并精排候选正文以构建模型上下文。
+func (s *AIChatServiceImpl) searchKnowledgeContext(ctx context.Context, userId string, current *models.Message, messages []models.Message) ([]SearchResult, error) {
+	query := current.Content
+	ragInst := rag.GetRAG()
+	if ragInst != nil && (current.Url == "" || query != "图片") {
+		started := time.Now()
+		rewritten, err := ragInst.RewriteQuery(ctx, query, knowledgeRewriteHistory(messages, userId, current.Uuid))
+		if err != nil {
+			zlog.Warn(fmt.Sprintf("知识库查询改写失败，使用原始问题，用户ID=%s，耗时=%s: %v", userId, time.Since(started), err))
+		} else if rewritten != query {
+			query = rewritten
+			zlog.Debug(fmt.Sprintf("知识库查询改写完成，用户ID=%s，耗时=%s", userId, time.Since(started)))
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	results, err := s.knowledgeService.Search(ctx, userId, query, constants.KnowledgeCandidateLimit)
+	if err != nil {
+		return nil, err
+	}
+	limit := min(len(results), constants.KnowledgeContextLimit)
+	if ragInst == nil || len(results) == 0 {
+		return results[:limit], nil
+	}
+	texts := make([]string, len(results))
+	for i, result := range results {
+		texts[i] = result.Text
+	}
+	started := time.Now()
+	ranked, err := ragInst.Rerank(ctx, query, texts, limit)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if err != nil {
+		zlog.Warn(fmt.Sprintf("知识库精排失败，使用融合排名，用户ID=%s，耗时=%s: %v", userId, time.Since(started), err))
+	}
+	if len(ranked) == 0 {
+		return results[:limit], nil
+	}
+	selected := make([]SearchResult, len(ranked))
+	for i, match := range ranked {
+		selected[i] = results[match.Index]
+		selected[i].RerankScore = &match.Score
+	}
+	zlog.Debug(fmt.Sprintf("知识库精排完成，用户ID=%s，候选数=%d，耗时=%s", userId, len(results), time.Since(started)))
+	return selected, nil
+}
+
+// knowledgeRewriteHistory 提取以用户提问开始的近期文本对话，排除当前问题。
+func knowledgeRewriteHistory(messages []models.Message, userId, currentID string) []*schema.Message {
+	var history []*schema.Message
+	turns := 0
+	lastUser := -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		text := strings.TrimSpace(msg.Content)
+		if msg.Uuid == currentID || text == "" || (msg.Url != "" && text == "图片") {
+			continue
+		}
+		runes := []rune(text)
+		if len(runes) > constants.KnowledgeRewriteHistoryChars {
+			text = string(runes[:constants.KnowledgeRewriteHistoryChars])
+		}
+		if msg.SendId != userId {
+			history = append(history, schema.AssistantMessage(text, nil))
+			continue
+		}
+		lastUser = len(history)
+		history = append(history, schema.UserMessage(text))
+		turns++
+		if turns == constants.KnowledgeRewriteHistoryTurns {
+			break
+		}
+	}
+	history = history[:lastUser+1]
+	slices.Reverse(history)
+	return history
 }
 
 // persistAndCompleteAIMessage 将完整回答和会话摘要一起提交，终态由后台任务统一写入。
 func (s *AIChatServiceImpl) persistAndCompleteAIMessage(ctx context.Context, req userreq.SendAIMessageRequest, userId string, userMessage *models.Message, aiMessageID string, finalContent string,
-	sources []toolpkg.SearchSource, posts []toolpkg.DiscoverPostItem, onChunk func(chunk string) error) error {
+	sources []chatSource, posts []toolpkg.DiscoverPostItem, onChunk func(chunk string) error) error {
 	if finalContent == "" {
 		finalContent = "抱歉，我暂时无法回答这个问题。"
 		if err := onChunk(finalContent); err != nil {
@@ -755,21 +869,21 @@ func (s *AIChatServiceImpl) persistAndCompleteAIMessage(ctx context.Context, req
 		}
 	}
 
-	// 序列化搜索来源数据（只保留标题和URL）
+	// 复用消息的来源字段，网页仅保存标题和URL，知识库保留文档及分块信息。
 	var sourcesJSON string
 	if len(sources) > 0 {
-		type sourceLite struct {
-			Title string `json:"title"`
-			URL   string `json:"url"`
-		}
-		lite := make([]sourceLite, 0, len(sources))
+		lite := make([]chatSource, 0, len(sources))
 		for _, s := range sources {
-			lite = append(lite, sourceLite{Title: s.Title, URL: s.URL})
+			if s.DocUUID == "" {
+				s.Snippet, s.Score = "", 0
+			}
+			lite = append(lite, s)
 		}
 		b, err := json.Marshal(lite)
-		if err == nil {
-			sourcesJSON = string(b)
+		if err != nil {
+			return fmt.Errorf("保存回答引用失败: %w", err)
 		}
+		sourcesJSON = string(b)
 	}
 
 	// 序列化帖子数据

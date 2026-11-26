@@ -30,8 +30,27 @@ const (
 	KnowledgeBM25AvgLen = 256.0
 	// 每批迁移的最大分块数量。
 	KnowledgeBM25BatchSize = 100
+)
+
+// 知识库在线检索与精排参数
+const (
+	// 每路召回及融合结果最多保留10个分块。
+	KnowledgeCandidateLimit = 10
 	// 知识库最多注入模型的分块数量。
 	KnowledgeContextLimit = 5
+	// 知识库分块的精排分数必须高于此值才会作为参考文档展示。
+	KnowledgeReferenceMinScore = 0.6
+	// 每条知识库引用最多保存160个Unicode字符的摘录。
+	KnowledgeReferenceExcerptChars = 160
+	// 改写最多参考最近3轮对话，每条历史消息最多1000个Unicode字符。
+	KnowledgeRewriteHistoryTurns = 3
+	KnowledgeRewriteHistoryChars = 1000
+	// 查询改写最多生成256个tokens，单次调用最多等待2秒。
+	KnowledgeRewriteOutputTokens = 256
+	KnowledgeRewriteTimeout      = 2 * time.Second
+	// 精排单次调用最多等待2秒，查询和每段候选正文最多4096个字符。
+	KnowledgeRerankTimeout   = 2 * time.Second
+	KnowledgeRerankTextLimit = 4096
 )
 
 // AI回答生成与回放时限。

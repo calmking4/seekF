@@ -142,6 +142,7 @@
                                 </button>
                                 <!-- 搜索来源：在帖子入口下方展开 -->
                                 <SearchSources v-if="msg.sources?.length" :sources="msg.sources" />
+                                <SearchSources v-if="msg.sources?.length" :sources="msg.sources" knowledge />
                                 <!-- 思考中动画 -->
                                 <div v-if="msg.isStreaming && !msg.content" class="thinking-animation">
                                     <div class="thinking-dots">

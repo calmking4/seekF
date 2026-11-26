@@ -9,18 +9,33 @@
       :aria-expanded="expanded"
       :aria-controls="listId"
     >
-      <Icon name="uil:search" class="text-base" />
-      <span>已搜索 {{ sources.length }} 个来源</span>
+      <Icon :name="knowledge ? 'uil:file-alt' : 'uil:search'" class="text-base" />
+      <span>{{ knowledge ? '参考文档' : `已搜索 ${sources.length} 个来源` }}</span>
       <Icon name="uil:angle-down" class="source-chevron text-base" :class="{ expanded }" />
     </button>
     <Transition name="source-dropdown">
     <div v-if="expanded" class="source-dropdown-motion">
     <div class="source-dropdown-clip">
-    <section :id="listId" class="source-dropdown" aria-label="网页搜索来源">
-      <header class="source-heading"><span>网页来源</span><span class="source-count">{{ sources.length }} 个结果</span></header>
+    <section :id="listId" class="source-dropdown" :aria-label="knowledge ? '知识库参考文档' : '网页搜索来源'">
+      <header class="source-heading"><span>{{ knowledge ? '知识库参考文档' : '网页来源' }}</span><span class="source-count">{{ sources.length }} {{ knowledge ? '份文档' : '个结果' }}</span></header>
       <ol class="source-list">
-      <li v-for="(source, idx) in sources" :key="`${source.url}-${idx}`">
+      <li v-for="(source, idx) in sources" :key="knowledge ? source.doc_uuid : `${source.url}-${idx}`">
+      <button
+        v-if="knowledge"
+        type="button"
+        class="source-link w-full text-left disabled:cursor-wait"
+        :disabled="previewLoading"
+        @click="openDocument(source)"
+      >
+        <span class="source-number">{{ String(idx + 1).padStart(2, '0') }}</span>
+        <span class="source-copy">
+          <span class="source-title">{{ source.title || '知识库文档' }}</span>
+          <span v-if="source.matches[0].snippet" class="line-clamp-2 text-xs leading-relaxed text-slate-500">{{ source.matches[0].snippet }}</span>
+        </span>
+        <Icon name="uil:angle-right" class="source-external" />
+      </button>
       <a
+        v-else
         :href="source.url"
         target="_blank"
         rel="noopener noreferrer"
@@ -41,17 +56,75 @@
     </div>
     </div>
     </Transition>
+    <el-dialog v-if="knowledge" v-model="previewVisible" :title="previewDocument?.title || '知识库文档'" width="min(700px, 92vw)" append-to-body @opened="showFirstHighlight">
+      <div class="max-h-[60vh] overflow-y-auto">
+        <details v-if="previewDocument" class="mb-4 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+          <summary class="cursor-pointer text-slate-700">命中详情（{{ previewDocument.matches.length }} 个分块）</summary>
+          <ul class="mt-2 space-y-2">
+            <li v-for="match in previewDocument.matches" :key="match.chunk_number">
+              <p class="text-xs text-slate-500">
+                第 {{ match.chunk_number }} 个分块 · {{ Number.isFinite(match.rerank_score) ? `置信度 ${(match.rerank_score * 100).toFixed(2)}%` : '暂无精排分数' }}
+              </p>
+              <p v-if="match.snippet" class="mt-1 break-words text-slate-700">{{ match.snippet }}</p>
+            </li>
+          </ul>
+        </details>
+        <pre ref="previewBody" class="whitespace-pre-wrap break-words text-sm text-slate-700"><template v-for="(segment, index) in previewSegments" :key="index"><mark v-if="segment.highlight" class="rounded-sm bg-amber-100 text-inherit">{{ segment.text }}</mark><span v-else>{{ segment.text }}</span></template></pre>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, useId } from 'vue'
-defineProps({
-  sources: { type: Array, default: () => [] }
+import { computed, ref, useId } from 'vue'
+import { ElMessage } from 'element-plus'
+
+const props = defineProps({
+  sources: { type: Array, default: () => [] },
+  knowledge: Boolean
 })
+const sources = computed(() => {
+  if (!props.knowledge) return props.sources.filter(source => !source.doc_uuid)
+
+  // 同一文档的多个命中分块合并为一条参考文档。
+  const documents = new Map()
+  for (const match of props.sources) {
+    if (!match.doc_uuid) continue
+    const document = documents.get(match.doc_uuid)
+    if (document) document.matches.push(match)
+    else documents.set(match.doc_uuid, { doc_uuid: match.doc_uuid, title: match.title, matches: [match] })
+  }
+  return [...documents.values()]
+})
+const knowledgeAPI = props.knowledge ? useKnowledge() : null
 
 const expanded = ref(false)
 const trigger = ref(null)
+const previewLoading = ref(false)
+const previewVisible = ref(false)
+const previewDocument = ref(null)
+const previewSegments = ref([])
+const previewBody = ref(null)
+const showFirstHighlight = () => {
+  previewBody.value?.querySelector('mark')?.scrollIntoView({ block: 'nearest' })
+}
+const openDocument = async (source) => {
+  if (previewLoading.value) return
+  previewLoading.value = true
+  try {
+    const chunkNumbers = [...new Set(source.matches.map(match => match.chunk_number).filter(number => Number.isInteger(number) && number > 0))]
+    const preview = await knowledgeAPI.getDocumentPreview(source.doc_uuid, chunkNumbers)
+    if (!preview) {
+      ElMessage.error('无法读取参考文档，文档可能已被删除')
+      return
+    }
+    previewDocument.value = source
+    previewSegments.value = preview.segments?.length ? preview.segments : [{ text: preview.content }]
+    previewVisible.value = true
+  } finally {
+    previewLoading.value = false
+  }
+}
 const listId = `search-sources-${useId()}`
 const collapse = () => {
   expanded.value = false

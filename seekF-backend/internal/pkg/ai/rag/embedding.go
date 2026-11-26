@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// embeddingHTTPClient 带超时的 HTTP 客户端
-var embeddingHTTPClient = &http.Client{
+// retrievalHTTPClient 复用知识库调用模型接口的HTTP连接。
+var retrievalHTTPClient = &http.Client{
 	Timeout: 60 * time.Second,
 	Transport: &http.Transport{
 		MaxIdleConns:        50,
@@ -114,7 +114,7 @@ func (e *Embedding) embedBatch(ctx context.Context, texts []string) ([][]float32
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+e.apiKey)
 
-	resp, err := embeddingHTTPClient.Do(req)
+	resp, err := retrievalHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

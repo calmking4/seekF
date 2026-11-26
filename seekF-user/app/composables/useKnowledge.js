@@ -52,14 +52,14 @@ export const useKnowledge = () => {
         }
     }
 
-    const getDocumentContent = async (uuid) => {
+    const getDocumentPreview = async (uuid, chunkNumbers = []) => {
         try {
             const res = await useApi$('/user/knowledge/content', {
                 method: 'POST',
-                body: { uuid }
+                body: chunkNumbers.length ? { uuid, chunk_numbers: chunkNumbers } : { uuid }
             })
             if (res?.code === 200) {
-                return res.data.content
+                return res.data
             }
             return null
         } catch (error) {
@@ -68,10 +68,13 @@ export const useKnowledge = () => {
         }
     }
 
+    const getDocumentContent = async (uuid) => (await getDocumentPreview(uuid))?.content ?? null
+
     return {
         addDocument,
         getDocumentList,
         removeDocument,
-        getDocumentContent
+        getDocumentContent,
+        getDocumentPreview
     }
 }

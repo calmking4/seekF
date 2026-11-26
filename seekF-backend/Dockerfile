@@ -9,8 +9,11 @@ RUN go mod download
 
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
-RUN go build -o /out/seekf-server ./cmd/seekf-server
-RUN go build -o /out/mcp-server ./cmd/mcp-server
+# 跨镜像构建复用已编译的 Go 包，后端和 MCP 共用同一缓存。
+RUN --mount=type=cache,id=seekf-go-build,target=/root/.cache/go-build \
+    go build -o /out/seekf-server ./cmd/seekf-server
+RUN --mount=type=cache,id=seekf-go-build,target=/root/.cache/go-build \
+    go build -o /out/mcp-server ./cmd/mcp-server
 
 # 第二阶段：只放入编译好的程序，不包含 Go 编译器和源码。
 FROM alpine:3.22

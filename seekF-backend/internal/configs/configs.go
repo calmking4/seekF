@@ -110,19 +110,16 @@ type AIModelConfig struct {
 	GlmBaseUrl        string `toml:"glmBaseUrl"`
 	Glm4vModel        string `toml:"glm4vModel"`
 	GlmEmbeddingModel string `toml:"glmEmbeddingModel"`
+	QueryRewriteModel string `toml:"queryRewriteModel"`
+	RerankModel       string `toml:"rerankModel"`
 	TTSModel          string `toml:"ttsModel"`
 	TTSVoice          string `toml:"ttsVoice"`
 	ASRModel          string `toml:"asrModel"`
 	QwenLocalApiKey   string `toml:"qwenLocalApiKey"`
 	QwenLocalModel    string `toml:"qwenLocalModel"`
 	QwenLocalBaseUrl  string `toml:"qwenLocalBaseUrl"`
-	// 各模型的上下文窗口大小配置
-	DeepseekMaxTokens  int      `toml:"deepseekMaxTokens"`
-	QwenMaxTokens      int      `toml:"qwenMaxTokens"`
-	GlmMaxTokens       int      `toml:"glmMaxTokens"`
-	Glm4vMaxTokens     int      `toml:"glm4vMaxTokens"`
-	QwenLocalMaxTokens int      `toml:"qwenLocalMaxTokens"`
-	MultimodalModels   []string `toml:"multimodalModels"`
+
+	MultimodalModels []string `toml:"multimodalModels"`
 }
 
 type QdrantConfig struct {
@@ -334,6 +331,12 @@ func loadEnvConfig(cfg *Config) {
 	}
 	if v := os.Getenv("GLM_EMBEDDING_MODEL"); v != "" {
 		cfg.AIModelConfig.GlmEmbeddingModel = v
+	}
+	if v, ok := os.LookupEnv("QUERY_REWRITE_MODEL"); ok {
+		cfg.AIModelConfig.QueryRewriteModel = v
+	}
+	if v, ok := os.LookupEnv("RERANK_MODEL"); ok {
+		cfg.AIModelConfig.RerankModel = v
 	}
 	if v := os.Getenv("TTS_MODEL"); v != "" {
 		cfg.AIModelConfig.TTSModel = v

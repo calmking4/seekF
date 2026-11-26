@@ -21,7 +21,7 @@ The monorepo contains a Go backend, a Nuxt 4 user frontend, and a React admin co
 | Private messaging | Start conversations from profiles without friend requests; text and images, history search and suggestions, WebSocket heartbeats and reconnection, persistent unread counts, pinned and deleted conversations, message context menus, recall within two minutes, personal message deletion, and profile links from avatars |
 | AI conversations | DeepSeek / Qwen / GLM, multiple conversations and history, SSE streaming, web search with sources, community post search, ASR voice input, and TTS playback |
 | MCP tools | Weather, exchange rates, web search, and post search through an independent stdio tool process |
-| Private knowledge bases | Add, view, and delete documents; chunking, embeddings, dense / sparse hybrid retrieval, RAG answers, and collections isolated by user |
+| Private knowledge bases | Document management, per-user isolation, query rewriting, dense and sparse hybrid retrieval, reranking, answer citations, and highlights in document previews |
 | Content creation | Image and video posts, drafts, AI title and tag suggestions from images, video covers, resumable multipart uploads, editing and visibility controls, moderation submissions, and resubmission after rejection |
 | Community | Discovery feeds, followed-author updates and notifications, post search, profiles, comments and replies, @AI comments, likes, favorites, feedback, and in-app notifications |
 | Creator analytics | Views, net follower growth, likes, favorites, support purchases, comments, and shares; view and revenue trends, 7 / 30 / 90-day filters, daily details, refresh, and CSV export |
@@ -37,7 +37,7 @@ The monorepo contains a Go backend, a Nuxt 4 user frontend, and a React admin co
 | User frontend | Nuxt 4 / Vue 3 Composition API / Element Plus / Tailwind CSS |
 | Admin frontend | React 19 / TypeScript / Vite / React Router / Tailwind CSS |
 | Storage | MySQL for business data and transactions / Redis for sessions, verification codes, caching, and AI response event streams / Alibaba Cloud OSS for files and media |
-| Search and retrieval | Elasticsearch / IK Chinese tokenization / Qdrant / GLM Embedding / BM25 sparse vectors / reciprocal rank fusion (RRF) |
+| Search and retrieval | Elasticsearch / IK Chinese tokenization / Qdrant / dense vector retrieval / BM25 sparse vector retrieval / reciprocal rank fusion (RRF) / text reranking |
 | Real-time communication | Gorilla WebSocket / SSE with fetch streaming and reconnection |
 | Background jobs | kafka-go / Kafka / Transactional Outbox / idempotent consumers / retries and scheduled recovery |
 | AI and tools | CloudWeGo Eino / OpenAI-compatible APIs / DeepSeek, Qwen, GLM / MCP via mcp-go / RAG / ASR / TTS |
@@ -51,7 +51,7 @@ The monorepo contains a Go backend, a Nuxt 4 user frontend, and a React admin co
 
 - **Layers and dependency injection:** Controller → Service → DAO, assembled through Wire. Services own transactions; business writes, counters, and in-app notifications share the transaction connection. Row locks and state validation protect concurrent updates and repeated requests.
 - **Multiple models and MCP:** Eino connects to reusable OpenAI-compatible model instances. Conversations determine whether tools are needed, execute MCP tools, and then stream the answer. Background jobs write events to Redis Streams; browsers subscribe through SSE and resume by cursor. Services persist complete answers and conversation summaries in MySQL. Tools run in an independent stdio process.
-- **User-isolated RAG:** Documents use 500-character chunks with a 50-character overlap. GLM produces dense vectors; Elasticsearch IK tokenizes Chinese text for Qdrant BM25 sparse vectors. RRF combines retrieval results. Each user has a separate collection, with semantic retrieval as a fallback if tokenization fails.
+- **User-isolated RAG.** Documents are split into chunks of up to 500 Unicode characters, with up to 50 characters of overlap. Each user has a separate Qdrant collection. Recent turns can be used to rewrite follow-up questions. Qdrant combines dense vector retrieval and BM25 retrieval with RRF, using Elasticsearch IK for Chinese tokenization. A reranker then selects up to five chunks as answer context. Chunks with a reranking score above `0.6` appear in citations grouped by document and saved with the answer. Document previews highlight matching chunks and show reranking scores as percentages to two decimal places. The system falls back to semantic retrieval if tokenization fails and to RRF ordering if reranking is unavailable. [RAG guide (Chinese)](seekF-backend/docs/RAG.md)
 
 ### Messaging and Content Distribution
 
@@ -109,6 +109,7 @@ seekF/
 - Go **1.25.5**, as specified in [go.mod](seekF-backend/go.mod); Node.js **22** and npm for the frontends.
 - Prepare MySQL, Redis, Kafka, Elasticsearch, Qdrant, and the database schema. Elasticsearch requires a matching IK plugin; Qdrant must support BM25.
 - Configure backend connections in [config.toml](seekF-backend/config/config.toml). Copy the [backend environment template](seekF-backend/.env.example) to `.env` in the same directory and fill in credentials. Do not commit secrets.
+- Query rewriting and embeddings use the existing GLM settings. Reranking uses `QWEN_API_KEY` and `QWEN_BASE_URL` to access Alibaba Cloud Model Studio.
 - For user access through Nginx, copy the [user environment template](seekF-user/.env.example) to `.env` in the same directory. If it already exists, add only missing settings.
 - Configure Alipay credentials as needed for payments and withdrawals. See the [payment guide (Chinese)](seekF-backend/docs/支付.md) and [RAG guide (Chinese)](seekF-backend/docs/RAG.md).
 
